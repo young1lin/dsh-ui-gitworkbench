@@ -1,0 +1,71 @@
+# CI for @young1lin/dsh-ui-gitworkbench.
+#
+# Package manager is pnpm (pnpm-lock.yaml; there is no package-lock.json, so
+# `npm ci` can never work here). The repo typechecks WITHOUT any
+# @deepseek-ai/* package installed — src/types/dsh-shim.d.ts and
+# dsh-client-shim.d.ts ambient-declare every one of them, and the runtime
+# resolves them from the dsh web profile's module farm. Verified by a clean
+# `git archive` + frozen-install simulation before this file landed.
+#
+# Build chain mirrors the two-half rule from AGENTS.md: `typecheck` runs both
+# tsconfigs (the client half is otherwise never checked), `bundle` emits
+# lib/index.js via tsc (stage-3 decorators) and lib/client.js via tsdown.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (host + client tsconfigs)
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build (tsc host half + tsdown client half)
+        run: pnpm run bundle
+
+      # Build output, not a vitest guard: lib/ is absent at test time on fresh
+      # checkouts, so a test-side scan would pass vacuously. Rolldown echoes
+      # virtual module ids into the bundle as //#region comments; a
+      # machine-path id there ships the builder's directory layout (this bit
+      # us once — see tsdown.config.ts). Shiki grammar data legitimately
+      # contains drive-letter regex fragments (i:\, t:\), so the patterns
+      # target real leak families instead of any drive letter.
+      - name: Scan build output for machine paths
+        run: |
+          if grep -rInE --include='*.js' '/home/runner|/Users/[A-Za-z]|/root/|[A-Za-z]:\\Users' lib/; then
+            echo "::error::machine path leaked into lib/ (matches above)"
+            exit 1
+          fi
+          echo "lib/*.js clean: no machine paths"
+
+      - name: Verify publish contents
+        run: npm pack --dry-run

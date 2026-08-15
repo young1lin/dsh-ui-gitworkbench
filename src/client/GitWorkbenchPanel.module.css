@@ -1,0 +1,1512 @@
+/* Change inspector.
+ *
+ * The session-header card lives in dsh chrome and keeps dsh's own --dsw-* tokens,
+ * so it is themed by the app and needs nothing here. The DRAWER paints its own
+ * surface — a diff needs an add/delete/word-level/syntax palette dsh does not
+ * define — so it carries a self-contained palette instead.
+ *
+ * Every drawer colour resolves through a --gs-* token. The palettes below are the
+ * only place a literal colour appears; each theme sets the same token names, so a
+ * theme is a palette swap and nothing else. `data-gs-theme` on the overlay picks
+ * one, and the panel computes it from the theme setting (`system` follows dsh's
+ * `body[data-ds-dark-theme]`; light/dark pin the drawer).
+ *
+ * One exception is deliberate: the mode picker's own light/dark chips are fixed
+ * white and near-black, because those buttons name colours rather than wear them.
+ *
+ * `data-gs-part` attributes on the overlay, card, header, tabs and three panes are
+ * the stable hooks user CSS targets — class names are hashed by CSS Modules and
+ * change on every build, so they are not addressable from outside.
+ */
+
+/* ---- environment card (lives in dsh chrome — keep dsw tokens) ---- */
+.card {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.card:hover, .card:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+.cardBranch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 550;
+}
+.cardBranchName { min-width: 0; overflow: hidden; }
+.cardGlyph { flex: none; opacity: 0.7; }
+.cardDetached {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-warning-bg, rgba(187, 128, 9, 0.15));
+  color: var(--dsw-alias-state-warning-primary, #d29922);
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+}
+/* Bound-worktree badge: the session is attached to an agent worktree. */
+.cardWt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-bg, rgba(56, 139, 253, 0.16));
+  color: var(--dsw-alias-state-business-primary, #58a6ff);
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cardAhead, .cardBehind {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+.cardAhead { color: var(--dsw-alias-state-success-primary); }
+.cardBehind { color: var(--dsw-alias-state-attention-primary, #d29922); }
+.cardSep { width: 1px; height: 14px; background: var(--dsw-alias-border-l2); }
+.cardAdded { color: var(--dsw-alias-state-success-primary); }
+.cardDeleted { color: var(--dsw-alias-state-error-primary); }
+.cardFiles { color: var(--dsw-alias-label-tertiary); }
+
+/* ============================ theme palettes ============================ */
+
+/* GitHub — the default, and the reference the other palettes are balanced against. */
+.overlay[data-gs-theme='github-dark'] {
+  --gs-bg: #0d1117; --gs-panel: #161b22; --gs-raise: #21262d;
+  --gs-border: #30363d; --gs-border-soft: #21262d;
+  --gs-fg: #e6edf3; --gs-fg-muted: #c9d1d9; --gs-fg-dim: #8b949e; --gs-fg-faint: #6e7681; --gs-fg-fainter: #484f58;
+  --gs-accent: #58a6ff; --gs-accent-bg: rgba(56, 139, 253, 0.14); --gs-accent-border: rgba(56, 139, 253, 0.55);
+  --gs-add: #3fb950; --gs-del: #f85149; --gs-warn: #d29922; --gs-info: #79c0ff;
+  --gs-add-bg: rgba(46, 160, 67, 0.16); --gs-del-bg: rgba(248, 81, 73, 0.16);
+  --gs-warn-bg: rgba(187, 128, 9, 0.16); --gs-info-bg: rgba(56, 139, 253, 0.16);
+  /* Primer's own diffBlob tokens, flattened over --gs-bg (#0d1117). Opaque
+     rather than the alpha hexes Primer ships, because here the number cells
+     paint ON TOP of the row tint — two alphas would composite to roughly twice
+     GitHub's strength. Line 15% / num 30% / word 40% of the base hue. */
+  --gs-add-line: #12261e; --gs-del-line: #25181c;
+  --gs-add-word: #1a4a29; --gs-del-word: #6b2b2b;
+  --gs-add-num: #1c4428; --gs-del-num: #542426;
+  --gs-hunk: #111d2e; --gs-hunk-num: #0c2d6b;
+  --gs-neutral-bg: rgba(110, 118, 129, 0.18);
+  --gs-backdrop: rgba(1, 4, 9, 0.6); --gs-shadow: rgba(1, 4, 9, 0.55);
+}
+.overlay[data-gs-theme='github-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f6f8fa; --gs-raise: #eaeef2;
+  --gs-border: #d0d7de; --gs-border-soft: #eaeef2;
+  --gs-fg: #1f2328; --gs-fg-muted: #32383f; --gs-fg-dim: #656d76; --gs-fg-faint: #8c959f; --gs-fg-fainter: #afb8c1;
+  --gs-accent: #0969da; --gs-accent-bg: rgba(9, 105, 218, 0.1); --gs-accent-border: rgba(9, 105, 218, 0.45);
+  --gs-add: #1a7f37; --gs-del: #cf222e; --gs-warn: #9a6700; --gs-info: #0550ae;
+  --gs-add-bg: rgba(26, 127, 55, 0.12); --gs-del-bg: rgba(207, 34, 46, 0.12);
+  --gs-warn-bg: rgba(154, 103, 0, 0.12); --gs-info-bg: rgba(9, 105, 218, 0.12);
+  /* Primer's light diffBlob tokens, which are already opaque upstream. */
+  --gs-add-line: #dafbe1; --gs-del-line: #ffebe9;
+  --gs-add-word: #aceebb; --gs-del-word: #ffcecb;
+  --gs-add-num: #aceebb; --gs-del-num: #ffcecb;
+  --gs-hunk: #ddf4ff; --gs-hunk-num: #b6e3ff;
+  --gs-neutral-bg: rgba(110, 118, 129, 0.12);
+  --gs-backdrop: rgba(31, 35, 40, 0.28); --gs-shadow: rgba(31, 35, 40, 0.22);
+}
+
+/* IntelliJ IDEA — the New UI (2022.3+, the default since 2024.1), not Darcula.
+   Its greys are the giveaway: the New UI dropped Darcula's warm #3C3F41 chrome
+   for the cooler #1E1F22 editor over a #2B2D30 tool window, and moved the
+   accent to #3574F0.
+
+   The semantic four are the IntelliJ platform's own VCS colours (the keys the
+   log and the diff gutter paint with), except that dark's green is the New UI's
+   brighter #5FAD65 rather than the platform #499C54 — the latter is a fill
+   colour there, and as 12px TEXT on #1E1F22 it lands under 4:1.
+
+   Unlike the GitHub palettes below, these are not transcribed from a published
+   token file, so there is no test pinning them to a source of truth; they are
+   read off the New UI's own chrome and diff. */
+.overlay[data-gs-theme='idea-dark'] {
+  --gs-bg: #1e1f22; --gs-panel: #2b2d30; --gs-raise: #393b40;
+  --gs-border: #393b40; --gs-border-soft: #2b2d30;
+  --gs-fg: #dfe1e5; --gs-fg-muted: #ced0d6; --gs-fg-dim: #9da0a8; --gs-fg-faint: #6f737a; --gs-fg-fainter: #4e5157;
+  --gs-accent: #548af7; --gs-accent-bg: rgba(84, 138, 247, 0.16); --gs-accent-border: rgba(84, 138, 247, 0.55);
+  --gs-add: #5fad65; --gs-del: #e26e6e; --gs-warn: #f0a732; --gs-info: #3592c4;
+  --gs-add-bg: rgba(95, 173, 101, 0.16); --gs-del-bg: rgba(226, 110, 110, 0.16);
+  --gs-warn-bg: rgba(240, 167, 50, 0.16); --gs-info-bg: rgba(53, 146, 196, 0.16);
+  /* IDEA paints diff as solid blocks rather than a wash, and the word-level
+     highlight as a distinctly stronger block over it — so these are opaque,
+     like GitHub's, instead of the alpha tints the other families use. */
+  --gs-add-line: #293c2e; --gs-del-line: #3d2b2b;
+  --gs-add-word: #3d6640; --gs-del-word: #6b3838;
+  --gs-hunk: rgba(84, 138, 247, 0.10); --gs-neutral-bg: rgba(157, 160, 168, 0.18);
+  --gs-backdrop: rgba(16, 17, 19, 0.6); --gs-shadow: rgba(0, 0, 0, 0.5);
+}
+.overlay[data-gs-theme='idea-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f7f8fa; --gs-raise: #ebecf0;
+  --gs-border: #d3d5db; --gs-border-soft: #ebecf0;
+  --gs-fg: #1e1f22; --gs-fg-muted: #3c3f44; --gs-fg-dim: #6c707e; --gs-fg-faint: #818594; --gs-fg-fainter: #a8adbd;
+  --gs-accent: #3574f0; --gs-accent-bg: rgba(53, 116, 240, 0.1); --gs-accent-border: rgba(53, 116, 240, 0.45);
+  --gs-add: #398a4a; --gs-del: #cc4a4a; --gs-warn: #a8760b; --gs-info: #2b7fb8;
+  --gs-add-bg: rgba(57, 138, 74, 0.12); --gs-del-bg: rgba(204, 74, 74, 0.12);
+  --gs-warn-bg: rgba(168, 118, 11, 0.12); --gs-info-bg: rgba(43, 127, 184, 0.12);
+  --gs-add-line: #e6f5e9; --gs-del-line: #fbe9ea;
+  --gs-add-word: #c2e5c9; --gs-del-word: #f5c9cc;
+  --gs-hunk: rgba(53, 116, 240, 0.07); --gs-neutral-bg: rgba(108, 112, 126, 0.12);
+  --gs-backdrop: rgba(30, 31, 34, 0.26); --gs-shadow: rgba(30, 31, 34, 0.18);
+}
+
+/* VS Code — Dark+ / Light+, the default editor themes. */
+.overlay[data-gs-theme='vscode-dark'] {
+  --gs-bg: #1e1e1e; --gs-panel: #252526; --gs-raise: #2d2d30;
+  --gs-border: #3e3e42; --gs-border-soft: #2d2d30;
+  --gs-fg: #d4d4d4; --gs-fg-muted: #cccccc; --gs-fg-dim: #9d9d9d; --gs-fg-faint: #808080; --gs-fg-fainter: #5a5a5a;
+  --gs-accent: #0098ff; --gs-accent-bg: rgba(0, 122, 204, 0.24); --gs-accent-border: rgba(0, 152, 255, 0.6);
+  --gs-add: #89d185; --gs-del: #f14c4c; --gs-warn: #cca700; --gs-info: #75beff;
+  --gs-add-bg: rgba(137, 209, 133, 0.18); --gs-del-bg: rgba(241, 76, 76, 0.18);
+  --gs-warn-bg: rgba(204, 167, 0, 0.18); --gs-info-bg: rgba(117, 190, 255, 0.18);
+  --gs-add-line: rgba(155, 185, 85, 0.18); --gs-del-line: rgba(255, 0, 0, 0.16);
+  --gs-add-word: rgba(155, 185, 85, 0.4); --gs-del-word: rgba(255, 0, 0, 0.36);
+  --gs-hunk: rgba(0, 122, 204, 0.14); --gs-neutral-bg: rgba(190, 190, 190, 0.14);
+  --gs-backdrop: rgba(0, 0, 0, 0.55); --gs-shadow: rgba(0, 0, 0, 0.6);
+}
+.overlay[data-gs-theme='vscode-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f3f3f3; --gs-raise: #e8e8e8;
+  --gs-border: #cecece; --gs-border-soft: #e8e8e8;
+  --gs-fg: #1e1e1e; --gs-fg-muted: #333333; --gs-fg-dim: #616161; --gs-fg-faint: #767676; --gs-fg-fainter: #a0a0a0;
+  --gs-accent: #005fb8; --gs-accent-bg: rgba(0, 95, 184, 0.1); --gs-accent-border: rgba(0, 95, 184, 0.45);
+  --gs-add: #10793f; --gs-del: #b5200d; --gs-warn: #855b00; --gs-info: #005fb8;
+  --gs-add-bg: rgba(16, 121, 63, 0.12); --gs-del-bg: rgba(181, 32, 13, 0.12);
+  --gs-warn-bg: rgba(133, 91, 0, 0.12); --gs-info-bg: rgba(0, 95, 184, 0.12);
+  --gs-add-line: rgba(155, 185, 85, 0.22); --gs-del-line: rgba(255, 0, 0, 0.13);
+  --gs-add-word: rgba(155, 185, 85, 0.45); --gs-del-word: rgba(255, 0, 0, 0.3);
+  --gs-hunk: rgba(0, 95, 184, 0.07); --gs-neutral-bg: rgba(97, 97, 97, 0.12);
+  --gs-backdrop: rgba(0, 0, 0, 0.25); --gs-shadow: rgba(0, 0, 0, 0.18);
+}
+
+/* Cyberpunk — neon on deep violet; the light variant keeps the magenta/cyan pair
+   over a near-white ground so the theme survives a bright room. */
+.overlay[data-gs-theme='cyberpunk-dark'] {
+  --gs-bg: #0b0417; --gs-panel: #14082a; --gs-raise: #1f0d3d;
+  --gs-border: #3a1f6b; --gs-border-soft: #26124a;
+  --gs-fg: #f0e6ff; --gs-fg-muted: #d5c2f5; --gs-fg-dim: #a98fd6; --gs-fg-faint: #7d64a8; --gs-fg-fainter: #56427a;
+  --gs-accent: #00f0ff; --gs-on-accent: #0b0417; --gs-accent-bg: rgba(0, 240, 255, 0.14); --gs-accent-border: rgba(0, 240, 255, 0.5);
+  --gs-add: #39ff88; --gs-del: #ff2e88; --gs-warn: #ffcc00; --gs-info: #00f0ff;
+  --gs-add-bg: rgba(57, 255, 136, 0.14); --gs-del-bg: rgba(255, 46, 136, 0.14);
+  --gs-warn-bg: rgba(255, 204, 0, 0.14); --gs-info-bg: rgba(0, 240, 255, 0.14);
+  --gs-add-line: rgba(57, 255, 136, 0.12); --gs-del-line: rgba(255, 46, 136, 0.12);
+  --gs-add-word: rgba(57, 255, 136, 0.34); --gs-del-word: rgba(255, 46, 136, 0.34);
+  --gs-hunk: rgba(0, 240, 255, 0.1); --gs-neutral-bg: rgba(169, 143, 214, 0.16);
+  --gs-backdrop: rgba(6, 2, 14, 0.68); --gs-shadow: rgba(0, 240, 255, 0.14);
+}
+.overlay[data-gs-theme='cyberpunk-light'] {
+  --gs-bg: #fdfbff; --gs-panel: #f4eeff; --gs-raise: #e9dfff;
+  --gs-border: #c9b3f0; --gs-border-soft: #e0d2f7;
+  --gs-fg: #1a0b2e; --gs-fg-muted: #33195c; --gs-fg-dim: #6b4ba0; --gs-fg-faint: #8f74bd; --gs-fg-fainter: #b9a5d6;
+  --gs-accent: #00a6b8; --gs-accent-bg: rgba(0, 166, 184, 0.12); --gs-accent-border: rgba(0, 166, 184, 0.5);
+  --gs-add: #00875a; --gs-del: #d6006e; --gs-warn: #b37a00; --gs-info: #00a6b8;
+  --gs-add-bg: rgba(0, 135, 90, 0.12); --gs-del-bg: rgba(214, 0, 110, 0.12);
+  --gs-warn-bg: rgba(179, 122, 0, 0.12); --gs-info-bg: rgba(0, 166, 184, 0.12);
+  --gs-add-line: rgba(0, 200, 130, 0.14); --gs-del-line: rgba(255, 46, 136, 0.12);
+  --gs-add-word: rgba(0, 200, 130, 0.34); --gs-del-word: rgba(255, 46, 136, 0.3);
+  --gs-hunk: rgba(0, 166, 184, 0.08); --gs-neutral-bg: rgba(107, 75, 160, 0.12);
+  --gs-backdrop: rgba(26, 11, 46, 0.28); --gs-shadow: rgba(26, 11, 46, 0.16);
+}
+
+/* One — Atom's One Dark / One Light. */
+.overlay[data-gs-theme='one-dark'] {
+  --gs-bg: #282c34; --gs-panel: #21252b; --gs-raise: #2c313a;
+  --gs-border: #3e4451; --gs-border-soft: #2c313a;
+  --gs-fg: #abb2bf; --gs-fg-muted: #b6bdca; --gs-fg-dim: #7f848e; --gs-fg-faint: #636d83; --gs-fg-fainter: #4b5263;
+  --gs-accent: #61afef; --gs-accent-bg: rgba(97, 175, 239, 0.14); --gs-accent-border: rgba(97, 175, 239, 0.55);
+  --gs-add: #98c379; --gs-del: #e06c75; --gs-warn: #e5c07b; --gs-info: #56b6c2;
+  --gs-add-bg: rgba(152, 195, 121, 0.16); --gs-del-bg: rgba(224, 108, 117, 0.16);
+  --gs-warn-bg: rgba(229, 192, 123, 0.16); --gs-info-bg: rgba(86, 182, 194, 0.16);
+  --gs-add-line: rgba(152, 195, 121, 0.14); --gs-del-line: rgba(224, 108, 117, 0.14);
+  --gs-add-word: rgba(152, 195, 121, 0.38); --gs-del-word: rgba(224, 108, 117, 0.38);
+  --gs-hunk: rgba(97, 175, 239, 0.1); --gs-neutral-bg: rgba(127, 132, 142, 0.18);
+  --gs-backdrop: rgba(23, 26, 33, 0.6); --gs-shadow: rgba(15, 17, 21, 0.55);
+}
+.overlay[data-gs-theme='one-light'] {
+  --gs-bg: #fafafa; --gs-panel: #f0f0f0; --gs-raise: #e5e5e6;
+  --gs-border: #d4d4d4; --gs-border-soft: #e5e5e6;
+  --gs-fg: #383a42; --gs-fg-muted: #4a4c53; --gs-fg-dim: #696c77; --gs-fg-faint: #909196; --gs-fg-fainter: #b8b9bd;
+  --gs-accent: #4078f2; --gs-accent-bg: rgba(64, 120, 242, 0.1); --gs-accent-border: rgba(64, 120, 242, 0.45);
+  --gs-add: #50a14f; --gs-del: #e45649; --gs-warn: #c18401; --gs-info: #0184bc;
+  --gs-add-bg: rgba(80, 161, 79, 0.12); --gs-del-bg: rgba(228, 86, 73, 0.12);
+  --gs-warn-bg: rgba(193, 132, 1, 0.12); --gs-info-bg: rgba(1, 132, 188, 0.12);
+  --gs-add-line: rgba(80, 161, 79, 0.14); --gs-del-line: rgba(228, 86, 73, 0.13);
+  --gs-add-word: rgba(80, 161, 79, 0.34); --gs-del-word: rgba(228, 86, 73, 0.32);
+  --gs-hunk: rgba(64, 120, 242, 0.07); --gs-neutral-bg: rgba(105, 108, 119, 0.12);
+  --gs-backdrop: rgba(56, 58, 66, 0.26); --gs-shadow: rgba(56, 58, 66, 0.18);
+}
+
+/* Solarized — Ethan Schoonover's fixed sixteen, both official grounds. */
+.overlay[data-gs-theme='solarized-dark'] {
+  --gs-bg: #002b36; --gs-panel: #073642; --gs-raise: #0a4553;
+  --gs-border: #0f5666; --gs-border-soft: #073642;
+  --gs-fg: #93a1a1; --gs-fg-muted: #839496; --gs-fg-dim: #657b83; --gs-fg-faint: #586e75; --gs-fg-fainter: #45636b;
+  --gs-accent: #268bd2; --gs-accent-bg: rgba(38, 139, 210, 0.16); --gs-accent-border: rgba(38, 139, 210, 0.55);
+  --gs-add: #859900; --gs-del: #dc322f; --gs-warn: #b58900; --gs-info: #2aa198;
+  --gs-add-bg: rgba(133, 153, 0, 0.2); --gs-del-bg: rgba(220, 50, 47, 0.18);
+  --gs-warn-bg: rgba(181, 137, 0, 0.18); --gs-info-bg: rgba(42, 161, 152, 0.18);
+  --gs-add-line: rgba(133, 153, 0, 0.16); --gs-del-line: rgba(220, 50, 47, 0.15);
+  --gs-add-word: rgba(133, 153, 0, 0.4); --gs-del-word: rgba(220, 50, 47, 0.38);
+  --gs-hunk: rgba(38, 139, 210, 0.12); --gs-neutral-bg: rgba(101, 123, 131, 0.2);
+  --gs-backdrop: rgba(0, 20, 26, 0.62); --gs-shadow: rgba(0, 20, 26, 0.55);
+}
+.overlay[data-gs-theme='solarized-light'] {
+  --gs-bg: #fdf6e3; --gs-panel: #eee8d5; --gs-raise: #e3ddca;
+  --gs-border: #d5cfbb; --gs-border-soft: #eee8d5;
+  --gs-fg: #586e75; --gs-fg-muted: #657b83; --gs-fg-dim: #839496; --gs-fg-faint: #93a1a1; --gs-fg-fainter: #b5b0a0;
+  --gs-accent: #268bd2; --gs-accent-bg: rgba(38, 139, 210, 0.12); --gs-accent-border: rgba(38, 139, 210, 0.45);
+  --gs-add: #6c7c00; --gs-del: #cb2825; --gs-warn: #9a7400; --gs-info: #21867f;
+  --gs-add-bg: rgba(133, 153, 0, 0.18); --gs-del-bg: rgba(220, 50, 47, 0.14);
+  --gs-warn-bg: rgba(181, 137, 0, 0.16); --gs-info-bg: rgba(42, 161, 152, 0.14);
+  --gs-add-line: rgba(133, 153, 0, 0.16); --gs-del-line: rgba(220, 50, 47, 0.12);
+  --gs-add-word: rgba(133, 153, 0, 0.38); --gs-del-word: rgba(220, 50, 47, 0.3);
+  --gs-hunk: rgba(38, 139, 210, 0.08); --gs-neutral-bg: rgba(88, 110, 117, 0.14);
+  --gs-backdrop: rgba(88, 110, 117, 0.26); --gs-shadow: rgba(88, 110, 117, 0.2);
+}
+
+/* Nord — Polar Night for dark, Snow Storm for light. Nord's aurora greens and
+   reds are tuned for a dark ground, so the light variant darkens the diff pair
+   rather than washing it out. */
+.overlay[data-gs-theme='nord-dark'] {
+  --gs-bg: #2e3440; --gs-panel: #3b4252; --gs-raise: #434c5e;
+  --gs-border: #4c566a; --gs-border-soft: #3b4252;
+  --gs-fg: #eceff4; --gs-fg-muted: #d8dee9; --gs-fg-dim: #9aa5b8; --gs-fg-faint: #7b88a1; --gs-fg-fainter: #5d6a82;
+  --gs-accent: #88c0d0; --gs-on-accent: #2e3440; --gs-accent-bg: rgba(136, 192, 208, 0.14); --gs-accent-border: rgba(136, 192, 208, 0.55);
+  --gs-add: #a3be8c; --gs-del: #bf616a; --gs-warn: #ebcb8b; --gs-info: #81a1c1;
+  --gs-add-bg: rgba(163, 190, 140, 0.16); --gs-del-bg: rgba(191, 97, 106, 0.18);
+  --gs-warn-bg: rgba(235, 203, 139, 0.16); --gs-info-bg: rgba(129, 161, 193, 0.16);
+  --gs-add-line: rgba(163, 190, 140, 0.14); --gs-del-line: rgba(191, 97, 106, 0.15);
+  --gs-add-word: rgba(163, 190, 140, 0.38); --gs-del-word: rgba(191, 97, 106, 0.4);
+  --gs-hunk: rgba(136, 192, 208, 0.1); --gs-neutral-bg: rgba(154, 165, 184, 0.16);
+  --gs-backdrop: rgba(29, 35, 45, 0.62); --gs-shadow: rgba(20, 25, 33, 0.55);
+}
+.overlay[data-gs-theme='nord-light'] {
+  --gs-bg: #eceff4; --gs-panel: #e5e9f0; --gs-raise: #d8dee9;
+  --gs-border: #c3cbd8; --gs-border-soft: #dfe4ec;
+  --gs-fg: #2e3440; --gs-fg-muted: #3b4252; --gs-fg-dim: #4c566a; --gs-fg-faint: #6b7689; --gs-fg-fainter: #9aa4b5;
+  --gs-accent: #5e81ac; --gs-accent-bg: rgba(94, 129, 172, 0.12); --gs-accent-border: rgba(94, 129, 172, 0.5);
+  --gs-add: #5e7d47; --gs-del: #a5424c; --gs-warn: #97701f; --gs-info: #4c7a8c;
+  --gs-add-bg: rgba(94, 125, 71, 0.14); --gs-del-bg: rgba(165, 66, 76, 0.13);
+  --gs-warn-bg: rgba(151, 112, 31, 0.14); --gs-info-bg: rgba(76, 122, 140, 0.13);
+  --gs-add-line: rgba(94, 125, 71, 0.14); --gs-del-line: rgba(165, 66, 76, 0.12);
+  --gs-add-word: rgba(94, 125, 71, 0.34); --gs-del-word: rgba(165, 66, 76, 0.32);
+  --gs-hunk: rgba(94, 129, 172, 0.09); --gs-neutral-bg: rgba(76, 86, 106, 0.13);
+  --gs-backdrop: rgba(46, 52, 64, 0.26); --gs-shadow: rgba(46, 52, 64, 0.18);
+}
+
+/* ============================ drawer shell ============================ */
+
+/* ---- geometry and type scale ----
+ *
+ * The drawer is a plugin surface inside dsh, so it borrows dsh's own control
+ * vocabulary rather than inventing a second one. The numbers below are measured
+ * from the running app, not guessed: dsh settles on a 28px control height, a
+ * 12px radius for its rows and panes, a full pill for its dropdown triggers,
+ * and the `--dsw-font-*` ladder for type.
+ *
+ * Every control in this stylesheet resolves its height, radius, padding and
+ * size through these. That is the whole mechanism keeping the drawer coherent —
+ * before it, eight classes each spelled out their own padding and radius, and
+ * the same "small secondary button" rendered at four different heights.
+ */
+.overlay {
+  --gs-inset: 14px;
+
+  /* Control geometry — dsh's own. */
+  --gs-h-control: 28px;   /* chrome: header actions, chips, ref pickers */
+  --gs-h-compact: 24px;   /* in-pane tools, where vertical space belongs to the diff */
+  --gs-pad-control: 0 12px;
+  --gs-pad-compact: 0 10px;
+
+  /* Readable against a solid --gs-accent fill. White for every palette whose
+     accent is a mid-to-dark hue; the two palettes with a light accent override
+     it, because white on #00f0ff is not a colour anyone can read. */
+  --gs-on-accent: #ffffff;
+
+  /* Commit-graph lanes. Deliberately NOT per-palette: a lane's colour carries no
+     meaning beyond "not the same as the lane beside it", so it has nothing to
+     follow the theme for. What it does need is to stay legible on every ground
+     the drawer can paint, from #0d1117 to Solarized's cream — these are mid
+     hues chosen to hold on both ends rather than tuned to either. */
+  --gs-graph-0: #58a6ff;
+  --gs-graph-1: #3fb950;
+  --gs-graph-2: #d29922;
+  --gs-graph-3: #bc8cff;
+  --gs-graph-4: #f778ba;
+  --gs-graph-5: #39c5cf;
+
+  /* Radii. Four values, each with one job; nothing else may invent a fifth. */
+  --gs-r-pill: 999px;    /* drawer chrome: header actions, ref chips, triggers */
+  --gs-r-control: 8px;   /* controls inside a panel or pane; inputs; badges */
+  --gs-r-surface: 12px;  /* rows, popovers, panes */
+  --gs-r-drawer: 14px;   /* the drawer and its companion card */
+
+  /* Type — dsh's --dsw-font-* ladder, which tops out at 11px for meta text. */
+  --gs-t-meta: 11px;     /* --dsw-font-xxxs-11: counters, captions */
+  --gs-t-dense: 12px;    /* --dsw-font-xxs-12: dense list rows */
+  --gs-t-ui: 13px;       /* --dsw-font-xs-13: controls, tabs, body */
+
+  /* Two gutters, one per container. Chrome bars that span the drawer — header,
+     tabs, worktree chips, path line, compare bar — share `--gs-gutter`; they
+     used to sit at 20/20/14/20/20 and the drawer's left edge read as ragged.
+     Inside a pane the gutter is tighter, because a pane is already inset by its
+     divider and its rows carry indentation of their own. */
+  --gs-gutter: 16px;
+  --gs-gutter-pane: 12px;
+
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; justify-content: flex-end; align-items: stretch; gap: 12px;
+  padding: var(--gs-inset);
+  box-sizing: border-box;
+  background: var(--gs-backdrop);
+  animation: gsFade 160ms ease-out;
+}
+.drawer {
+  position: relative;
+  display: flex; flex-direction: column; box-sizing: border-box;
+  width: min(1600px, 94vw); height: 100%;
+  color: var(--gs-fg);
+  background: var(--gs-bg);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-drawer);
+  /* Rounded corners only hold if the panes cannot paint past them. This also
+     clips the scaled-up background layer below. */
+  overflow: hidden;
+  box-shadow: 0 24px 64px var(--gs-shadow);
+  font-family: var(--dsw-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+  animation: gsSlide 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Surfaces the panes paint with. Identical to the palette's own colours until
+     a background image is set, at which point they thin out to let it show. Every
+     large filled area uses these; small chips and hovers keep the solid tokens,
+     since a translucent 20px pill only reads as muddy. */
+  --gs-surface: var(--gs-bg);
+  --gs-surface-2: var(--gs-panel);
+}
+/* `--gs-bg-image`, `--gs-bg-blur` and `--gs-veil` are set inline by the panel
+   from the winning style scope; the attribute is what switches the surfaces. */
+.drawer[data-gs-bg] {
+  --gs-surface: color-mix(in srgb, var(--gs-bg) var(--gs-veil), transparent);
+  --gs-surface-2: color-mix(in srgb, var(--gs-panel) var(--gs-veil), transparent);
+}
+/* Background image layer. Scaled past the edges because a blur samples beyond
+   its own box and would otherwise fade to transparent at the border. */
+.drawer[data-gs-bg]::before {
+  content: '';
+  position: absolute; inset: 0; z-index: 0;
+  background-image: var(--gs-bg-image);
+  background-size: cover; background-position: center;
+  filter: blur(var(--gs-bg-blur));
+  transform: scale(1.12);
+  pointer-events: none;
+}
+/* Everything real sits above that layer. The drag handle is excluded because it
+   is absolutely positioned and carries its own stacking order; matching it here
+   would leave the two rules deciding by source order.
+   Chrome that hosts a popover must sit ABOVE `.body`: later siblings with the
+   same z-index paint on top, which buried Theme and Branch menus under the
+   panes. A menu that renders but cannot be clicked looks like a dead control.
+   Popovers also drop DOWNWARD, so a bar's list can reach past every bar below
+   it — which means the ranks must strictly DECREASE down the DOM, or a lower
+   bar at the same z-index absorbs the rows (the worktree picker's list was
+   unclickable behind the sync bar until they were separated).
+   STRICTLY decreasing, including between the header and the tabs. Those two
+   shared rank 23 for as long as the header's only menu was Appearance, which
+   portals to the rail outside the drawer and so never dropped through anything.
+   The worktree picker does drop, and the tab bar — a later sibling at the same
+   rank — swallowed its filter box on the first try. */
+.drawer > *:not(.resizer) { position: relative; z-index: 1; }
+.drawer > .header { z-index: 24; }
+.drawer > .tabs { z-index: 23; }
+.drawer > .compareBar { z-index: 22; }
+.drawer > .syncBar { z-index: 20; }
+/* Maximized drops the inset and the rounding: at full bleed they would only
+   waste edge pixels the diff wants. */
+.overlayMax { padding: 0; gap: 0; }
+.overlayMax .drawer { flex: 1 1 auto; width: auto; min-width: 0; border-radius: 0; border-width: 0 0 0 1px; }
+@keyframes gsFade { from { opacity: 0; } }
+@keyframes gsSlide { from { transform: translateX(24px); opacity: 0; } }
+
+/* Drag handle on the leading edge: a 10px hit area that is easy to grab, showing
+   a short centred grip in the card's own border colour. A full-height accent bar
+   was read as a second scrollbar and pulled the eye off the diff. */
+.resizer {
+  position: absolute; top: 0; bottom: 0; left: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resizer::after {
+  content: '';
+  width: 3px; height: 32px;
+  border-radius: 999px;
+  background: var(--gs-fg-fainter);
+  opacity: 0;
+  transition: opacity 140ms ease, height 140ms ease;
+}
+.resizer:hover::after { opacity: 0.6; }
+.resizerActive::after { opacity: 0.9; height: 56px; }
+
+/* Divider between two panes. It carries the 1px rule the panes used to draw as
+   their own border, so the visible line and the drag target are one element and
+   cannot drift apart. */
+.paneDivider {
+  position: relative; z-index: 5;
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.paneDivider::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 3px;
+  width: 1px;
+  background: var(--gs-border-soft);
+}
+.paneDivider::after {
+  content: '';
+  position: relative;
+  width: 3px; height: 28px;
+  border-radius: 999px;
+  background: var(--gs-fg-fainter);
+  opacity: 0;
+  transition: opacity 140ms ease, height 140ms ease;
+}
+.paneDivider:hover::after { opacity: 0.6; }
+.paneDividerActive::after { opacity: 0.9; height: 48px; }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex: none;
+  padding: 10px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border);
+  background: var(--gs-surface-2);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-ui);
+}
+.headerLeft { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+/* The subject of the drawer: which worktree. Worn by the picker's trigger when
+   there is a choice (`.headerPicker` below) and by a plain span when there is
+   not, so a one-worktree repository still states its identity in the same
+   place, at the same weight. */
+.headerBranch {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--gs-accent-border);
+  border-radius: 999px;
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+/* Colour only — the geometry stays the button vocabulary's, so the trigger is
+   the same pill as every other menu in the drawer and only its role differs.
+   Qualified with `.refButton` deliberately: the shared vocabulary is declared
+   at the FOOT of this file, so a bare `.headerPicker` up here loses every
+   property they both set to source order, and the chip came out grey. */
+.refButton.headerPicker {
+  /* The drawer's subject, in a row with 1400px to spare — the 260px the small
+     pickers share clipped `feature/nested/deep/scheduler` at a point where the
+     name needed 205. Still capped, so one absurd branch cannot push the totals
+     off the row. */
+  max-width: 420px;
+  border-color: var(--gs-accent-border);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+.refButton.headerPicker:hover { background: var(--gs-accent-bg); color: var(--gs-accent); border-color: var(--gs-accent); }
+
+/* Slash-separated names — paths and branches alike — that give up their HEAD
+   when the row runs short. Plain `text-overflow: ellipsis` eats the leaf, and
+   the leaf is the half that answers "which one": `…/worktrees/fixture-07` vs
+   `…/worktrees/fixture-14`, `feature/deep/parser` vs `feature/deep/lexer`.
+
+   The shrink is WEIGHTED rather than pinned. `flex: none` on the tail read
+   correctly for a path, but a name with no head at all — a bare
+   `some-very-long-branch-name` — would then refuse to shrink and simply
+   overflow its row. At 999 the head absorbs effectively all of it, and the
+   tail only starts giving ground once the head has nothing left. */
+.elide { display: inline-flex; align-items: baseline; flex: 0 1 auto; min-width: 0; }
+.elideHead {
+  flex: 0 999 auto; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.elideTail {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+/* The header's path: quiet, with the leaf a shade brighter than its directory,
+   and free to take whatever the totals beside it leave. */
+.headerPathMain { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); }
+.headerPathMain .elideTail { color: var(--gs-fg-dim); }
+/* Either end of the compare pill, so a long branch elides there too rather
+   than stretching the pill across the header. */
+.headerViewRef { max-width: 160px; }
+
+/* What the view is about when it is NOT the working tree: a commit hash, or a
+   comparison's two ends. Quieter than the worktree chip — the worktree is where
+   you are, this is only what you are looking at inside it. */
+.headerView {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-muted);
+  font-size: var(--gs-t-meta);
+  font-variant-numeric: tabular-nums;
+}
+.headerDetached {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gs-warn-bg);
+  color: var(--gs-warn);
+  font-size: var(--gs-t-meta);
+  letter-spacing: 0.02em;
+}
+.headerTotals { font-variant-numeric: tabular-nums; }
+.headerTotalsAdd { color: var(--gs-add); font-weight: 600; }
+.headerTotalsDel { color: var(--gs-del); font-weight: 600; }
+.headerTotalsDim { color: var(--gs-fg-dim); font-size: var(--gs-t-dense); }
+/* The gap is the rule, not each button's margin. `.btn` used to carry its own
+   `margin-left`, which meant the spacing lived in the button and vanished the
+   moment the button's geometry moved into the shared vocabulary. */
+.headerRight { display: flex; flex: none; gap: 8px; position: relative; }
+
+/* Theme button in the header. The panel is a companion card in the overlay,
+   to the LEFT of the drawer — not a column stolen from the diff, and not a
+   popover painted over the code. */
+.theme { position: relative; display: inline-flex; }
+/* Settings hangs from its own gear like every other menu in the drawer, right
+   edge aligned to the button because the button is the last thing in the row
+   and a left-aligned card would run off the drawer. Wider than a ref list: it
+   holds a palette grid, an image preview and a CSS editor, none of which fit a
+   menu-width column. */
+.refPop.settingsPop {
+  top: calc(100% + 6px); right: 0; left: auto;
+  width: 320px; max-width: calc(100vw - 32px);
+  max-height: min(560px, calc(100vh - 120px));
+}
+.themeRail {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 12px 14px 16px;
+  overflow-y: auto;
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+}
+.themeGroup { display: flex; flex-direction: column; gap: 6px; }
+.themeLabel {
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.themeRowSplit { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* Mode picker. Each option is a painted swatch over its label, and the swatch
+   colours are FIXED rather than palette-derived: "light" and "dark" name the
+   colours themselves, so a dark-palette button rendering the light option in
+   dark grey would be telling the user the opposite of what it does. */
+/* The mode picker is the one control that is taller than the scale: it stacks a
+   painted swatch over its label, because "light" and "dark" are better shown
+   than named. Everything except the height comes from the vocabulary. */
+.segmented { display: flex; gap: 6px; }
+.segment {
+  flex: 1 1 0;
+  display: flex; flex-direction: column; gap: 4px; align-items: stretch;
+  box-sizing: border-box;
+  padding: 4px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-meta);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.segment:hover { background: var(--gs-raise); border-color: var(--gs-fg-fainter); color: var(--gs-fg); }
+.segment:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+.segmentChip {
+  height: 20px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: calc(var(--gs-r-control) - 4px);
+}
+.chipLight { background: #ffffff; }
+.chipDark { background: #0b0b0d; }
+/* System takes both halves, which is how every OS appearance control shows it. */
+.chipSystem { background: linear-gradient(105deg, #ffffff 0 50%, #0b0b0d 50% 100%); }
+
+.paletteRow {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; box-sizing: border-box;
+  padding: 5px 8px;
+  border: 0; border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-muted);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  text-align: left; cursor: pointer;
+}
+.paletteRow:hover { background: var(--gs-raise); color: var(--gs-fg); }
+/* .paletteRowActive: see the shared selected-state rule at the foot of the file. */
+/* Three-stop swatch: ground, accent, and the add colour the diff leans on. */
+.swatch {
+  flex: none;
+  display: inline-flex; overflow: hidden;
+  width: 26px; height: 12px;
+  border: 1px solid var(--gs-border); border-radius: 3px;
+}
+.swatch span { flex: 1; }
+
+/* Scope switch: which of the two stores an edit lands in. */
+.scopeRow { display: flex; gap: 6px; }
+.scopeHint { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); overflow-wrap: anywhere; }
+
+.bgPreview {
+  height: 64px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background-color: var(--gs-bg);
+  background-size: cover; background-position: center;
+}
+.bgEmpty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gs-fg-faint); font-size: var(--gs-t-meta);
+}
+.sliderRow { display: flex; align-items: center; gap: 8px; font-size: var(--gs-t-meta); color: var(--gs-fg-dim); }
+.sliderRow input { flex: 1; min-width: 0; accent-color: var(--gs-accent); }
+.sliderValue { flex: none; width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.cssArea {
+  width: 100%; box-sizing: border-box;
+  min-height: 96px; max-height: 220px;
+  padding: 7px 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: var(--dsw-font-mono, ui-monospace, Consolas, monospace); font-size: var(--gs-t-meta);
+  resize: vertical;
+  outline: none;
+}
+.cssArea:focus { border-color: var(--gs-accent-border); }
+.themeNote { color: var(--gs-warn); font-size: var(--gs-t-meta); }
+.themeDirty { color: var(--gs-accent); font-size: var(--gs-t-meta); }
+
+/* Worktree rows give their whole width to the branch; `.refRowName` already
+   flexes and ellipsises, so nothing else here competes for it. The path is on
+   the row's `title`. */
+/* Marks the session's OWN worktree, independent of which one is being viewed. */
+.wtCurrent { color: var(--gs-add); font-size: 8px; line-height: 1; }
+
+.commitCopy { margin-left: auto; }
+
+.commitPop {
+  position: fixed; z-index: 40;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 24px));
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px 12px;
+  overflow: auto;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
+  background: var(--gs-panel); color: var(--gs-fg);
+  box-shadow: 0 16px 40px var(--gs-shadow);
+  font-family: var(--dsw-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.commitPopTop { display: flex; align-items: center; gap: 8px; }
+.commitPopTop .commitWhen { margin-right: auto; }
+.commitPopSubject {
+  color: var(--gs-fg);
+  font-size: var(--gs-t-ui); font-weight: 600; line-height: 18px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text;
+}
+.commitPopBody {
+  margin: 0;
+  color: var(--gs-fg-muted);
+  font-family: inherit;
+  font-size: var(--gs-t-dense); line-height: 18px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Drawer tabs — mirrors the app's own tab bar: 13/16 text at weight 500, a
+   tertiary label, the selected one riding the accent over a 2px bar. */
+.tabs {
+  display: flex; gap: 24px;
+  flex: none;
+  padding: 0 var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  font-family: inherit;
+}
+.tab {
+  position: relative;
+  padding: 8px 0 9px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--gs-t-ui); line-height: 16px; font-weight: 500;
+  color: var(--gs-fg-dim);
+  cursor: pointer;
+}
+.tab::after {
+  content: '';
+  position: absolute; right: 0; bottom: 1px; left: 0;
+  height: 2px; border-radius: 2px;
+  background: transparent;
+}
+.tabActive { color: var(--gs-accent); }
+.tabActive::after { background: var(--gs-accent); }
+
+/* Compare tab: the base/head ref pickers. */
+.compareBar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  color: var(--gs-fg-dim);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.compareArrow { color: var(--gs-fg-faint); }
+
+/* Ref picker: a button that opens a filter box over a scrolling list. Sized for
+   a repository with hundreds of branches, where a chip row or a plain select
+   stops being usable. */
+.refPicker { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.refLabel { flex: none; color: var(--gs-fg-faint); }
+.refButton { max-width: 260px; justify-content: space-between; }
+.refValue { min-width: 0; overflow: hidden; }
+.refCaret { flex: none; color: var(--gs-fg-faint); font-size: 9px; }
+.refPop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 10;
+  display: flex; flex-direction: column;
+  width: 300px; max-width: 80vw;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-panel);
+  box-shadow: 0 12px 32px var(--gs-shadow);
+  overflow: hidden;
+}
+/* A short fixed menu rather than a branch list: no search box, no footer, and
+   sized to its own labels instead of the 300px a few hundred refs need. Anchored
+   right because the pickers that use it sit in a bar's right-hand cluster, where
+   a left-anchored popover would open off the drawer. */
+.menuPop {
+  width: auto; min-width: 100%;
+  left: auto; right: 0;
+  padding: 4px;
+}
+.refSearch {
+  flex: none;
+  padding: 7px 10px;
+  border: 0; border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.refSearch::placeholder { color: var(--gs-fg-faint); }
+/* Bounded so the popover never runs off the drawer, whatever the branch count. */
+.refList { flex: 1; max-height: 280px; overflow-y: auto; padding: 4px; }
+.refGroup {
+  padding: 6px 8px 3px;
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.refRow {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; width: 100%;
+  padding: 5px 8px;
+  border: 0; border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-muted);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  text-align: left; cursor: pointer;
+}
+.refRow:hover { background: var(--gs-raise); color: var(--gs-fg); }
+/* .refRowActive: see the shared selected-state rule at the foot of the file. */
+/* Keeps a branch without a worktree aligned with one that has the glyph. */
+.refRowSpacer { flex: none; width: 12px; }
+.refRowName { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.refEmpty { padding: 14px 10px; color: var(--gs-fg-faint); font-size: var(--gs-t-dense); }
+.refFoot {
+  flex: none;
+  padding: 5px 10px;
+  border-top: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-faint); font-size: var(--gs-t-meta);
+}
+
+/* Commit log — its own full-height pane beside the file tree. Rows are stacked
+   so each subject gets the pane's full width instead of a 340px ellipsis. */
+.commitsPane {
+  /* Shrinkable, with the floor as a min-width rather than a JS clamp alone: a
+     width dragged in one tab must not squeeze the diff to nothing when a third
+     pane appears in another. The floors come from the panel's own constants, so
+     the clamp and the stylesheet cannot drift apart. */
+  flex: 0 1 auto; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 0;
+  /* Capped, so every pixel past the cap goes to the diff — the pane whose
+     content cannot wrap. */
+  width: 26%; min-width: var(--gs-min-commits); max-width: 340px;
+  background: var(--gs-surface);
+}
+/* Shared header bar for the commit and tree panes. Its own height comes from
+   the compact control it hosts, so a pane with tools and a pane without one
+   still line up across the divider. */
+.paneHead {
+  display: flex; align-items: center; gap: 8px;
+  flex: none;
+  min-height: 37px; box-sizing: border-box;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-dim);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.paneTitle { font-weight: 600; }
+/* Zero-height probe below the last row; scrolling it into view fetches the next
+   page. It carries no pixels of its own so it cannot disturb the list. */
+.commitsSentinel { flex: none; height: 1px; }
+.commitsFoot {
+  flex: none;
+  padding: 8px;
+  color: var(--gs-fg-faint);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-meta); text-align: center;
+  /* Reserved whether or not there is text, so arriving at the end of the list
+     does not shift the rows above it. */
+  min-height: 16px;
+}
+
+/* `flex: 1` with `min-height: 0` gives this scroller a DEFINITE height from the
+   pane. A percentage max-height cannot: its parent is sized by content, so the
+   percentage has nothing to resolve against and the list grows without bound —
+   which is what pushed the file tree off screen and the footer out of reach. */
+/* No gap between lines and no left padding: the graph column runs down the left
+   edge and a lane has to reach the next row to stay one line. The rows' own
+   breathing room is inside `.commit`, which keeps its inset and rounding. */
+.commits {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 4px 0;
+}
+/* One list line: the graph slice, then the row. Fixed height, because the SVG
+   is drawn at exactly this height and the lanes only join if they agree. */
+.commitLine {
+  display: flex; align-items: stretch;
+  flex: none;
+  height: 48px;
+}
+.graphCell { flex: none; display: block; }
+/* An inset row, like dsh's own session rows: 12px radius, filled when active. */
+.commit {
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+  height: 100%;
+  margin: 1px 0;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--gs-r-surface);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--gs-t-dense);
+  overflow: hidden;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.commit:hover { background: var(--gs-raise); }
+.commitActive { border-color: var(--gs-accent-border); background: var(--gs-accent-bg); }
+.commitTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.commitHash { color: var(--gs-info); }
+.commitSubjectRow {
+  display: flex; align-items: baseline; gap: 4px;
+  min-width: 0;
+}
+.commitSubject {
+  flex: 1; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--gs-fg-muted);
+}
+.commitHasBody { flex: none; color: var(--gs-fg-faint); letter-spacing: 0.04em; }
+/* Branch and tag names pointing at this commit. Capped and ellipsised: a release
+   commit can carry a dozen refs, and none of them is worth the subject's room. */
+.commitRef {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  padding: 0 5px;
+  border: 1px solid var(--gs-accent-border); border-radius: var(--gs-r-pill);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-size: var(--gs-t-meta); line-height: 15px;
+}
+.commitWhen { flex: none; color: var(--gs-fg-faint); }
+
+.body { display: flex; flex: 1; min-height: 0; z-index: 1; }
+
+/* File tree column. A peer of the commit pane and the diff, never their parent:
+   each of the three scrolls on its own and keeps its full height. */
+.treeCol {
+  flex: 0 1 auto; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 0;
+  width: 28%; min-width: var(--gs-min-tree); max-width: 400px;
+  background: var(--gs-surface);
+}
+
+/* file tree */
+.treeWrap {
+  flex: 1; box-sizing: border-box;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+}
+/* Two items, not five: the count and one group of buttons. The pane drags down
+   to 170px, so the row does have to wrap — but it wraps between the count and
+   the group, never inside it. Wrapping the buttons individually is what left a
+   lone "Collapse all" stranded on a second row under a right-aligned
+   "Expand all". `space-between` then aligns whichever way the row broke. */
+.treeTools {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  justify-content: space-between;
+  flex: none;
+  min-height: 37px; box-sizing: border-box;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+/* Wraps only when the group alone cannot fit the pane — five controls do not
+   go into 170px by any arrangement, and a clipped button is worse than a
+   second row. Above ~250px this never fires. */
+.treeActions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+/* The root tick sits in the same column the rows read down, so it is pulled out
+   of the toolbar's gutter to the pane edge rather than aligned to the label. */
+.treeLead { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.treeLabel {
+  flex: none;
+  white-space: nowrap;
+  color: var(--gs-fg-dim); font-size: var(--gs-t-dense);
+}
+.tree {
+  flex: 1; min-height: 0;
+  margin: 0; padding: 6px 0 16px;
+  overflow: auto; list-style: none;
+}
+/* The list's stand-in while the view's file list is in flight: centred and
+   quiet, never a claim about how many changes exist. */
+.treeEmpty {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gs-fg-faint); font-size: var(--gs-t-ui);
+}
+/* Nested lists are NOT .tree: only the root list scrolls, otherwise every level
+   would grow its own scrollbar. */
+.treeSub {
+  position: relative;
+  margin: 0; padding: 0;
+  list-style: none;
+}
+/* One hairline per nesting level at the parent's chevron column, so a deep tree
+   reads as a tree rather than a ragged left edge. The offset comes from the row
+   that owns the level (see TREE_RAIL_OFFSET). */
+.treeSub::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: var(--gs-rail, 0);
+  width: 1px;
+  background: var(--gs-border-soft);
+}
+.treeDirLi { position: relative; }
+.treeDir {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; width: 100%;
+  padding: 4px 12px 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit;
+  font-size: var(--gs-t-dense); font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.treeDir:hover { background: var(--gs-panel); color: var(--gs-fg-muted); }
+.treeDirActive { color: var(--gs-fg-muted); }
+.chevron {
+  flex: none;
+  display: inline-block;
+  width: 10px;
+  color: var(--gs-fg-fainter);
+  font-size: var(--gs-t-meta);
+  transition: transform 120ms ease;
+}
+.chevronOpen { transform: rotate(90deg); }
+.treeDirName {
+  flex: 1; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.treeDirCount {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-meta); font-weight: 600; line-height: 16px;
+}
+.treeDirCounts { flex: none; font-size: var(--gs-t-meta); font-variant-numeric: tabular-nums; }
+.file {
+  display: flex; align-items: center; gap: 8px;
+  box-sizing: border-box; width: 100%;
+  padding: 5px 14px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--gs-fg-muted);
+  font-family: inherit;
+  font-size: var(--gs-t-dense);
+  text-align: left;
+  cursor: pointer;
+}
+.file:hover { background: var(--gs-panel); }
+.fileActive {
+  background: var(--gs-panel);
+  border-left-color: var(--gs-accent);
+  color: var(--gs-fg);
+}
+
+.fileStatus {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  font-weight: 700; font-size: var(--gs-t-meta); line-height: 1;
+}
+.stAdded, .stUntracked { color: var(--gs-add); background: var(--gs-add-bg); }
+.stDeleted { color: var(--gs-del); background: var(--gs-del-bg); }
+.stModified { color: var(--gs-warn); background: var(--gs-warn-bg); }
+.stRenamed { color: var(--gs-info); background: var(--gs-info-bg); }
+
+.filePath { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fileBinary {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+}
+.fileCounts { flex: none; font-size: var(--gs-t-meta); font-variant-numeric: tabular-nums; }
+.fileCountAdd { color: var(--gs-add); }
+.fileCountDel { color: var(--gs-del); }
+
+/* diff pane */
+.diffPane { flex: 1 1 0; min-width: var(--gs-min-diff); overflow: auto; background: var(--gs-surface); }
+/* The pre is as wide as its longest line (`max-content`) and at least the pane
+   (`min-width: 100%`). Each row then stretches to that width, so add/delete
+   tints survive horizontal scroll instead of stopping at the viewport edge. */
+.diffPre {
+  display: flex; flex-direction: column;
+  margin: 0; padding: 8px 0 16px;
+  min-width: 100%; width: max-content;
+  /* GitHub's blob stack — Cascadia ligatures and a 16px leading were why this
+     read as a terminal dump instead of a pull-request diff. */
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
+.renameLine {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-info);
+  font-size: var(--gs-t-dense);
+}
+/* The old path is literal content, not prose: give it the body colour so it
+   reads louder than the sentence around it. */
+.renameLine code { color: var(--gs-fg); }
+
+/* Each line: [old#][new#][sign][code]. Stretch, don't baseline — empty line-number
+   cells plus nested syntax spans used to inflate the row into prose leading. */
+.line {
+  display: flex; align-items: stretch;
+  width: max-content; min-width: 100%;
+  min-height: 20px; line-height: 20px;
+  white-space: nowrap;
+}
+.lnOld, .lnNew {
+  flex: none;
+  box-sizing: border-box;
+  width: 3.2em;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--gs-fg-fainter);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.line:hover .lnOld, .line:hover .lnNew { color: var(--gs-fg-dim); }
+/* No rule down the right edge: GitHub carries the +/- as the first glyph of the
+   code cell and draws nothing between the columns. The rule that used to be
+   here cut every tinted row in half, which is most of why a full-file addition
+   read as two stacked green bands rather than one block of new code. */
+.gutter {
+  flex: none;
+  width: 1.4em;
+  text-align: center;
+  user-select: none;
+}
+.code { flex: 1 0 auto; white-space: pre; padding: 0 16px 0 10px; }
+
+.lineAdd { background: var(--gs-add-line); }
+.lineDel { background: var(--gs-del-line); }
+.lineAdd .lnOld, .lineAdd .lnNew, .lineAdd .gutter { background: var(--gs-add-num, var(--gs-add-line)); }
+.lineDel .lnOld, .lineDel .lnNew, .lineDel .gutter { background: var(--gs-del-num, var(--gs-del-line)); }
+.lineContext { color: var(--gs-fg-muted); }
+/* GitHub's hunk header is quiet: a faint accent wash on the row, muted grey
+   text, and the saturated blue confined to the number cells. It used to run the
+   accent colour across the whole line, which made every hunk boundary shout
+   louder than the code it introduces. */
+.lineHunk { background: var(--gs-hunk); }
+.lineHunk .code { color: var(--gs-fg-dim); }
+.lineHunk .lnOld, .lineHunk .lnNew, .lineHunk .gutter { background: var(--gs-hunk-num, var(--gs-hunk)); }
+.signAdd { color: var(--gs-add); }
+.signDel { color: var(--gs-del); }
+
+.wordAdd { background: var(--gs-add-word); border-radius: 2px; }
+.wordDel { background: var(--gs-del-word); border-radius: 2px; }
+
+/* No syntax-tint classes here: Shiki resolves a real TextMate theme and emits a
+   hex per token, so the panel writes colour inline. A four-class approximation
+   painted identifiers, types and punctuation all one colour, which is what made
+   the diff look unhighlighted next to GitHub's. */
+
+.empty { padding: 32px 24px; color: var(--gs-fg-faint); font-size: var(--gs-t-ui); }
+
+/* ============================ write operations ============================ */
+
+/* Sync bar: fetch / pull / push, with the divergence they act on. A chrome bar
+   like the others, so it takes the drawer gutter and not a gutter of its own. */
+.syncBar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  font-size: var(--gs-t-dense);
+  color: var(--gs-fg-dim);
+}
+.syncUpstream {
+  max-width: 260px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--gs-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.syncLevel { color: var(--gs-fg-faint); }
+.syncSpacer { flex: 1 1 auto; }
+.btn:disabled, .treeIcon:disabled, .miniBtn:disabled, .refButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* A control disabled ONLY by an operation too young to report keeps its full
+   strength. Every tick stages through git, and fading the whole sync row for
+   the ~150ms that takes was a blink, not feedback — nobody can act inside it.
+   The click is still refused from the first frame; see `op-feedback.ts`. */
+.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled { opacity: 1; }
+
+/* Outcome of the last operation. Pre-wrap because git's own message rides along
+   under the explanation, and it arrives with its newlines. */
+.opBanner {
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  font-size: var(--gs-t-dense); line-height: 18px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text;
+}
+.opBannerOk { background: var(--gs-add-bg); color: var(--gs-add); }
+.opBannerBad { background: var(--gs-del-bg); color: var(--gs-del); }
+
+/* A file row and its stage toggle. The row keeps its own indent padding, so the
+   toggle trails it rather than displacing the tree's left edge. */
+.fileLi { display: flex; align-items: stretch; }
+.fileLi .file { flex: 1 1 auto; min-width: 0; }
+/* Directory rows need the same two-slot row as files, but their subtree list
+   has to stay a child of the <li> — hence a wrapper around just the row. */
+.treeRow { display: flex; align-items: stretch; }
+.treeRow .treeDir { flex: 1 1 auto; min-width: 0; }
+
+/* ---- the commit tick ----
+ *
+ * The drawer presents a commit the way IDEA does: a set of ticks, not a staging
+ * area. A tick is `git add` the moment it is clicked, so the tree and
+ * `git status` can never disagree.
+ *
+ * The column does NOT indent with the tree. Depth already costs room in a pane
+ * that drags to 170px, and a straight column down the left edge is what makes
+ * "what am I about to commit" readable in one glance — which is why the ticks
+ * exist. Its width is TREE_CHECK_W; the row indents start after it. */
+.checkBox {
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.checkMark {
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
+  width: 14px; height: 14px;
+  border: 1px solid var(--gs-fg-faint); border-radius: 3px;
+  background: var(--gs-bg);
+  color: transparent;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.checkBox:hover .checkMark { border-color: var(--gs-accent); }
+.checkBox:focus-visible { outline: none; }
+.checkBox:focus-visible .checkMark { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+/* Ticked and half-ticked share a filled box: both mean "some of this is going
+   into the commit", and the glyph inside says which. */
+.checkMarkOn, .checkMarkPartial {
+  border-color: var(--gs-accent);
+  background: var(--gs-accent);
+  color: var(--gs-on-accent);
+}
+
+/* Commit box: pinned under the tree, so the message stays reachable however far
+   the file list scrolls. */
+.commitBox {
+  flex: none;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px var(--gs-gutter-pane) 10px;
+  border-top: 1px solid var(--gs-border);
+  background: var(--gs-surface-2);
+}
+.commitMessage {
+  width: 100%; box-sizing: border-box;
+  min-height: 46px; max-height: 160px;
+  padding: 6px 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 18px;
+  resize: vertical;
+  outline: none;
+}
+.commitMessage:focus { border-color: var(--gs-accent-border); }
+.commitMessage::placeholder { color: var(--gs-fg-faint); }
+.commitRow { display: flex; align-items: center; gap: 8px; }
+.commitAmend {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--gs-fg-dim); font-size: var(--gs-t-meta);
+  cursor: pointer;
+}
+.commitAmend input { accent-color: var(--gs-accent); cursor: pointer; }
+.commitStaged { margin-left: auto; color: var(--gs-fg-faint); font-size: var(--gs-t-meta); }
+/* The commit box's one standing instruction: tick to stage, then commit. A
+   constant quiet line at the top — the blocker banner that appeared only when
+   the index was empty read as an error, and arrived after the confusion it
+   explains. */
+.commitLead { margin: 0; color: var(--gs-fg-faint); font-size: var(--gs-t-meta); line-height: 15px; }
+
+/* Commit is the one PRIMARY action in the drawer, and the only control that
+   gets a solid fill. As a quiet outlined button it sat at the same weight as
+   Expand all and disappeared into the row — the button that writes history
+   should not look like the button that folds a directory. */
+.commitBtn {
+  flex: none;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 92px;
+  height: var(--gs-h-control);
+  padding: 0 16px;
+  border: 1px solid transparent; border-radius: var(--gs-r-control);
+  background: var(--gs-accent); color: var(--gs-on-accent);
+  font-family: inherit; font-size: var(--gs-t-ui); font-weight: 600; line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+.commitBtn:hover:not(:disabled) { filter: brightness(1.1); }
+.commitBtn:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 2px; }
+/* Disabled keeps the shape and loses the weight: the button stays findable, so
+   "nothing is staged yet" reads as a state rather than as a missing feature. */
+.commitBtn:disabled {
+  background: var(--gs-raise); color: var(--gs-fg-faint);
+  border-color: var(--gs-border);
+  cursor: default;
+}
+
+/* ============================ one button vocabulary ============================
+ *
+ * Every clickable control in the drawer is one of two shapes, and which one it
+ * gets is decided by WHERE IT LIVES, never by what it does: drawer-level chrome
+ * (header actions, ref chips, menu triggers) is a PILL, and anything inside a
+ * panel or pane is a ROUNDED RECT. They differ in shape and nothing else — same
+ * height, same type size, same hover, same focus ring, same transition.
+ *
+ * Grouping the selectors is what enforces that. Each class used to spell out
+ * its own padding, radius and font-size, and the same "small secondary button"
+ * had drifted to four heights and three radii across one screen.
+ */
+.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-sizing: border-box;
+  flex: none;
+  height: var(--gs-h-control);
+  padding: var(--gs-pad-control);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-control);
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit;
+  font-size: var(--gs-t-ui);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.btn:hover, .miniBtn:hover, .treeIcon:hover, .commitCopy:hover,
+.scopeBtn:hover, .refButton:hover {
+  background: var(--gs-raise);
+  color: var(--gs-fg);
+  border-color: var(--gs-fg-fainter);
+}
+.btn:focus-visible, .miniBtn:focus-visible, .treeIcon:focus-visible,
+.commitCopy:focus-visible, .scopeBtn:focus-visible, .refButton:focus-visible {
+  outline: 2px solid var(--gs-accent);
+  outline-offset: 1px;
+}
+
+/* Pills are for drawer-level chrome: the header's actions, the ref chips, and
+   anything that opens a menu — dsh spells its own dropdown triggers
+   ("Code mode ⌄", "glm-5.3 ⌄") as pills, so a trigger that is not one reads as
+   foreign. Controls that live INSIDE a panel or pane stay 8px rects. */
+.btn, .refButton { border-radius: var(--gs-r-pill); }
+
+/* Pane tools give their vertical space back to the diff. */
+.treeIcon, .commitCopy {
+  height: var(--gs-h-compact);
+  padding: var(--gs-pad-compact);
+  font-size: var(--gs-t-dense);
+}
+/* Expand / collapse all are the tree's own chevron at its two angles: the
+   button shows the state it puts every row into. Icon-only because at the 170px
+   the pane drags down to, two more text buttons cannot share a row with the
+   count — and these two are the pair a tree header always carries. */
+.treeIcon { width: var(--gs-h-compact); padding: 0; }
+.treeIconGlyph { display: block; font-size: var(--gs-t-meta); line-height: 1; }
+.treeIconDown { transform: rotate(90deg); }
+
+/* The scope toggle splits its row in two equal halves, so it opts out of the
+   vocabulary's `flex: none`. Declared here rather than beside `.scopeRow`
+   because it has to win against the grouped rule above by source order. */
+.scopeBtn { flex: 1 1 0; }
+
+/* The single "this one is selected" idiom. Three different ones — accent chip,
+   bordered panel, left accent bar — used to mean the same thing in one drawer. */
+.scopeBtnActive, .miniBtnPrimary, .segmentActive, .refRowActive, .paletteRowActive {
+  border-color: var(--gs-accent-border);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+
+/* Icon-only chrome: square, so four of them read as a control cluster rather
+   than four pills of drifting width. Height, border, radius and hover still
+   come from the vocabulary — only the box changes shape. */
+.btnIcon { width: var(--gs-h-control); padding: 0; }
+.btnIcon svg { display: block; }
+/* Close is the one destructive control in the row, and every window on the
+   machine says so with red on hover. Quiet until then: a permanently red X in
+   a header would read as an error state. */
+.btnClose:hover:not(:disabled) {
+  border-color: var(--gs-del); background: var(--gs-del-bg); color: var(--gs-del);
+}
+
+/* Sync actions that have something to report.
+ *
+ * These three variants set COLOUR ONLY — height, padding, radius and type size
+ * still come from the vocabulary above, so a loud Push is the same object as a
+ * quiet one and not a second button that happens to look similar.
+ *
+ * Fetch deliberately has no variant. It writes nothing, so it has no state to
+ * announce, and leaving one of the three permanently quiet is what makes the
+ * other two register as signal rather than decoration. */
+.btnBehind {
+  border-color: var(--gs-warn); background: var(--gs-warn-bg); color: var(--gs-warn);
+  font-weight: 600;
+}
+.btnBehind:hover:not(:disabled) { background: var(--gs-warn-bg); color: var(--gs-warn); border-color: var(--gs-warn); }
+.btnAhead {
+  border-color: var(--gs-add); background: var(--gs-add-bg); color: var(--gs-add);
+  font-weight: 600;
+}
+.btnAhead:hover:not(:disabled) { background: var(--gs-add-bg); color: var(--gs-add); border-color: var(--gs-add); }
+/* Publishing a branch that exists nowhere else is the one moment this bar has a
+   primary action, so it gets the solid fill Commit uses — and only then. */
+.btnPrimary {
+  border-color: var(--gs-accent); background: var(--gs-accent); color: var(--gs-on-accent, #fff);
+  font-weight: 600;
+}
+.btnPrimary:hover:not(:disabled) { background: var(--gs-accent); color: var(--gs-on-accent, #fff); border-color: var(--gs-accent); }
+
+/* The count riding inside Pull / Push. Reads as part of the label rather than a
+   badge stuck on it: same colour, tabular, just set apart by a hairline. */
+.btnCount {
+  margin-left: 1px; padding-left: 6px;
+  border-left: 1px solid currentColor;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/* Pull and its strategy are one control. The picker is Pull's argument, not a
+   third action, so the two are welded: shared border, one outer radius. */
+.pullGroup { display: inline-flex; flex: none; align-items: center; }
+.pullGroup > .refPicker > .refButton {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  border-right-color: transparent;
+}
+.pullGroup > .btn {
+  margin-left: -1px;
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+}
+
+/* Scrollbars inside the drawer.
+   Listing the scrolling panes by name is what let the file tree keep the
+   platform's own wide light scrollbar after that pane was renamed, so this
+   matches every descendant instead: nothing to keep in step as panes change.
+   `scrollbar-*` inherit, which covers Firefox from the same declaration. */
+.drawer { scrollbar-width: thin; scrollbar-color: var(--gs-border) transparent; }
+.drawer ::-webkit-scrollbar { width: 10px; height: 10px; }
+.drawer ::-webkit-scrollbar-track, .drawer ::-webkit-scrollbar-corner { background: transparent; }
+.drawer ::-webkit-scrollbar-thumb {
+  /* Painted inside a transparent border so the thumb reads as a floating pill
+     rather than a bar welded to the pane edge. */
+  background: var(--gs-border);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+.drawer ::-webkit-scrollbar-thumb:hover { background: var(--gs-fg-faint); background-clip: padding-box; }
+
+/* Overflow counter for a commit carrying more refs than the row can show. */
+.commitRefMore {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--gs-r-pill);
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-meta); line-height: 15px;
+  cursor: default;
+}

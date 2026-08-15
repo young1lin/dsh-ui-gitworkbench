@@ -1,0 +1,7 @@
+# Composition patch for @young1lin/dsh-ui-gitworkbench.
+# Apply this layer onto the web profile to mount the host half (the node entry
+# below). The client half is discovered automatically from the same package's
+# `./client` export by the host ClientModuleRegistry.
+- insert:
+    - id: ui-gitworkbench
+      name: '@young1lin/dsh-ui-gitworkbench'

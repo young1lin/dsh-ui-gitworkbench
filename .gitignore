@@ -1,0 +1,34 @@
+node_modules/
+lib/
+.tmp-verify/
+__pycache__/
+
+# Superpowers scratch: planning and spec notes written while building a change.
+# They are working material for one session, not a record the repository keeps.
+.superpowers/
+docs/superpowers/
+
+# Worktrees this plugin's own worktree_enter checks out. Generated content, and
+# each is a full copy of the repository — never part of its own history.
+# .claude/worktrees is only a symlink to this directory (the real one); both
+# spellings stay out of git.
+.agents/worktrees/
+.claude/worktrees
+# Machine-local env files + knowledge-base runtime artifacts (do not commit).
+# The real files sit under .agents/ (.claude/skills is a symlink there), so the
+# .agents spelling is the one that matches; the .claude/.env* entries cover the
+# env file Claude Code itself reads.
+.claude/.env
+.claude/.env.local
+.claude/.env.*.local
+.agents/**/.env
+.agents/skills/business-logic/.state/
+.agents/skills/business-logic/.tmp/
+
+# Local integration probes: they drive a live dsh instance and the scratch
+# fixture worktrees, so they embed machine-local paths — dev-machine only.
+scripts/probe_worktree.py
+scripts/verify_worktree_ui.py
+scripts/llm_smoke.py
+# Python virtualenv (uv / venv) -- machine-specific, never commit
+.venv/

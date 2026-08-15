@@ -1,0 +1,15 @@
+{
+  // Typecheck-only face for the CLIENT half. tsdown builds it with `dts: false`
+  // and rolldown checks nothing, so without this config `src/client/**` is never
+  // typechecked at all. Emits nothing — lib/client.js still comes from tsdown.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    // The panel is browser code: it reads document, MouseEvent and HTMLElement.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    // Local imports carry their .ts/.tsx extension, which the bundler resolves.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/client", "src/types"]
+}
