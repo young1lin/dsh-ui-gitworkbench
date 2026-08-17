@@ -8,6 +8,12 @@ export interface WorktreeBinding {
   readonly name: string
   readonly enteredAt: string
   /**
+   * The branch checked out in the bound worktree. Optional on purpose:
+   * bindings written before this field existed stay valid; a consumer without
+   * it falls back to reading the branch off the worktree list.
+   */
+  readonly branch?: string
+  /**
    * Commit the worktree's branch started from. Optional on purpose: bindings
    * written before this field existed stay valid, and a reuse path can fail to
    * recover a historical branch point. A consumer without it falls back to
@@ -29,7 +35,9 @@ function isBinding(value: unknown): value is WorktreeBinding {
   // Absent is normal; present-but-malformed is corruption, and dropping the
   // whole record beats trusting half of it.
   const base = record['baseCommit']
-  return base === undefined || (typeof base === 'string' && base.length > 0)
+  const branch = record['branch']
+  return (base === undefined || (typeof base === 'string' && base.length > 0))
+    && (branch === undefined || (typeof branch === 'string' && branch.length > 0))
 }
 
 export function bindingsPath(home: string): string {
@@ -80,16 +88,76 @@ export interface WorktreeOpResult {
 
 // ---- Task 2: worktree name/branch/path derivation + porcelain parsing ----
 
-const NAME_PATTERN = /^[A-Za-z0-9._-]{1,40}$/
+/**
+ * The charset a worktree name may use: the intersection of what git accepts
+ * in a ref component and what survives as a Windows directory name.
+ *
+ * The name is used verbatim as BOTH the directory under `.agents/worktrees/`
+ * and the branch — there is NO forced prefix, the name the caller asks for is
+ * the branch it gets — so every character must be legal in both worlds:
+ *
+ *   - git (check-ref-format): rejects `..`, a trailing dot, a `.lock` ending,
+ *     control characters, space and `~ ^ : ? * [ \`. `+` is LEGAL — the
+ *     earlier allowlist `[A-Za-z0-9._-]` rejected it and silently renamed
+ *     `feature+20260810-...` to a generated `wt-<hex>`.
+ *   - Windows (NTFS): rejects `< > : " | ? *` (git already covers those) and
+ *     the reserved device names CON/PRN/AUX/NUL/COM1-9/LPT1-9 — even before
+ *     the first dot, case-insensitive — which git never objects to.
+ *   - argv: a leading `-` would read as an option; a leading `.` both hides
+ *     the directory and starts the dot-component git rejects. So: start
+ *     alphanumeric.
+ */
+const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/
+/** Windows device names that are legal git branches but catastrophic dirs. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+function isWorktreeName(raw: string): boolean {
+  return NAME_PATTERN.test(raw)
+    && !raw.includes('..')
+    && !raw.endsWith('.')
+    && !raw.endsWith('.lock')
+    && raw.toLowerCase() !== 'head'
+    && !WINDOWS_RESERVED.test(raw.split('.')[0] ?? raw)
+}
 
 export interface WorktreeEntry { readonly path: string; readonly head: string; readonly branch: string }
 
 export function sanitizeName(raw: string | undefined, rng: () => string): string {
-  if (raw !== undefined && NAME_PATTERN.test(raw) && raw !== '.' && raw !== '..') return raw
-  return `wt-${rng()}`
+  if (raw !== undefined && isWorktreeName(raw)) return raw
+  // No `wt-` here either: the caller's name is the identity everywhere, so a
+  // generated fallback gets a neutral, self-describing one instead.
+  return `worktree-${rng()}`
 }
 
-export function branchFor(name: string): string { return `wt/${name}` }
+/** Resolves a path or fails — the failure is the caller's "does not exist". */
+export type PathResolver = (path: string) => Promise<string>
+
+async function resolveReal(resolve: PathResolver, path: string): Promise<string | null> {
+  try { return (await resolve(path.replace(/\\/g, '/'))).replace(/\\/g, '/') } catch { return null }
+}
+
+/**
+ * Find the registered worktree that IS `dir`, if any.
+ *
+ * String comparison is not enough: `.agents/worktrees` may be a junction to
+ * `.claude/worktrees`, and git lists the path a worktree was REGISTERED
+ * under, not the spelling this session would type. Both sides go through a
+ * real-path resolution, so junctions, symlinks and separator styles collapse
+ * to the same directory — and a worktree made by another tool (checked out
+ * under its own branch, no `wt/` anywhere) is recognized and reused instead
+ * of colliding with `git worktree add`.
+ * @param entries - parsed `git worktree list --porcelain`.
+ * @param dir - the worktree directory the caller wants.
+ * @param resolve - real-path resolver (node:fs/promises realpath in the host).
+ */
+export async function findRegisteredWorktree(entries: readonly WorktreeEntry[], dir: string, resolve: PathResolver): Promise<WorktreeEntry | undefined> {
+  const target = await resolveReal(resolve, dir)
+  if (target === null) return undefined
+  for (const entry of entries) {
+    if (await resolveReal(resolve, entry.path) === target) return entry
+  }
+  return undefined
+}
 
 /** Longest ref name accepted — well past any real branch, short of a payload. */
 const REF_MAX_LENGTH = 200

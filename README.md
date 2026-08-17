@@ -155,7 +155,7 @@ export function apply(ctx) {
 ### 2.4 worktree 仿真（`src/worktree.ts` 纯逻辑 + `src/index.ts` 里的 RPC/工具）
 
 - **宿主 RPC**（同一 `GitWorkbenchService` 上多挂 4 个 `@Remote`，参数照 §6.8 裸标识符、signal 最后）：
-  - `worktreeEnter(sessionId, repoPath, name, signal)`——`repoRootOf` 解析仓库根；在 `<repoRoot>/.agents/worktrees/<name>` 创建（或复用）worktree、分支 `wt/<name>`，写绑定；返回 `{ok, worktreePath, branch, hint}`，hint 教模型怎么用相对路径（会话 cwd 不可变）。
+  - `worktreeEnter(sessionId, repoPath, name, signal)`——`repoRootOf` 解析仓库根；在 `<repoRoot>/.agents/worktrees/<name>` 创建（或复用）worktree、**分支 = 名字本身**（不加强制前缀），写绑定；返回 `{ok, worktreePath, branch, hint}`，hint 教模型怎么用相对路径（会话 cwd 不可变）。复用判定走 **realpath**：目标目录已是注册 worktree（别的工具建的、或经 Junction 映射进来的，git 登记的是另一种拼写）→ 直接绑定并保留**它自己的分支**，不再 `worktree add`。
   - `worktreeExit(sessionId, remove, signal)`——解绑；`remove:true` 且树干净才 `git worktree remove`，脏树拒绝。
   - `worktreeStatus(sessionId, signal)`——绑定 + 仓库全部 worktree 列表。
   - `sessionWorktree(sessionId, signal)`——`{worktreePath, name}`，未绑定为双 `null`；客户端轮询已改用 `worktreeStatus`（绑定+列表一次拿全），这个 RPC 保留作轻量单查。
@@ -334,7 +334,7 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 - **输出 schema 必须容纳所有早退返回形状**：`worktree_status` 的无会话早退 `{ok:false, error}` 与正常 `{ok, binding, worktrees}` 共用一个 schema，所以 `ok`/`error` 声明为可选、`binding` 用 oneOf——否则真实调用时校验失败。
 
 ### 6.12 worktree 的 Windows 细节
-- **`git worktree remove` 保留分支**（exit 从不删 `wt/<name>`——可能有未合并提交）。之后再 enter：`worktree add -b wt/<name> <dir>` 会因分支已存在而失败 → 先 `rev-parse --verify --quiet refs/heads/wt/<name>` 探测，幸存则改用 `worktree add <dir> <branch>` **检出既有分支**（hint 注明 reused，提醒模型里面有旧提交）。
+- **`git worktree remove` 保留分支**（exit 从不删 `<name>`——可能有未合并提交）。之后再 enter：`worktree add -b <name> <dir>` 会因分支已存在而失败 → 先 `rev-parse --verify --quiet refs/heads/<name>` 探测，幸存则改用 `worktree add <dir> <name>` **检出既有分支**（hint 注明 reused，提醒模型里面有旧提交）。
 - **绑定文件的 rename 在 Windows 可能 EPERM**：页面 15s 轮询短暂持有读句柄/杀毒扫描，rename 撞上就 EPERM。做法：tmp + rename，EPERM 按 25/50/100/200/400ms 退避重试后再抛（见 `src/worktree.ts` 的 `saveBindings`）。
 - **路径一律正斜杠规范化**：`rev-parse --show-toplevel` 的输出、porcelain 的 worktree path 都要做 `.replace(/\\/g,'/')` 再比对——宿主在 Windows 返回反斜杠，两边不统一就匹配不上（复用判定会失灵）。
 
@@ -382,14 +382,14 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 - 环境**卡**（非状态卡）常驻会话头:branch/detached + ↑↓ ahead-behind + `+N −M 文件数`。
 - 左侧为**可折叠文件树**:目录节点带文件数徽章与聚合 +N/−N;>12 文件的目录默认折叠;「展开全部/收起全部」;选中文件自动展开祖先链;展开状态会话级持久(见 §6.0c)。
 - 词级高亮 = 相邻 −/+ 行按 token LCS 对齐(`diff-model.ts`),行底色之上叠加强调色;语法着色 = **Shiki**(`highlight.ts`:本地包、JS regex 引擎、语法按需分包加载)——`lib/client.js` 2.3MB 的主因即它。bundle 纯度门禁的是 `@deepseek-ai/*` 的**值导入**(运行时由 profile 提供),不是第三方库;早期「正则单遍扫描」的实现已被替换。
-- **状态卡是会话的环境信息位**：git 仓库内常驻显示分支（或 detached sha）+↑↓+计数，**干净树也显示**；仅 `stats.error`（非 git 目录 / git 不可用）时隐藏。绑定标记 = 树形图标：dsh 自建 worktree 的分支必为 `wt/<name>`，徽标印名只会把分支名说两遍，所以只留图标；外部建的 worktree 徽标 = 图标+name——那是唯一点名目录的地方。
+- **状态卡是会话的环境信息位**：git 仓库内常驻显示分支（或 detached sha）+↑↓+计数，**干净树也显示**；仅 `stats.error`（非 git 目录 / git 不可用）时隐藏。绑定标记 = 树形图标：插件所建 worktree 的分支就是名字本身（旧绑定为 `wt/<name>`），徽标印名只会把分支名说两遍，所以只留图标；外部建的 worktree 徽标 = 图标+name——那是唯一点名目录的地方。
 - **面板是浮起的卡片**（四边留白 + 圆角 + 投影），左缘可拖拽改宽、有最大化满屏；宽度与外观都存 localStorage，且读回时校验（旧版本写的族名不会漏到 `data-gs-theme` 上）。
 - **明暗默认跟随操作系统**（`prefers-color-scheme`），可显式覆盖；主题族 7 套（GitHub / IntelliJ IDEA / VS Code / One / Solarized / Nord / Cyberpunk）各带亮暗。面板内滚动条也按当前调色板重绘——**按类名逐个列举是不行的**：文件树那栏改过名之后就一直漏在外面、保持系统原生的浅色滚动条，所以规则写成 `.drawer *`。
 - **背景图与自定义 CSS 按「项目 / 全局」两个作用域存在宿主**（`~/.dsh/gitworkbench-style.json`），项目优先；背景图整条取项目的，自定义 CSS 两边叠加、项目在后。详见 §2.3b。
 - **worktree 语义**：
-  - 目录 = 仓库根下 `.agents/worktrees/<name>`（仓库内，无沙箱越界）；分支 = `wt/<name>`；name 规则 `[A-Za-z0-9._-]{1,40}`，非法或缺省自动生成 `wt-<hex6>`。
+  - 目录 = 仓库根下 `.agents/worktrees/<name>`（仓库内，无沙箱越界）；**分支 = 名字本身，不加强制前缀**。name 规则 = git ref 字符集 ∩ Windows 目录名：字母/数字开头，可用 `. _ - +`，最长 64；拒绝 `..`、尾部点、`.lock` 结尾、Windows 保留名（CON/NUL 等）与 `head`；非法或缺省自动生成 `worktree-<hex6>`。
   - **退出默认保留目录**，`remove:true` 才删；删除前 `git status --porcelain` 检查，**脏树拒绝且绝不加 `--force`**（保守，防丢改动）。
   - **会话 cwd 不可变**（dsh 本体约束）：enter 不切 cwd，而是返回 hint 指引模型——file 工具用 `.agents/worktrees/<name>/` 前缀的相对路径，shell 命令传 per-call workdir `.agents/worktrees/<name>`（相对会话 cwd 解析）。
-  - **再进入**：目录仍是注册 worktree → 直接复用、只补绑定；目录已删但分支 `wt/<name>` 幸存 → `worktree add <dir> <branch>` 检出旧分支（hint 注明 reused）。
+  - **再进入**：目录仍是注册 worktree（含外部工具建的、经 Junction 映射的——realpath 判定）→ 直接复用、只补绑定并保留其分支；目录已删但分支 `<name>` 幸存 → `worktree add <dir> <name>` 检出旧分支（hint 注明 reused）。
   - **绑定**（per-session）持久化于 `~/.dsh/gitworkbench-worktree-bindings.json`；损坏/缺失视为无绑定并重建。写入原子（tmp+rename）+ 互斥（promise 队列）+ EPERM 退避重试（§6.12）。
   - **状态卡纪律例外**：有绑定时即使 bound worktree 干净也显示状态卡——绑定标记（树形图标）是绑定指示器与面板入口；面板打开期间空视图也保持挂载（可从空源切走）。头部选择器只改显示对象，不动绑定。

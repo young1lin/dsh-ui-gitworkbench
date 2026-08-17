@@ -48,6 +48,14 @@ const LAZY_GRAMMARS = new Map<string, () => Promise<LangModule>>([
   ['java', () => import('@shikijs/langs/java')],
   ['c', () => import('@shikijs/langs/c')],
   ['cpp', () => import('@shikijs/langs/cpp')],
+  // sql/xml were the loud gap: schema dumps and pom/config diffs rendered as
+  // plain text. ini and diff ride along — small grammars, common in repos.
+  // Every entry lands in client.js (inlineDynamicImports), so additions stay
+  // deliberate, not encyclopedic.
+  ['sql', () => import('@shikijs/langs/sql')],
+  ['xml', () => import('@shikijs/langs/xml')],
+  ['ini', () => import('@shikijs/langs/ini')],
+  ['diff', () => import('@shikijs/langs/diff')],
 ])
 
 const LANG_ALIASES = new Map<string, string>([
@@ -68,6 +76,10 @@ const LANG_ALIASES = new Map<string, string>([
   ['java', 'java'],
   ['c', 'c'],
   ['cpp', 'cpp'], ['h', 'c'], ['hpp', 'cpp'],
+  ['sql', 'sql'],
+  ['xml', 'xml'], ['xsl', 'xml'], ['xsd', 'xml'], ['svg', 'xml'],
+  ['ini', 'ini'], ['properties', 'ini'], ['conf', 'ini'], ['cfg', 'ini'],
+  ['diff', 'diff'], ['patch', 'diff'],
 ])
 
 /** Drawer `data-gs-theme` → a loaded Shiki theme name. */

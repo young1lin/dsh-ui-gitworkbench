@@ -280,6 +280,11 @@ describe('shiki highlight', () => {
     expect(shikiLangOf('a.tsx')).toBe('typescript')
     expect(shikiLangOf('a.py')).toBe('python')
     expect(shikiLangOf('README.md')).toBe('markdown')
+    expect(shikiLangOf('schema.sql')).toBe('sql')
+    expect(shikiLangOf('pom.xml')).toBe('xml')
+    expect(shikiLangOf('icon.svg')).toBe('xml')
+    expect(shikiLangOf('app.properties')).toBe('ini')
+    expect(shikiLangOf('changes.patch')).toBe('diff')
     expect(shikiLangOf('a.bin')).toBeUndefined()
   })
 

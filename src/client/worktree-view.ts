@@ -135,17 +135,18 @@ export function showsPending(loading: boolean, fileCount: number): boolean {
 /**
  * Whether a worktree's badge would only repeat the branch chip beside it.
  *
- * dsh derives one from the other — `branchFor` in `src/worktree.ts` turns the
- * name `demo` into the branch `wt/demo` — so for every worktree dsh made, the
- * session card was printing the same word twice, once as `wt/fixture-03` and
- * once as a `fixture-03` badge next to it. A worktree made outside dsh has no
- * such relation, and there the badge is the only thing naming the directory.
+ * The plugin derives one from the other: a worktree it entered has the
+ * binding's name as its branch VERBATIM (and legacy bindings from the
+ * `wt/<name>` era derive it just as directly) — so for those, the session
+ * card would print the same word twice, once as the branch chip and once as
+ * the badge. A worktree made outside the plugin has no such relation, and
+ * there the badge is the only thing naming the directory.
  *
  * @param branch - the branch checked out there.
  * @param name - the worktree's name, as the binding records it.
  */
 export function badgeRepeatsBranch(branch: string, name: string): boolean {
-  return branch.length > 0 && branch === `wt/${name}`
+  return branch.length > 0 && (branch === name || branch === `wt/${name}`)
 }
 
 /**

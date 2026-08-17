@@ -20,6 +20,18 @@ describe('parseBindings', () => {
     const file: BindingsFile = { v: 1, bindings: { s1: { repoRoot: 'C:/r', worktreePath: 'C:/r/.agents/worktrees/x', name: 'x', enteredAt: '2026-08-15T00:00:00Z' } } }
     expect(parseBindings(JSON.stringify(file))).toEqual(file)
   })
+  it('round-trips the optional branch and drops a malformed one', () => {
+    // The branch the bound worktree actually has — a foreign worktree's own
+    // branch, or the name verbatim for one this plugin created.
+    const withBranch: BindingsFile = { v: 1, bindings: { s1: { repoRoot: 'C:/r', worktreePath: 'C:/r/.agents/worktrees/x', name: 'x', enteredAt: '2026-08-15T00:00:00Z', branch: 'feature+20260810' } } }
+    expect(parseBindings(JSON.stringify(withBranch))).toEqual(withBranch)
+    // Written before `branch` existed: still valid.
+    const without: BindingsFile = { v: 1, bindings: { s1: { repoRoot: 'C:/r', worktreePath: 'C:/r/.agents/worktrees/x', name: 'x', enteredAt: '2026-08-15T00:00:00Z' } } }
+    expect(parseBindings(JSON.stringify(without))).toEqual(without)
+    // Present-but-empty is corruption: the whole record drops.
+    const broken = parseBindings(JSON.stringify({ v: 1, bindings: { s1: { repoRoot: 'C:/r', worktreePath: 'w', name: 'x', enteredAt: 't', branch: '' } } }))
+    expect(broken.bindings).toEqual({})
+  })
   it('drops entries with missing fields', () => {
     const out = parseBindings(JSON.stringify({ v: 1, bindings: { s1: { repoRoot: 'C:/r' } } }))
     expect(out.bindings).toEqual({})

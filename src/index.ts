@@ -42,7 +42,7 @@
  * @module @young1lin/dsh-ui-gitworkbench
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
@@ -65,7 +65,7 @@ import {
   type StyleEntry, type StyleFile,
 } from './style-store.js'
 import {
-  bindingsPath, branchFor, isRefName, loadBindings, parseWorktreeList, sanitizeName, saveBindings, worktreeDir,
+  bindingsPath, findRegisteredWorktree, isRefName, loadBindings, parseWorktreeList, sanitizeName, saveBindings, worktreeDir,
   type BindingsFile, type WorktreeBinding, type WorktreeEntry, type WorktreeOpResult,
 } from './worktree.js'
 
@@ -228,7 +228,8 @@ export class GitWorkbenchService extends TypertRemoteService {
           const binding = sessionId === undefined ? undefined : this.bindingMirror.get(sessionId)
           if (binding === undefined) return ''
           const rel = `.agents/worktrees/${binding.name}`
-          return `This session is bound to git worktree "${binding.name}" (branch ${branchFor(binding.name)}).\n`
+          const branchNote = binding.branch === undefined ? '' : ` (branch ${binding.branch})`
+          return `This session is bound to git worktree "${binding.name}"${branchNote}.\n`
             + 'The session working directory is still the repository root, so the binding is a convention you must apply yourself:\n'
             + `- shell commands: pass workdir "${rel}"\n`
             + `- file tools: prefix every path with ${rel}/\n`
@@ -284,7 +285,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         + 'against the session cwd); for file tools use paths prefixed with .agents/worktrees/<name>/. '
         + 'Call with no name to auto-generate one. Use worktree_exit to leave.',
       parameters: {
-        name: { type: 'string', description: 'Optional worktree name ([A-Za-z0-9._-], max 40). Auto-generated when omitted.' },
+        name: { type: 'string', description: 'Optional worktree name: letters, digits, . _ - + (must start alphanumeric, max 64 chars; ".." and a trailing dot are refused). The name is used VERBATIM as the branch — no prefix is added. If the target directory already holds a registered worktree (e.g. one made by another tool), it is reused as-is with its own branch. Auto-generated when omitted or illegal.' },
       },
       output: output(OP_SCHEMA),
       execute: async (args: { name?: string }, exec: ToolRunContext) => {
@@ -648,44 +649,58 @@ export class GitWorkbenchService extends TypertRemoteService {
     // on disk — otherwise a stale entry passes for a reusable worktree and the
     // session binds to a directory that no longer exists.
     await this.git(repoRoot, ['worktree', 'prune'], signal)
-    // Directory already a registered worktree -> reuse it, no second `add`.
-    const existing = parseWorktreeList((await this.git(repoRoot, ['worktree', 'list', '--porcelain'], signal)).stdout)
-      .find(entry => entry.path.replace(/\\/g, '/') === dir)
+    // A registered worktree already lives at the target directory -> reuse it,
+    // whatever made it. The match is on real paths, not strings: junctions
+    // (`.agents/worktrees` pointing at `.claude/worktrees`) and the spelling a
+    // foreign tool registered under all collapse to the same directory, and
+    // the worktree keeps ITS OWN branch — only the binding is new.
+    const existing = await findRegisteredWorktree(
+      parseWorktreeList((await this.git(repoRoot, ['worktree', 'list', '--porcelain'], signal)).stdout),
+      dir,
+      realpath,
+    )
     // Branch point, read BEFORE `add` so a fresh worktree records exactly where it
     // started. Reuse paths recover it with merge-base instead (theirs is historical).
     const headBefore = (await this.git(repoRoot, ['rev-parse', 'HEAD'], signal)).stdout.trim()
+    // The branch the session actually lands on: the reused worktree's own branch,
+    // or the name VERBATIM for a fresh create — no forced prefix.
+    let branch = existing?.branch ?? wtName
+    let reusedWorktree = false
     let reusedBranch = false
     let baseCommit: string | undefined
     if (existing === undefined) {
-      const add = await this.git(repoRoot, ['worktree', 'add', '-b', branchFor(wtName), dir], signal)
+      const add = await this.git(repoRoot, ['worktree', 'add', '-b', wtName, dir], signal)
       if (add.exitCode === 0) {
         baseCommit = headBefore.length > 0 ? headBefore : undefined
       } else {
-        // `git worktree remove` keeps branch wt/<name> (exit never deletes it — it may
-        // carry unmerged commits), so a re-enter after remove finds the branch present:
-        // verify the ref and check the existing branch out instead of failing on `-b`.
-        const branch = branchFor(wtName)
-        const verified = await this.git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], signal)
+        // `git worktree remove` keeps the branch (it may carry unmerged
+        // commits), so a re-enter after remove finds the name present as a
+        // branch: verify the ref and check the existing branch out instead
+        // of failing on `-b`.
+        const verified = await this.git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${wtName}`], signal)
         if (verified.exitCode !== 0) {
           return { ok: false, error: `git worktree add failed (exit ${add.exitCode})${add.stderr.length > 0 ? `: ${add.stderr}` : ''}` }
         }
-        const retry = await this.git(repoRoot, ['worktree', 'add', dir, branch], signal)
+        const retry = await this.git(repoRoot, ['worktree', 'add', dir, wtName], signal)
         if (retry.exitCode !== 0) {
           return { ok: false, error: `git worktree add failed (exit ${retry.exitCode})${retry.stderr.length > 0 ? `: ${retry.stderr}` : ''}` }
         }
         reusedBranch = true
       }
+    } else {
+      reusedWorktree = true
     }
     if (baseCommit === undefined) {
       // Reused worktree or branch: its real branch point is historical, so take the
       // merge base with the repo's current HEAD. A failure leaves the field absent.
-      const merged = await this.git(repoRoot, ['merge-base', branchFor(wtName), 'HEAD'], signal)
+      const merged = await this.git(repoRoot, ['merge-base', branch, 'HEAD'], signal)
       if (merged.exitCode === 0) baseCommit = merged.stdout.trim() || undefined
     }
     await this.withBindings(async io => {
       const file = await io.load()
       const binding: WorktreeBinding = {
         repoRoot, worktreePath: dir, name: wtName, enteredAt: new Date().toISOString(),
+        branch,
         ...baseCommit === undefined ? {} : { baseCommit },
       }
       file.bindings[sessionId] = binding
@@ -694,8 +709,8 @@ export class GitWorkbenchService extends TypertRemoteService {
     })
     const rel = `.agents/worktrees/${wtName}`
     return {
-      ok: true, worktreePath: dir, branch: branchFor(wtName),
-      hint: `Session bound to worktree "${wtName}" at ${rel}/. For shell commands pass workdir "${rel}" (per-call workdir is supported and resolved against the session cwd); for file tools use paths relative to the session cwd prefixed with ${rel}/. Call worktree_exit to unbind.${reusedBranch ? ` Note: reused existing branch ${branchFor(wtName)} (carries its prior commits).` : ''}`,
+      ok: true, worktreePath: dir, branch,
+      hint: `Session bound to worktree "${wtName}" (branch ${branch}) at ${rel}/. For shell commands pass workdir "${rel}" (per-call workdir is supported and resolved against the session cwd); for file tools use paths relative to the session cwd prefixed with ${rel}/. Call worktree_exit to unbind.${reusedWorktree ? ` Note: reused the worktree already registered there; its branch ${branch} was kept.` : ''}${reusedBranch ? ` Note: reused existing branch ${branch} (carries its prior commits).` : ''}`,
     }
   }
 

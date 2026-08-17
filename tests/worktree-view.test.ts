@@ -165,12 +165,14 @@ describe('showsPending', () => {
 })
 
 describe('badgeRepeatsBranch', () => {
-  it('is true for a worktree dsh made, whose branch it derived from the name', () => {
-    // `branchFor` in src/worktree.ts spells this: name `demo` -> branch
-    // `wt/demo`. So the card was rendering the same word twice, once as
-    // `wt/fixture-03` and once as a `fixture-03` badge beside it.
-    expect(badgeRepeatsBranch('wt/fixture-03', 'fixture-03')).toBe(true)
-    expect(badgeRepeatsBranch('wt/demo', 'demo')).toBe(true)
+  it('is true for a worktree the plugin made, whose branch it derived from the name', () => {
+    // The name IS the branch now — `feature+20260810` enters as a branch of
+    // the same spelling, no prefix. Bindings from the wt/<name> era derive
+    // just as directly. Either way the card would print the same word twice
+    // (branch chip and badge), so the badge steps aside.
+    expect(badgeRepeatsBranch('demo', 'demo')).toBe(true)
+    expect(badgeRepeatsBranch('feature+20260810', 'feature+20260810')).toBe(true)
+    expect(badgeRepeatsBranch('wt/demo', 'demo')).toBe(true) // legacy binding
   })
 
   it('is false when the two names are independent, so the badge still earns its place', () => {
@@ -182,7 +184,7 @@ describe('badgeRepeatsBranch', () => {
 
   it('is false for a prefix that only looks like one', () => {
     expect(badgeRepeatsBranch('wt/fixture-03-old', 'fixture-03')).toBe(false)
-    expect(badgeRepeatsBranch('fixture-03', 'fixture-03')).toBe(false)
+    expect(badgeRepeatsBranch('feature-20260810-old', 'feature-20260810')).toBe(false)
   })
 
   it('is false for a detached worktree, which has no branch to repeat', () => {
