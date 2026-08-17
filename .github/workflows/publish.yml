@@ -33,8 +33,7 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # Version comes from package.json's `packageManager` field — see ci.yml.
 
       - name: Setup Node
         uses: actions/setup-node@v5
