@@ -110,6 +110,36 @@ export function bindingChanged(
 }
 
 /**
+ * Whether a turn that was in flight has just come to an end.
+ *
+ * The shut chip's stats freeze on mount: the fetch that carries them re-runs
+ * only on source switches and gen bumps, and the 3-15s poll starts at
+ * `if (!open) return`. So an agent that wrote files all turn left the header
+ * counting the tree as it was before the turn — until someone opened the
+ * drawer, which is the one act that already refreshes everything.
+ *
+ * `running` is mirrored live by the sessions store, and a turn boundary is
+ * when agent-caused side effects have stopped accumulating — the one instant
+ * a shut chip should pay for fresh numbers. One fetch per turn, and none for
+ * an idle session, which is the cost rule this panel lives under (it mounts
+ * in every session header).
+ *
+ * The transition is read strictly: `false → true` is a turn STARTING, whose
+ * numbers are seconds away from being rewritten, and a missing `next` counts
+ * as ended because a turn in flight cannot still be in flight once the store
+ * stops saying so.
+ *
+ * @param prevRunning - whether the agent had a turn in flight last render.
+ * @param nextRunning - whether it has one now.
+ */
+export function turnSettled(
+  prevRunning: boolean | undefined,
+  nextRunning: boolean | undefined,
+): boolean {
+  return prevRunning === true && nextRunning !== true
+}
+
+/**
  * Whether a view should say "pending" rather than show what it has.
  *
  * There are two different loads behind one flag. A worktree SWITCH empties the

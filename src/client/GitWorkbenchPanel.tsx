@@ -62,7 +62,7 @@ import {
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
 import { grammarLoadCount, highlightForRows, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, viewedPath } from './worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
 import css from './GitWorkbenchPanel.module.css'
@@ -629,6 +629,43 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     const id = setInterval(probe, BINDING_PROBE_MS)
     return () => { alive = false; clearInterval(id) }
   }, [open, agentRunning, sessionId, worktreePath, fetchSessionBinding, fetchWorktreeStatus])
+
+  /** The agent's `running` on the previous render. The flag itself says
+   *  whether a turn is in flight; only the EDGE of it says the turn has
+   *  ended, and the edge is what the effect below keys on. */
+  const wasRunningRef = useRef<boolean | undefined>(undefined)
+
+  /**
+   * Refresh the SHUT chip's stats when a turn ends.
+   *
+   * The keyed fetch below runs on mount, on source switches and on gen bumps,
+   * and the 3-15s poll starts at `if (!open) return` — so while the drawer was
+   * shut, an agent that wrote files all turn left the header counting the tree
+   * as it stood before the turn. Opening the drawer was the only thing that
+   * refreshed it, and an indicator you must open to read is not an indicator.
+   *
+   * `running` is mirrored live by the sessions store, and a turn boundary is
+   * when agent-caused side effects have settled ({@link turnSettled}), so one
+   * fetch per turn buys the chip the numbers the turn just made true — ahead
+   * counts included, which ride along in the same payload. The write follows
+   * the poll's discipline exactly: guarded on the source so a retired worktree
+   * cannot repaint the tree, touching neither `gen` (which would reset tree
+   * expansion) nor `statsLoading` (which would swap the header totals for a
+   * `—` while a good answer is still on screen).
+   *
+   * An open drawer skips it — the poll is running there and the open itself
+   * bumped gen. Like the probe's full refetch above, the fetch is left to land
+   * guarded rather than aborted: a cleanup fired for an unrelated dep (the
+   * drawer opening mid-flight) must not cancel the only fetch this turn gets.
+   */
+  useEffect(() => {
+    const settled = turnSettled(wasRunningRef.current, agentRunning)
+    wasRunningRef.current = agentRunning
+    if (!settled || open) return
+    fetchStats(statsPath, new AbortController().signal)
+      .then(value => { if (value !== null && statsPathRef.current === statsPath) setStats(value) })
+      .catch(() => {})
+  }, [agentRunning, open, statsPath, fetchStats])
 
   // Stats for the active source: on mount, on source change and on gen bumps
   // (manual refresh / source switch). Cleanup aborts a superseded in-flight fetch.

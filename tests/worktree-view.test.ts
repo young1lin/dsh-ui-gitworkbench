@@ -8,7 +8,7 @@
  * it is worth an assertion that survives the next edit to the header.
  */
 import { describe, expect, it } from 'vitest'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, viewedPath } from '../src/client/worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from '../src/client/worktree-view.ts'
 
 describe('samePath', () => {
   it('reads a windows path and a posix one as the same place', () => {
@@ -142,6 +142,40 @@ describe('bindingChanged', () => {
     // what the badge prints. A re-enter that reuses the directory under another
     // name must still repaint.
     expect(bindingChanged({ worktreePath: SHOWN.worktreePath, name: 'renamed' }, SHOWN)).toBe(true)
+  })
+})
+
+describe('turnSettled', () => {
+  it('is true when a turn in flight has just ended', () => {
+    // The settled moment: the store mirrors `running` live, and a turn boundary
+    // is when agent-caused side effects have stopped accumulating — the one
+    // instant a shut chip should pay for the numbers that follow.
+    expect(turnSettled(true, false)).toBe(true)
+  })
+
+  it('treats a vanishing answer as settled rather than as nothing', () => {
+    // The store can drop the row's `running` before flipping it to false. A
+    // turn that was in flight has ended either way; reading that as "nothing
+    // happened" would leave the chip stale until someone opens the drawer.
+    expect(turnSettled(true, undefined)).toBe(true)
+  })
+
+  it('is false while the turn is still in flight', () => {
+    expect(turnSettled(true, true)).toBe(false)
+  })
+
+  it('is false at the start of a turn, whose numbers are about to change', () => {
+    // Fetching on this edge pays for numbers the turn is seconds away from
+    // rewriting — the chip would go stale again before it was ever read.
+    expect(turnSettled(false, true)).toBe(false)
+    expect(turnSettled(undefined, true)).toBe(false)
+  })
+
+  it('is false when no turn has run, which is most of a session life', () => {
+    // Mount included: the initial fetch already covers it, and an idle session
+    // is the cost rule — this panel sits in every session header.
+    expect(turnSettled(false, false)).toBe(false)
+    expect(turnSettled(undefined, false)).toBe(false)
   })
 })
 
