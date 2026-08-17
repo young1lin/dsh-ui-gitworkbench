@@ -18,6 +18,8 @@
     "scripts/install.ps1",
     "README.md",
     "README_EN.md",
+    "CHANGELOG.md",
+    "CHANGELOG_EN.md",
     "AGENTS.md",
     "LICENSE",
     "cordis.patch.yml"
