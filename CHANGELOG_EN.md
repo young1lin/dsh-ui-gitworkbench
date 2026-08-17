@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.2] - 2026-08-17
+
+### Fixed
+
+- **The session-header stats card no longer freezes while the drawer is shut.** Through a whole agent turn of edits, the chip's file count, +/− line totals and ahead/behind markers kept showing pre-turn numbers until you opened the drawer and forced a refresh. The chip now tracks the `running` signal dsh mirrors live in the sessions store: the moment a turn ends — when agent side effects have settled — it fetches fresh stats on its own, without resetting the drawer's tree expansion or flashing a loading placeholder. Mid-turn it does not churn (numbers land once, at the end) and idle sessions stay free of polling. Ahead/behind ride in the same payload, so the ↑ count catches up right after the agent commits. Out-of-session edits (your editor, other shells) still wait for the drawer to open, as before.
+
 ## [0.1.1] - 2026-08-17
 
 ### Fixed

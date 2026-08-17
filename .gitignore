@@ -32,3 +32,4 @@ scripts/verify_worktree_ui.py
 scripts/llm_smoke.py
 # Python virtualenv (uv / venv) -- machine-specific, never commit
 .venv/
+scripts/verify_turn_refresh.py

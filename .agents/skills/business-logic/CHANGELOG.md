@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## 2026-08-17 [capture]
+- **Domains**: stats-drawer
+- **Updated docs**:
+  - `stats-drawer/overview.md`：新增「关着的芯片在 turn 结束时刷新 stats」规则——`turnSettled`（worktree-view.ts，仅 `prev===true && next!==true`）触发一次受卫 stats 写入（不 bump gen / 不翻 statsLoading，↑↓ 随载荷回来）；空闲关芯片仍是挂载快照；turn 中不刷（升级路径：订阅 live `updatedAt` 做 debounce）；探针 `scripts/verify_turn_refresh.py`。
+
 ## 2026-08-16 [sync] 98a525e..bdc8ad5
 - **Commits**: bdc8ad5（1 个）——chore(gitstats): 把知识库同步引擎接进 git hooks。引擎/文档/.gitignore/AGENTS.md 记忆块入库；`.git/hooks/` 装 post-merge + pre-push（卸除旧 post-commit）。**无业务源码变更**。
 - **Domains**: stats-drawer, worktree-emulation（源自会话摘要的设计意图/坑并入；均经当前源码与测试核实）
