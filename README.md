@@ -14,6 +14,11 @@
 
 另带 **worktree 仿真**：模型在会话里调用 `worktree_enter` / `worktree_exit` / `worktree_status` 三个工具，即可在 `.agents/worktrees/<name>` 下建立或退出隔离 worktree，并把会话绑定过去。绑定后状态卡点亮绑定标记，面板头部出现 worktree 切换器（按分支列出仓库全部 worktree），统计随之切换。
 
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/c6a73c7b-bf69-4b97-80a2-9175bc293d7d" muted autoplay loop playsinline controls width="100%"></video>
+  <sub>演示（2 分 24 秒）：状态卡 → 变更页（勾选暂存 / 逐文件 diff / 提交）→ 外观（明暗 + 七套配色 + 背景图）→ 历史页（提交图 / worktree 切换）</sub>
+</div>
+
 > 这份 README 同时是**交接文档**：插件是什么、怎么写的、踩过哪些坑、怎么继续改，全部记录在案。接手开发前请先读「§6 踩坑实录」——那里是真实调试换来的关键事实。
 
 ## 0. 安装

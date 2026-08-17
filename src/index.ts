@@ -279,8 +279,9 @@ export class GitWorkbenchService extends TypertRemoteService {
 
     ctx.tools.register(defineTool({
       name: 'worktree_enter',
-      description: 'Enter (create or reuse) an isolated git worktree at .agents/worktrees/<name> on branch wt/<name> '
-        + 'and bind this session to it. After entering, address the worktree relatively from the session cwd: '
+      description: 'Enter (create or reuse) an isolated git worktree at .agents/worktrees/<name> — the directory is '
+        + 'always derived from the name (there is no dir parameter), the branch is the name VERBATIM, '
+        + 'and the session is bound to it. After entering, address the worktree relatively from the session cwd: '
         + 'for shell commands pass workdir ".agents/worktrees/<name>" (per-call workdir is supported and resolved '
         + 'against the session cwd); for file tools use paths prefixed with .agents/worktrees/<name>/. '
         + 'Call with no name to auto-generate one. Use worktree_exit to leave.',

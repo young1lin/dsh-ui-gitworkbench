@@ -14,6 +14,11 @@ Every session header gets a small status card showing the current branch, ahead/
 
 It also ships **worktree emulation**: the model can call the `worktree_enter` / `worktree_exit` / `worktree_status` agent tools to create or leave an isolated worktree under `.agents/worktrees/<name>` and bind the session to it. The status card lights up its binding marker, the panel header gains a worktree switcher listing every worktree in the repository, and the stats follow the binding.
 
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/c6a73c7b-bf69-4b97-80a2-9175bc293d7d" muted autoplay loop playsinline controls width="100%"></video>
+  <sub>Demo (2:24) — status card → Changes (ticking to stage, per-file diffs, committing) → Appearance (light/dark, seven palettes, background image) → History (commit graph, worktree switching)</sub>
+</div>
+
 > The Chinese [README.md](./README.md) is the project's deep handoff document — including the pitfall catalog (§6) that every contributor should read before changing the build, the RPC layer, or the Windows-specific handling.
 
 ## Install
