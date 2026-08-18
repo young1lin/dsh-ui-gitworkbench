@@ -1,12 +1,12 @@
 /**
- * Author roster from `git shortlog -sne --all`, for the filter popup's
- * user picker.
+ * Author roster from `git shortlog -sne`, for the filter popup's user picker.
  *
- * shortlog already did the aggregation over every ref; this module only
- * parses its fixed shape (`<count>  <name> <<email>>`), sorts by activity and
- * applies the cap — with the cap VISIBLE, because a filter popup that
- * silently lost the long tail of occasional committers would be quietly
- * wrong about who exists.
+ * The REF the roster walks is the caller's choice (the host passes the same
+ * ref the history list walks, or `--all` in All-branches mode); shortlog
+ * already did the aggregation, and this module only parses its fixed shape
+ * (`<count>  <name> <<email>>`), sorts by activity and applies the cap — with
+ * the cap VISIBLE, because a filter popup that silently lost the long tail of
+ * occasional committers would be quietly wrong about who exists.
  *
  * @module @young1lin/dsh-ui-gitworkbench/shortlog
  */
@@ -15,13 +15,13 @@
 export interface AuthorEntry {
   readonly name: string
   readonly email: string
-  /** Commits across all refs — the picker's sort key. */
+  /** Commits in the walked ref set — the picker's sort key. */
   readonly count: number
 }
 
 /**
  * Parse shortlog output into busiest-first authors, capped.
- * @param stdout - `git shortlog -sne --all` output.
+ * @param stdout - `git shortlog -sne <ref>` output (the ref is the caller's choice).
  * @param limit - how many authors to keep; the busier half survives.
  * @returns the roster and whether it was cut short.
  */

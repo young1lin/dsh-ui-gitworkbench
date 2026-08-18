@@ -6,8 +6,8 @@ An out-of-tree Web UI plugin for [dsh (DeepSeek Harness)](https://github.com/dee
 
 Every session header gets a small status card showing the current branch, ahead/behind counts, and added/deleted lines. Click it and a workbench panel slides in from the right with everything about the session worktree's changes:
 
-- **Changes** — a collapsible file tree beside per-file diffs: dual line numbers, word-level highlights, Shiki syntax coloring.
-- **History** — commits, file tree, and diff in three panes; scrolling to the bottom loads the next page automatically.
+- **Changes** — a collapsible file tree beside per-file diffs: dual line numbers, word-level highlights, Shiki syntax coloring. A magnifier in the toolbar filters the list by space-separated keywords (smart case); hovering a row reveals a roll-back button that takes that one file to its committed state (IDEA's Rollback) behind a dialog that states the real consequence.
+- **History** — commits, file tree, and diff in three panes; scrolling to the bottom loads the next page automatically. Rows carry the author, the hover card the exact time; an IDEA-style filter (a `user:` / `path:` / `after:` query grammar plus an authors / date / paths funnel) compiles into `git log` arguments and matches over all history, with an All-branches option.
 - **Compare** — diff any two branches against each other.
 - **Commit & sync** — ticking a file in the tree is a real `git add` / `git restore --staged`; with the commit box and the fetch / pull / push bar, a full commit-and-push never leaves the panel.
 - **Appearance** — seven theme families in light and dark (following the OS by default), plus a blurred background image and custom CSS, stored per project and globally with the project scope winning.
@@ -77,3 +77,4 @@ Releases are tag-driven: pushing a `vX.Y.Z` tag runs the CI checks and publishes
 ## Known limits
 
 - The status card mounts in the `conversation.session.header.actions` slot, so it appears only once a session is actually open. In headless automation without a real session the card will not show — open a session in the UI to see it.
+- Person search in the history filter matches the **author** only (IDEA parity — git has no author-or-committer pushdown). The committer stays visible in the hover card.

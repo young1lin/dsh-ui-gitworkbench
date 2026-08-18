@@ -6,8 +6,8 @@
 
 每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，右侧滑出一张工作台面板，当前 worktree 的改动一览无余：
 
-- **变更**：可折叠的文件树，配逐文件 diff——双列行号、词级高亮、Shiki 语法着色；
-- **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；
+- **变更**：可折叠的文件树，配逐文件 diff——双列行号、词级高亮、Shiki 语法着色；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；
+- **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
 - **对比**：任选两个分支互相比较；
 - **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；
 - **外观**：七套主题族各带亮暗，默认跟随系统；支持虚化背景图和自定义 CSS，按「项目 / 全局」两个作用域保存，项目优先。
@@ -86,6 +86,8 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 | agent 工具 `worktree_enter/exit/status`（模型可调） | ✅ | 真实会话冒烟 `scripts/llm_smoke.py`：模型调 enter → `.agents/worktrees/llm-smoke` 出现；exit(remove) → 消失 |
 | 宿主 worktree RPC（enter/exit/status/sessionWorktree）+ 绑定文件 | ✅ | `python scripts/probe_worktree.py`：scratch 仓库断言 + 真仓库冒烟 + 再进入分支复用，ALL PASS |
 | 状态卡绑定标记（树形图标；徽标文字与分支重名时省略）+ 头部 worktree 选择器 | ✅ | `python scripts/verify_worktree_ui.py`：6 步 UI 探针（绑定标记、头部路径、选择器切换、折叠/选中回归） |
+| 历史过滤（作者 / 日期 / 路径下推 `git log`、「全部分支」、日历与三态路径树） | ✅ | `python scripts/verify_history_feature.py`：11 步 UI + host 探针全过（中文作者、All-branches、日历选界、目录吸收文件勾选、诚实空态） |
+| 单文件撤回（Rollback）与文件列表关键字过滤 | ✅ | 对 live app 实测：撤回弹窗措辞随 host 实时推导的后果变化、取消不动手、执行后 fixture 回静息态；过滤框多词 AND、忽略折叠、根勾选只动可见行 |
 | 客户端半被类型检查 | ✅ | `tsconfig.client.json` 进了 `bundle`/`typecheck`；曾故意写坏一处，确认报 `TS2322` |
 | 主题 7 族 × 亮暗 + 跟随系统明暗 | ✅ | `tests/theme-palettes.test.ts` 把 `themes.ts` 与 `.module.css` 互扣（两个方向都验过会红）；`lib/client.js` 含全部 14 套调色板 |
 | 背景图 / 自定义 CSS 的项目+全局存储 | ✅ | 对**构建产物** `lib/index.js` 跑 styleGet/styleSet 全流程（临时 HOME，18/18 PASS）：读写、项目优先、越界钳制、恶意 image 拒绝、清空删记录、非仓库拒绝、两作用域并发写不互相覆盖 |
@@ -168,13 +170,20 @@ export function apply(ctx) {
 - **agent 工具**：同一份逻辑用 `ctx.tools.register(defineTool({...}))` 注册成 `worktree_enter/exit/status`，sessionId/cwd 取自 `exec.agent?.session`（**不接受**模型传参）——注册要点见 §6.10，schema 限制见 §6.11。
 - **客户端跟随**：`GitWorkbenchPanel` 每轮拉 stats 的同时拉 `worktreeStatus(sessionId, cwd)`（绑定 + 仓库全部 worktree 一次拿到，agent 在 dsh 外面建的 worktree 也会跟进列表）；有绑定 → 状态卡亮出绑定标记（树形图标；分支与徽标文字重名时省略后者）、stats 改传绑定的 worktree 绝对路径；面板头部的 worktree 选择器按分支列出所有源，**只切显示对象、不动绑定**。树的展开状态跨切换、跨轮询保留；选中在切换源时**有意重置**——旧 worktree 的路径不能漏进新树的选中（§6.0c）。
 
-### 2.5 写操作：暂存 / 提交 / 同步（`src/git-ops.ts` + 宿主 7 个 `@Remote`）
+### 2.5 写操作：暂存 / 提交 / 同步 / 撤回（`src/git-ops.ts` + `src/discard-ops.ts` + 宿主 9 个 `@Remote`）
 
 - **勾选就是 git 调用**：勾一个文件＝`git add -- <path>`，取消＝`git restore --staged -- <path>`，立即生效。argv 全部数组构造（无 shell，引号不是攻击面），路径一律放 `--` 之后并拒绝前导 `-`（文件可以合法叫 `-f`，位置参数传进去就成了选项）；全库没有 `--force`/`reset --hard`/`clean` 任何拼写——丢提交类操作需要的是专门的确认设计，不是碰巧排在旁边的按钮。
 - **点击即显、不丢点击**：勾选走乐观更新 + 队列（`stage-tree.ts` 的 `nextBatch` 按动作聚批，一次 drain 只发一个 git 调用——宿主一次调用 ~300ms，等它返回再画勾就是用户投诉的「超级卡」），120ms 内连点两下都会入队生效；轮询回包经 `settledTicks` 对账后落定。
 - **提交**：`commit(worktreePath, message, amend, signal)`——消息整段作一个 argv 元素传 `-m`（多行 body 是常态，拆分才是风险），绝不 `-a`：面板有自己的暂存区，全量扫进去等于让分区变成摆设。
 - **同步**：`syncStatus`（branch/upstream/ahead/behind + hasRemote，读 `git status` 而非 `rev-list --count`——「没配 upstream」和「与 upstream 齐平」的计数都是 0，只有前者决定 push 要不要 `--set-upstream`）、`fetch --prune`（远端删掉的分支别再算作待拉取）、`pull --ff-only/--rebase/--no-rebase`（模式永远显式：按钮写什么就跑什么，不读用户的 pull.rebase 配置）、`push`（绝不 force；无 upstream 时 `--set-upstream origin <branch>`；被拒归类为 `diverged`，答案是先 pull 而不是覆盖别人的工作）。
+- **单文件撤回（IDEA 的 Rollback）**：`discardPlan` / `discardFile`，计划推导在 `src/discard-ops.ts`（纯函数）。语义与 IDEA 一致：**不问暂存与否**，索引与工作区一起回退——改过的还原、未提交过的删除、误删的找回、改名撤销；目录不提供这个手势。计划由 host 用**全树** `git status` 现场推导（git 靠「一删一增」配对才认出改名，带单文件 pathspec 的 status 只看到一半，会把「撤销改名」错读成「还原一个 + 删掉另一个」，见 §6.16）；弹窗措辞来自推导出的后果（找回已删文件是纯收益，不弹窗）；执行前重推一遍并核对后果一致，文件变了就什么都不做。危险拼法禁令同上且更严：只有 `git restore` 加单个 pathspec（`--` 之后），删除走文件系统但拒绝绝对路径 / 盘符 / UNC / `..` 并按解析后路径复查在工作区内——`tests/discard-ops.test.ts` 扫描本模块可产出的每条计划守这条线。
 - **失败要说人话**：`classifyFailure` 把 stderr/exit 归类为 auth / no-upstream / diverged / conflict / nothing-to-commit / dirty，原始文本随行返回——归类是提示，不替代证据。子进程环境关掉全部凭据提示（`GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`、askpass 置空）：`stdin:'ignore'` 不会把交互提示变成错误，只会变成没人能回答的等待，而那等待挂在宿主进程里——一个过期的 token 就能挂死整个插件 30s。
+
+### 2.6 历史过滤（宿主 `src/log-filter.ts` + `src/shortlog.ts`；客户端 `log-filter-query.ts` / `calendar.ts` / `dir-tree.ts` / `path-select.ts`）
+
+- **条件编译成 `git log` 参数**（`log-filter.ts`：统一 `-i -E` 方言、字面量转义、`--author` 逐人、approxidate `--since`/`--until`、pathspec 放 `--` 之后），在**全部历史**上匹配后再分页——不是只筛已加载的页；过滤后的翻页仍是单次连续游走，车道图不断。裸 `yyyy-mm-dd` 由 host 展开为全天（§6.15）；`git log` 失败原样透出 stderr（exit + 尾部），不静默成「无匹配」。
+- **两个入口写同一个过滤器**：输入框语法（`user:` / `path:` / `after:` / `before:` + 可删除 chips，`log-filter-query.ts`）与漏斗弹层（作者来自 `git shortlog` 且**跟随当前 ref**——名单里的人必然搜得到；自绘日历 `calendar.ts` 纯函数月格；路径树 `dir-tree.ts` 聚合 + `path-select.ts` 三态勾选：勾目录覆盖并吸收子文件，目录有半选态）。防抖 300ms、在飞请求取消、条件变化回第 0 页。
+- **「全部分支」** = `--all` 哨兵（ref 不能以 `-` 开头，无歧义），ref 选择器与作者名单同步。按人搜索只匹配**作者**（git 没有「作者或提交者」并集下推，IDEA 同款），提交者完整显示在悬浮卡。
 
 ---
 
@@ -189,11 +198,14 @@ harness-worktree/
   tsdown.config.ts          tsdown 构建【客户端半】用（closure-factory bundle + CSS Modules 插件）
   vitest.config.ts          排除 .agents/**（worktree 是整仓副本，否则同一套测试被收集多遍）
   src/
-    index.ts                宿主半：GitWorkbenchService（TypertRemoteService + @Remote：stats/fileDiff/commits/compareRefs/commitStats/worktree*/style*/syncStatus/stage/unstage/commit/fetch/pull/push）+ defineTool 三工具
+    index.ts                宿主半：GitWorkbenchService（TypertRemoteService + @Remote：stats/fileDiff/commits/authors/repoTree/compareRefs/commitStats/worktree*/style*/syncStatus/stage/unstage/discardPlan/discardFile/commit/fetch/pull/push）+ defineTool 三工具
     atomic-json.ts          崩溃安全的 JSON 写入（tmp+rename + Windows EPERM 退避），绑定文件与样式文件共用
     commit-cache.ts         内容寻址缓存：commit hash 指向不可变内容，只需容量上限、不需失效
     git-ops.ts              写操作的 argv 构造 + stderr 归类（纯函数、不 spawn）——见 §2.5
     git-log.ts              `--pretty` 日志与 porcelain 状态头的解析（纯函数）
+    log-filter.ts           历史过滤条件 → `git log` 参数的编译 + 裸日期展开为全天（纯函数，§2.6）
+    shortlog.ts             作者名单：`git shortlog -sne` 输出解析、按活跃度排序截断（纯函数）
+    discard-ops.ts          单文件撤回的计划推导（全树 status → restore/delete 计划 + 路径防线，纯函数，§2.5）
     style-store.ts          背景图 + 自定义 CSS 的两作用域存储与校验（~/.dsh/gitworkbench-style.json）
     worktree.ts             worktree 纯逻辑：绑定文件读写（tmp+rename 原子、EPERM 重试）、名称/分支/目录推导、porcelain 解析、`isRefName`
     types/dsh-shim.d.ts     ambient 声明：让 tsc 在没装 @deepseek-ai/* 时也能编译（cordis/subprocess 的宽松类型）
@@ -206,16 +218,25 @@ harness-worktree/
       diff-model.ts         统一 diff 行解析 + 词级变更区间（纯函数）
       commit-graph.ts       提交图的泳道分配（纯函数）
       worktree-view.ts      worktree/分支列表的展示推导（纯函数）
+      log-filter-query.ts   过滤输入框语法（user:/path:/after:/before: → 条件对象 + chips，纯函数）
+      commit-filter.ts      悬浮卡的精确时间渲染（`%cI` → 查看者时区，纯函数）
+      dir-tree.ts           路径选择器的目录树聚合（ls-tree 平铺 → 目录 + 文件叶子，纯函数）
+      path-select.ts        三态勾选树语义（勾目录吸收子文件、拆分级联、半选态，纯函数）
+      calendar.ts           自绘日历的月格推导（纯函数，全主题 token 化）
+      active-file.ts        过滤后点开提交的默认选中文件排序（已有选中 > 精确点名 > 目录之下 > 首个，纯函数）
+      file-filter.ts        文件列表关键字过滤（多词 AND、逐词智能大小写，纯函数）
       highlight.ts          Shiki 封装：扩展名→语法、主题映射、语法包按需加载
       op-feedback.ts        写操作按钮反馈的时序常量（忙碌提示、过短操作不禁用）
       themes.ts             主题模型：族列表、明暗解析、两作用域样式解析、localStorage 值校验（无 CSS/React 依赖，便于测试）
       locales.ts            zh / en 两份词典
-  tests/                    vitest：worktree-bindings（存储/原子写/重试）、worktree-derive（名称/分支/porcelain）、ref-name、git-ops（argv/归类）、git-log、commit-cache、style-store、style-resolve、theme-palettes（族×调色板互扣）、stage-tree（勾选模型）、worktree-view、commit-graph、diff-regression（diff 模型/词级区间/Shiki/CSS 不变量）、drawer-chrome（状态卡与面板的结构性扫描）、op-feedback、status-parse（porcelain/numstat 解析、二进制嗅探、截断与上限——fixture 场景目录 TESTS.md 的单测化）
+  tests/                    vitest：worktree-bindings（存储/原子写/重试）、worktree-derive（名称/分支/porcelain）、ref-name、git-ops（argv/归类）、git-log、commit-cache、style-store、style-resolve、theme-palettes（族×调色板互扣）、stage-tree（勾选模型）、worktree-view、commit-graph、diff-regression（diff 模型/词级区间/Shiki/CSS 不变量）、drawer-chrome（状态卡与面板的结构性扫描）、op-feedback、status-parse（porcelain/numstat 解析、二进制嗅探、截断与上限——fixture 场景目录 TESTS.md 的单测化）、log-filter（条件编译/裸日期展开）、log-filter-query（输入语法/chips）、shortlog、dir-tree、path-select（三态勾选）、calendar、commit-filter（精确时间渲染）、active-file（默认选中排序）、file-filter（关键字过滤）、discard-ops（撤回计划推导 + 危险拼法扫描）
   scripts/
     probe_worktree.py       宿主 RPC 探针：scratch 仓库全流程 + 真仓库冒烟 + 再进入分支复用
     verify_worktree_ui.py   UI 探针：状态卡标记/头部路径/选择器切换/折叠回归 6 步（经真实页面 RPC 回放）
     llm_smoke.py            真实 LLM 冒烟：让模型在会话里调 worktree_enter/exit，看目录出现/消失
-    （三个 .py 探针为本地集成脚本：需连真实 dsh 实例与 scratch 仓库，内嵌本机路径——已 gitignore，不入库、不随包发布）
+    verify_turn_refresh.py  UI 探针：抽屉关着时回合结束自动刷新状态卡（0.1.2 的刷新链路）
+    verify_history_feature.py  UI+host 探针：历史过滤两半（条件下推 + 输入框/漏斗/诚实空态）11 步
+    （五个 .py 探针为本地集成脚本：需连真实 dsh 实例与 scratch 仓库，内嵌本机路径——已 gitignore，不入库、不随包发布）
   cordis.patch.yml          一行 insert，把宿主 entry 挂进 web profile
   README.md                 本文件
   README_EN.md              英文版（面向使用者与维护者；深度细节仍以本文为准）
@@ -348,6 +369,15 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 
 ### 6.14 发布的 peer 范围不能写 `*`——`*` 按 `latest` dist-tag 解析
 npm 7+ 自动安装 peer 时，`*` 走 **`latest` dist-tag**，不是「取版本列表最高」。`@deepseek-ai/*` 全系的 `latest` 长期停在 8 月 10 日的 `0.0.1-rc.1` 老线（那条线依赖**从未发布**的 `@deepseek-ai/dsh-compact`，公开安装必 404），能用的 `0.1.0-rc.x` 全挂 `next`。于是 0.1.2 之前任何不在 dsh profile 工作区里的裸 `npm i` 都炸 E404。规则：**peer 写显式区间**（cordis `^4.0.1-rc.1`、dsh 系 `^0.1.0-rc.2`），dsh 发新线时同步抬范围并验证 `npm pack` 出的 tarball 在空目录可装。注意 6.5 的 `auto-install-peers=false` 只管本仓库 pnpm 开发态，管不了用户侧 npm。
+
+### 6.15 Windows 上裸 `--since=2026-08-18` 可能吃掉当天的提交
+git 对裸 `yyyy-mm-dd` 的 `--since`/`--until` 解析带时刻语义，Windows 上一整天的提交可能全被排掉，且无任何报错。host 把裸日期展开为 `T00:00:00` / `T23:59:59` 再交给 git（`log-filter.ts`）——选中一天即指一整天，不赌平台行为。
+
+### 6.16 带单文件 pathspec 的 `git status` 会把改名拆成「一删一增」
+git 靠「一删除 + 一新增」的配对才认得出改名；pathspec 只放行一半时，status 报 `D` 加 `??`，而不是 `R`。任何**按 status 推导计划**的代码必须用全树 status 自行配对（`discard-ops.ts` 即因此不接受客户端传来的 status，一律重推），否则「撤销改名」会被计划成「还原一个、删掉另一个」——正好是用户没答应的那件事。
+
+### 6.17 抽屉内新增模态层的 CSS 必须写 `.drawer > .xxx`，裸类会被压住
+`.drawer > *:not(.resizer) { position: relative; z-index: 1 }`（布局需要）给了每个直接子元素 position 与层叠秩，裸类声明的 `position: absolute` 会输给它——遮罩被当作最后一个 flex 项排进抽屉底部的一条缝里，样式全对、位置全错、还不报错。模态遮罩一律写成 `.drawer > .confirmScrim` 这种带父作用域的选择器；`tests/drawer-chrome.test.ts` 有断言守着这条作用域与层叠秩。
 
 ---
 
