@@ -60,6 +60,7 @@ import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
 import { buildDirTree, searchPaths, type DirEntry } from './dir-tree.ts'
+import { nextAfterPlan, type DiscardAnswer, type DiscardPreview } from './discard-flow.ts'
 import { filterFiles } from './file-filter.ts'
 import { addPath, buildIndex, checkedState, isCovered, removePath } from './path-select.ts'
 import { inCalRange, localTodayIso, monthGrid, weekdayLabels } from './calendar.ts'
@@ -216,14 +217,7 @@ export interface GitOpPayload {
   readonly expectedEffect?: string
 }
 
-/** What the host says rolling one file back would do. */
-export interface DiscardPreview {
-  /** Absent when git reports nothing to roll back for that path. */
-  readonly effect?: 'restore' | 'delete' | 'recover' | 'unrename'
-  readonly irreversible?: boolean
-  readonly previousPath?: string
-  readonly error?: string
-}
+export type { DiscardAnswer, DiscardNext, DiscardPreview } from './discard-flow.ts'
 
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
 type Translate = (key: string, params?: Record<string, string | number>) => string
@@ -249,7 +243,7 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly runGitOp: (op: GitOpName, worktreePath: string | undefined, payload: GitOpPayload, signal: AbortSignal) => Promise<GitOpResult>
   /** What rolling this file back WOULD do, read fresh so the confirmation
    *  states the real consequence rather than one derived from a polled row. */
-  readonly fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardPreview | null>
+  readonly fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardAnswer>
 }
 
 /**
@@ -1032,6 +1026,19 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     }
   }
 
+  /**
+   * Put a failure the drawer produced itself into the same banner git failures
+   * use.
+   *
+   * Roll-back is the caller: it asks the host what a file's roll-back would do
+   * before it does anything, and that question can fail on its own, with no
+   * `runOp` behind it to report through. Everything else the drawer does is
+   * either a git call or has a visible result of its own.
+   */
+  const reportOpError = (op: GitOpName, error: string): void => {
+    setOpResult({ op, result: { ok: false, failure: 'unknown', error } })
+  }
+
   /** Wait for the git lock, so a queued tick batch waits out a heavy
    *  operation instead of being refused by it. */
   const waitNotBusy = async (): Promise<void> => {
@@ -1304,6 +1311,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           opResult={opResult}
           runOp={runOp}
           fetchDiscardPlan={fetchDiscardPlan}
+          onOpError={reportOpError}
           pendingTicks={pendingTicks}
           onTick={queueTicks}
           fetchFileDiff={fetchDiffForView}
@@ -1495,7 +1503,9 @@ interface DrawerProps {
   /** The last write operation's outcome, or null once a new one starts. */
   opResult: { op: GitOpName; result: GitOpResult } | null
   runOp: (op: GitOpName, payload?: GitOpPayload) => Promise<GitOpResult>
-  fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardPreview | null>
+  fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardAnswer>
+  /** Say why an operation the drawer started did nothing. */
+  onOpError: (op: GitOpName, error: string) => void
   /** Ticks awaiting their git call, keyed by path — overlaid over the file
    *  list so the click is on screen before git confirms it. */
   pendingTicks: ReadonlyMap<string, TickAction>
@@ -1509,7 +1519,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1581,27 +1591,23 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    * `recover` — a deleted file coming back — shows no dialog at all. It loses
    * nothing, and a confirmation in front of a pure gain is how people learn to
    * dismiss confirmations without reading them.
+   *
+   * Every other answer is `nextAfterPlan`'s to classify, and the one it exists
+   * for is failure: a plan that never arrives reports, where it used to leave
+   * the reader looking at a button that did nothing.
    */
   const askDiscard = (file: GitFile): void => {
     setDiscardPending({ file, plan: null })
     void (async () => {
-      const preview = await fetchDiscardPlan(statsPath, file.path, new AbortController().signal)
-      // Nothing to roll back means the row was stale — the tree lists only
-      // changed files, so a file with no change is one git has since seen
-      // settled. Refreshing is the honest answer: the row goes away, which is
-      // both the feedback and the fix. A banner saying "nothing happened"
-      // would leave the row that caused it sitting right there.
-      if (preview === null || preview.effect === undefined) {
-        setDiscardPending(null)
-        onRefresh()
+      const next = nextAfterPlan(await fetchDiscardPlan(statsPath, file.path, new AbortController().signal))
+      if (next.kind === 'confirm') {
+        setDiscardPending({ file, plan: next.plan })
         return
       }
-      if (preview.irreversible !== true) {
-        setDiscardPending(null)
-        void runOp('discardFile', { path: file.path, expectedEffect: preview.effect })
-        return
-      }
-      setDiscardPending({ file, plan: preview })
+      setDiscardPending(null)
+      if (next.kind === 'run') void runOp('discardFile', { path: file.path, expectedEffect: next.effect })
+      else if (next.kind === 'refresh') onRefresh()
+      else onOpError('discardFile', next.error)
     })()
   }
 

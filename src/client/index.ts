@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-runtime' // informational inject ed
 import type {} from '@deepseek-ai/dsh-client-ui-slots' // SlotMap is reused, not extended
 import {
   GitWorkbenchPanel,
-  type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
+  type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
@@ -211,14 +211,22 @@ export function apply(ctx: ClientContext): void {
         // is the difference between "goes back to its committed content" and
         // "leaves the disk and cannot come back" — which is the entire question
         // the dialog exists to ask.
-        fetchDiscardPlan: async (worktreePath: string | undefined, path: string, signal: AbortSignal): Promise<DiscardPreview | null> => {
-          const result = await connection.rpc.call(
-            '/api',
-            'gitWorkbench/discardPlan',
-            { args: { worktreePath: worktreePath ?? '', path } },
-            signal,
-          ) as { ok: true; value: DiscardPreview } | { ok: false; error: { message?: string } }
-          return result.ok ? result.value : null
+        fetchDiscardPlan: async (worktreePath: string | undefined, path: string, signal: AbortSignal): Promise<DiscardAnswer> => {
+          // A throw here used to be nobody's: the click had already put the
+          // drawer into "asking the host", and an unhandled rejection left it
+          // there with no dialog and no way back except closing the drawer.
+          try {
+            const result = await connection.rpc.call(
+              '/api',
+              'gitWorkbench/discardPlan',
+              { args: { worktreePath: worktreePath ?? '', path } },
+              signal,
+            ) as { ok: boolean; value?: DiscardPreview; error?: { message?: string } }
+            if (result.ok && result.value !== undefined) return { kind: 'plan', plan: result.value }
+            return { kind: 'failed', error: result.error?.message ?? '' }
+          } catch (error) {
+            return { kind: 'failed', error: error instanceof Error ? error.message : String(error) }
+          }
         },
         runGitOp: async (op: GitOpName, worktreePath: string | undefined, payload: GitOpPayload, signal: AbortSignal): Promise<GitOpResult> => {
           const result = await connection.rpc.call(
