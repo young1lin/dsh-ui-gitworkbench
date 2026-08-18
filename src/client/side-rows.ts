@@ -187,6 +187,54 @@ export function blockCount(rows: readonly SideRow[]): number {
 }
 
 /**
+ * Whether a block is the file's ENTIRE content: the one block of a diff with
+ * no context row at all.
+ *
+ * An untracked file's synthesized new-file diff is exactly this shape — every
+ * line an addition, nothing unchanged — and it is the case whose roll-back
+ * DELETES the file rather than rewriting it, so the confirmation's wording
+ * asks for it by name. A tracked file whose every line changed has the same
+ * shape and only rewrites, which is why the caller combines this with the
+ * file row's status instead of reading deletion into the shape alone.
+ *
+ * @param rows - rows from {@link alignRows}.
+ * @param block - a block id the rows carry.
+ * @returns true when the block covers every row and no row is unchanged.
+ */
+export function blockIsWholeFile(rows: readonly SideRow[], block: number): boolean {
+  if (rows.length === 0 || block !== 0 || blockCount(rows) !== 1) return false
+  return rows.every(row => row.kind !== 'same')
+}
+
+/** What the pane's body area renders for the payload on screen. */
+export type SideBody =
+  | { readonly kind: 'editor' }
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'rows' }
+
+/**
+ * Decide the pane's BODY area — never the whole pane.
+ *
+ * The tab row above it always renders: an empty layer diff (a fully staged
+ * file's unstaged side, a file with nothing staged) is one click from the
+ * other layer — and, on the unstaged side, one Edit button from the editor,
+ * because the working tree is the edit target even when every change in it is
+ * already staged. So "no rows" is a state of the body, not an early return
+ * for the pane, and an ARMED editor over an emptied diff still edits: the
+ * file's unstaged delta can vanish (the agent staged everything) under a
+ * buffer the reader is mid-edit in.
+ *
+ * @param rows - rows from {@link alignRows}; empty when the layer diff is.
+ * @param editable - whether the editor is armed (unstaged layer only).
+ * @returns which of the three body treatments the pane renders.
+ */
+export function sideBodyState(rows: readonly SideRow[], editable: boolean): SideBody {
+  if (editable) return { kind: 'editor' }
+  if (rows.length === 0) return { kind: 'empty' }
+  return { kind: 'rows' }
+}
+
+/**
  * A block's line tallies: how many of its rows carry a right cell (added) and
  * how many a left one (deleted). A paired edit counts one on each side.
  *

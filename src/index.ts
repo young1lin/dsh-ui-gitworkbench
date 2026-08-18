@@ -614,9 +614,14 @@ export class GitWorkbenchService extends TypertRemoteService {
     }
     const diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
     // Untracked files have no index entry, so `git diff` reports nothing for
-    // them; the synthesized new-file segment is their unstaged diff.
+    // them; the synthesized new-file segment is their unstaged diff. The
+    // trailing newline is added here because every diff git prints carries
+    // one: this text is what `applyBlocks` re-emits as a patch file, and a
+    // patch whose last line has no LF is "corrupt patch" to `git apply` —
+    // which is exactly what a real-git drive of the untracked path caught.
     if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
-      return await untrackedSegment(cwd, path, SIDE_BYTE_CAP) ?? ''
+      const segment = await untrackedSegment(cwd, path, SIDE_BYTE_CAP)
+      return segment === null ? '' : `${segment}\n`
     }
     return diff
   }

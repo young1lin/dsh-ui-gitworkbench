@@ -54,7 +54,7 @@ export type WorkbenchKey =
   | 'discardAction' | 'discardTitle' | 'discardConfirm' | 'discardCancel'
   | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
   // side-by-side block actions: the three buttons and the roll-back confirmation's wording
-  | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody'
+  | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody' | 'blockDiscardBodyDelete'
   // side-by-side editing: arm the editor, save, revert, the stale/conflict
   // banner, the CRLF refusal notice, and the unsaved-changes prompt that
   // guards every gesture dropping the buffer (tab, file, close)
@@ -228,6 +228,10 @@ export const zh: Record<WorkbenchKey, string> = {
   blockDiscard: '撤回这块',
   blockUnstage: '取消暂存这块',
   blockDiscardBody: '{path} 的这一块改动（{added} 行新增、{deleted} 行删除）将被撤回，工作区文件随之改写，无法找回。',
+  // The untracked case: the file's whole content is the one block, so rolling
+  // the block back reverse-applies the new-file patch and DELETES the file —
+  // the same consequence class the file-level delete wording exists to name.
+  blockDiscardBodyDelete: '{path} 从未被 git 记录过，这一块就是整个文件，撤回后文件将被删除，无法找回。',
   // The editable right column: editing arms explicitly (never per keystroke —
   // an autosave racing a concurrent agent write is the data-loss case), and
   // every save carries the sha the editor opened with.
@@ -409,6 +413,10 @@ export const en: Record<WorkbenchKey, string> = {
   blockDiscard: 'Roll back block',
   blockUnstage: 'Unstage block',
   blockDiscardBody: 'This block of {path} ({added} added, {deleted} deleted lines) is rolled back and the working-tree file rewritten to do it. This cannot be undone.',
+  // The untracked case: the file's whole content is the one block, so rolling
+  // the block back reverse-applies the new-file patch and DELETES the file —
+  // the same consequence class the file-level delete wording exists to name.
+  blockDiscardBodyDelete: '{path} was never recorded by git, and this block is its whole content — rolling it back deletes the file. This cannot be undone.',
   // The editable right column: editing arms explicitly (never per keystroke —
   // an autosave racing a concurrent agent write is the data-loss case), and
   // every save carries the sha the editor opened with.

@@ -57,7 +57,7 @@ import {
 } from './themes.ts'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
-import { alignRows, blockLines, blockTally, type SideCell, type SideRow } from './side-rows.ts'
+import { alignRows, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import {
   applySaveOk, applySides, armEdit, DISARMED, editableSides, gateLeave, isDirty,
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
@@ -264,6 +264,9 @@ export interface BlockAsk {
   /** The block's line tallies, for the roll-back confirmation's wording. */
   readonly added: number
   readonly deleted: number
+  /** Whether the block is the file's entire content — the untracked case,
+   *  whose roll-back DELETES the file and whose confirmation says so. */
+  readonly wholeFile: boolean
 }
 
 /**
@@ -1697,6 +1700,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   // the preferred-file fallback can leave `selected` naming a file the pane
   // is not rendering — the row that changes nothing is the shown file's.
   const selectAndReveal = (path: string): void => guardLeave(() => onSelect(path), path === active)
+  // The source picker swaps the whole worktree under the drawer — the buffer
+  // belongs to a file the new source may not even list. Picking the source
+  // already on screen changes nothing, so it runs unguarded like every other
+  // no-op gesture.
+  const leaveSource = (next: string): void => guardLeave(() => onSwitchSource(next), samePath(next, statsPath))
 
   /**
    * Roll-back, in two steps that are deliberately not one.
@@ -1868,7 +1876,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               sessionPath={sessionPath}
               statsPath={statsPath}
               fallbackBranch={stats.branch}
-              onSwitch={onSwitchSource}
+              onSwitch={leaveSource}
             />
             <Elided text={stats.worktreePath} className={css.headerPathMain} title={stats.worktreePath} />
             {tab === 'changes' && stats.detached ? <span className={css.headerDetached}>detached HEAD</span> : null}
@@ -2104,11 +2112,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
         {blockDiscard !== null ? (
           <DiscardConfirm
             t={t}
-            body={t('blockDiscardBody', {
-              path: blockDiscard.path,
-              added: blockDiscard.added,
-              deleted: blockDiscard.deleted,
-            })}
+            body={blockDiscardBodyText(
+              t,
+              blockDiscard,
+              body.files.find(file => file.path === blockDiscard.path),
+            )}
             onCancel={() => setBlockDiscard(null)}
             onConfirm={confirmBlockDiscard}
           />
@@ -2151,9 +2159,9 @@ function DiscardConfirm({ t, body, onCancel, onConfirm }: {
   const cancelRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { cancelRef.current?.focus() }, [])
   useEffect(() => {
-    // Capture phase: the drawer's own Escape handler closes the whole drawer,
-    // and answering a question about deleting a file should not also dismiss
-    // the thing that asked it.
+    // Capture phase: while this question is open, Escape belongs to it alone
+    // — consumed here, before it can reach the page's other Escape handlers
+    // (an open picker's dismiss, the commit box's undo).
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.stopPropagation()
@@ -2193,6 +2201,23 @@ function discardBodyText(t: Translate, file: GitFile, plan: DiscardPreview): str
   if (plan.effect === 'delete') return t('discardBodyDelete', { path: file.path })
   if (plan.effect === 'unrename') return t('discardBodyUnrename', { path: file.path, previousPath: plan.previousPath ?? '' })
   return t('discardBodyRestore', { path: file.path, added: file.addedLines, deleted: file.deletedLines })
+}
+
+/**
+ * The BLOCK roll-back's consequence, in the pane's own rows.
+ *
+ * One case outranks the tally wording: an untracked file's whole content is
+ * the one block, and rolling THAT block back reverse-applies the new-file
+ * patch — which deletes the file from the working tree, not rewrites it. The
+ * file row's status is the gate (a tracked file whose every line changed has
+ * the same block shape and only rewrites), which is why the ask's shape alone
+ * is not enough.
+ */
+function blockDiscardBodyText(t: Translate, ask: BlockAsk, file: GitFile | undefined): string {
+  if (file !== undefined && file.status === 'untracked' && ask.wholeFile) {
+    return t('blockDiscardBodyDelete', { path: ask.path })
+  }
+  return t('blockDiscardBody', { path: ask.path, added: ask.added, deleted: ask.deleted })
 }
 
 /**
@@ -4940,6 +4965,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
       path, layer, diffSha: sides.diffSha,
       lines: blockLines(rows, block),
       ...blockTally(rows, block),
+      wholeFile: blockIsWholeFile(rows, block),
     }
     if (mode === 'discard') {
       void onBlockAction(mode, ask)
@@ -4969,10 +4995,14 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
       </>
     )
   }
-  // An empty diff with the editor ARMED still edits: the file's unstaged delta
-  // can vanish (the agent staged everything) under a buffer the reader is
-  // mid-edit in, and the editor is the thing that must not disappear.
-  if (rows.length === 0 && !editable) return <div className={css.empty}>{t('noTextDiff')}</div>
+  // The tabs are the pane's, not one layer's: an empty diff here (a fully
+  // staged file's unstaged side, a file with nothing staged) is one click from
+  // the other layer, and the Edit button still arms — the working tree is the
+  // edit target even when every change in it is already staged. So the
+  // no-change treatment below is a state of the BODY (`sideBodyState`), never
+  // an early return for the pane: returning here is what used to blank the
+  // tabs for exactly these files.
+  const bodyState = sideBodyState(rows, editable)
   // The hovered block's first row hosts the action bar; a del-only block has
   // no right cell, so its bar rides the left one instead. In the editor
   // layout the left column is dense, so the bar rides its first left row.
@@ -5092,9 +5122,13 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           each row's content. `data-block` on a row's cells names the change
           block they belong to; the hover listener below reads it back off
           whatever cell the pointer is over, and the whole block — outline and
-          action bar — answers to it as one unit. */}
+          action bar — answers to it as one unit. The empty body renders the
+          pane's no-change sentence here under the tabs, not instead of them. */}
+      {bodyState.kind === 'empty' ? (
+        <div className={css.empty}>{t('noTextDiff')}</div>
+      ) : (
       <div className={css.sideBody} onMouseOver={onBodyHover} onMouseLeave={() => { setHotBlock(null) }}>
-        {editable ? (
+        {bodyState.kind === 'editor' ? (
           <>
             {/* The editor layout: the left column renders the index side dense
                 (explicit rows, since the buffer cannot share the diff's
@@ -5163,6 +5197,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           })
         )}
       </div>
+      )}
       {pendingLayer !== null ? (
         <LeaveEditsConfirm t={t} path={path} onCancel={() => { setPendingLayer(null) }} onConfirm={confirmLeave} />
       ) : null}
@@ -5171,8 +5206,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
 }
 
 /**
- * The unsaved-edits guard on a layer switch: the only dialog in this pane
- * besides the roll-back confirmation, and for the same reason — the click it
+ * The unsaved-edits guard, rendered at both sites that defer a gesture on the
+ * buffer's answer: the pane's layer-tab switch, and the drawer level (file
+ * selection, main tab, source switch, close) for every gesture that would
+ * drop the buffer. Same reason as the roll-back confirmation — the click it
  * answers to is one gesture away from losing work. Cancel holds the initial
  * focus and Escape closes, because the default answer to losing edits is no.
  */
@@ -5185,9 +5222,10 @@ function LeaveEditsConfirm({ t, path, onCancel, onConfirm }: {
   const stayRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { stayRef.current?.focus() }, [])
   useEffect(() => {
-    // Capture phase, like the roll-back dialog: the drawer's own Escape
-    // handler closes the whole drawer, and a question about edits should not
-    // also dismiss the drawer it guards.
+    // Capture phase, like the roll-back dialog: while a question about edits
+    // is open, Escape answers it and nothing else — consumed here, before it
+    // can reach the page's other Escape handlers (an open picker's dismiss,
+    // the commit box's undo).
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.stopPropagation()

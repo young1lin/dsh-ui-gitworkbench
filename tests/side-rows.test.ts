@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emitPatch, parsePatch } from '../src/patch-model.ts'
-import { alignRows, blockCount, blockLines, blockTally } from '../src/client/side-rows.ts'
+import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState } from '../src/client/side-rows.ts'
 
 /** Join with LF and keep the trailing newline git's own output carries. */
 function diff(...lines: string[]): string {
@@ -269,5 +269,55 @@ describe('blockTally', () => {
 
   it('holds zeros for an id no row carries', () => {
     expect(blockTally(alignRows(parsePatch(PURE_CONTEXT)!), 0)).toEqual({ added: 0, deleted: 0 })
+  })
+})
+
+describe('blockIsWholeFile', () => {
+  it('a new-file diff has no context, so its one block is the whole file', () => {
+    // The untracked case the roll-back confirmation words as a deletion: an
+    // untracked file's synthesized new-file diff is every line an addition.
+    const rows = alignRows(parsePatch(NEW_FILE)!)
+    expect(blockCount(rows)).toBe(1)
+    expect(blockIsWholeFile(rows, 0)).toBe(true)
+  })
+
+  it('context around a block means the block is not the whole file', () => {
+    // One block, but unchanged rows survive on both sides of it: rolling the
+    // block back rewrites the file, it does not delete it.
+    expect(blockIsWholeFile(alignRows(parsePatch(EQUAL_RUN)!), 0)).toBe(false)
+  })
+
+  it('one of two blocks is never the whole file', () => {
+    const rows = alignRows(parsePatch(TWO_RUNS)!)
+    expect(blockIsWholeFile(rows, 0)).toBe(false)
+    expect(blockIsWholeFile(rows, 1)).toBe(false)
+  })
+
+  it('an unchanged file has no block to be the whole file', () => {
+    expect(blockIsWholeFile(alignRows(parsePatch(PURE_CONTEXT)!), 0)).toBe(false)
+    expect(blockIsWholeFile([], 0)).toBe(false)
+  })
+})
+
+describe('sideBodyState', () => {
+  it('an empty layer diff is a state of the body, never of the pane', () => {
+    // The pane's contract: no rows means the BODY shows the no-change
+    // treatment while the tab row above it keeps rendering — the decision is
+    // expressed as a body state precisely so it cannot become an early
+    // return that blanks the tabs.
+    expect(sideBodyState([], false)).toEqual({ kind: 'empty' })
+  })
+
+  it('an armed editor over an emptied diff still edits', () => {
+    // The file's unstaged delta can vanish (the agent staged everything)
+    // under a buffer the reader is mid-edit in; the editor is what must not
+    // disappear.
+    expect(sideBodyState([], true)).toEqual({ kind: 'editor' })
+  })
+
+  it('rows render as rows, and an armed editor wins over them', () => {
+    const rows = alignRows(parsePatch(TWO_RUNS)!)
+    expect(sideBodyState(rows, false)).toEqual({ kind: 'rows' })
+    expect(sideBodyState(rows, true)).toEqual({ kind: 'editor' })
   })
 })
