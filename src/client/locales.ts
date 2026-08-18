@@ -50,11 +50,13 @@ export type WorkbenchKey =
   | 'stage' | 'unstage' | 'stageAll' | 'unstageAll' | 'stagedCount'
   | 'commit' | 'amend' | 'commitPlaceholder' | 'commitNeedMessage' | 'commitLead'
   | 'op.ok.stage' | 'op.ok.unstage' | 'op.ok.commit' | 'op.ok.fetch' | 'op.ok.pull' | 'op.ok.push'
-  | 'op.ok.discardFile'
+  | 'op.ok.discardFile' | 'op.ok.applyBlocks'
   | 'discardAction' | 'discardTitle' | 'discardConfirm' | 'discardCancel'
   | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
+  // side-by-side block actions: the three buttons and the roll-back confirmation's wording
+  | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody'
   | 'op.fail.auth' | 'op.fail.network' | 'op.fail.no-upstream' | 'op.fail.diverged' | 'op.fail.conflict'
-  | 'op.fail.nothing-to-commit' | 'op.fail.dirty' | 'op.fail.unknown'
+  | 'op.fail.nothing-to-commit' | 'op.fail.dirty' | 'op.fail.stale' | 'op.fail.invalid' | 'op.fail.unknown'
 
 export const zh: Record<WorkbenchKey, string> = {
   aheadTitle: '领先上游 {count} 个提交',
@@ -200,6 +202,7 @@ export const zh: Record<WorkbenchKey, string> = {
   'op.ok.pull': '拉取完成',
   'op.ok.push': '推送成功',
   'op.ok.discardFile': '已撤回',
+  'op.ok.applyBlocks': '已应用',
   // The row action, and the dialog it opens. IDEA calls this Rollback and
   // means "take the file back to its committed state" — not "undo my last
   // edit", which is the editor's job and a different promise.
@@ -212,6 +215,12 @@ export const zh: Record<WorkbenchKey, string> = {
   discardBodyRestore: '{path} 将还原成上次提交时的样子。这里的 {added} 行新增、{deleted} 行删除无法找回。',
   discardBodyDelete: '{path} 从未被 git 记录过，删除后无法找回。',
   discardBodyUnrename: '撤销重命名：{path} 改回 {previousPath}，改名期间的内容改动一并丢弃。',
+  // One BLOCK, not the whole file: the side pane's roll-back states exactly
+  // which lines leave and that the working-tree file is rewritten to do it.
+  blockStage: '暂存这块',
+  blockDiscard: '撤回这块',
+  blockUnstage: '取消暂存这块',
+  blockDiscardBody: '{path} 的这一块改动（{added} 行新增、{deleted} 行删除）将被撤回，工作区文件随之改写，无法找回。',
   'op.fail.auth': '认证失败。凭据提示已被禁用，请先在终端里配置好凭据再重试。',
   'op.fail.network': '网络不可达：主机名解析失败或连接不上。检查网络与远程地址后重试。',
   'op.fail.no-upstream': '当前分支没有上游分支。',
@@ -219,6 +228,8 @@ export const zh: Record<WorkbenchKey, string> = {
   'op.fail.conflict': '出现冲突，工作区已被改动。请在编辑器里解决冲突后继续。',
   'op.fail.nothing-to-commit': '暂存区是空的，没有可提交的内容。',
   'op.fail.dirty': '本地改动会被覆盖。先提交或暂存它们。',
+  'op.fail.stale': 'diff 已过期。',
+  'op.fail.invalid': '无效的操作。',
   'op.fail.unknown': '操作失败。',
 }
 
@@ -356,6 +367,7 @@ export const en: Record<WorkbenchKey, string> = {
   'op.ok.pull': 'Pulled',
   'op.ok.push': 'Pushed',
   'op.ok.discardFile': 'Rolled back',
+  'op.ok.applyBlocks': 'Applied',
   discardAction: 'Roll back changes',
   discardTitle: 'Roll back changes?',
   discardConfirm: 'Roll back',
@@ -363,6 +375,12 @@ export const en: Record<WorkbenchKey, string> = {
   discardBodyRestore: '{path} goes back to its committed content. The {added} added and {deleted} deleted lines here cannot be recovered.',
   discardBodyDelete: '{path} was never recorded by git. Deleting it cannot be undone.',
   discardBodyUnrename: 'Undo the rename: {path} goes back to {previousPath}, and content changed along the way is lost.',
+  // One BLOCK, not the whole file: the side pane's roll-back states exactly
+  // which lines leave and that the working-tree file is rewritten to do it.
+  blockStage: 'Stage block',
+  blockDiscard: 'Roll back block',
+  blockUnstage: 'Unstage block',
+  blockDiscardBody: 'This block of {path} ({added} added, {deleted} deleted lines) is rolled back and the working-tree file rewritten to do it. This cannot be undone.',
   'op.fail.auth': 'Authentication failed. Credential prompts are disabled here — set your credentials up in a terminal first.',
   'op.fail.network': 'The network was unreachable — the host could not be resolved or the connection failed. Check connectivity and the remote URL, then retry.',
   'op.fail.no-upstream': 'This branch has no upstream.',
@@ -370,5 +388,7 @@ export const en: Record<WorkbenchKey, string> = {
   'op.fail.conflict': 'Conflicts. The working tree has been changed; resolve them in the editor before continuing.',
   'op.fail.nothing-to-commit': 'Nothing staged to commit.',
   'op.fail.dirty': 'Local changes would be overwritten. Commit or stash them first.',
+  'op.fail.stale': 'The diff is stale.',
+  'op.fail.invalid': 'Invalid operation.',
   'op.fail.unknown': 'The operation failed.',
 }

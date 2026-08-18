@@ -185,3 +185,26 @@ export function blockCount(rows: readonly SideRow[]): number {
   for (const row of rows) if (row.block > max) max = row.block
   return max + 1
 }
+
+/**
+ * A block's line tallies: how many of its rows carry a right cell (added) and
+ * how many a left one (deleted). A paired edit counts one on each side.
+ *
+ * The roll-back confirmation states the consequence in these terms — "these N
+ * added and M deleted lines are reverted" — so the count must come from the
+ * same row model the buttons act on, not from the file row's whole-file stats.
+ *
+ * @param rows - rows from {@link alignRows}.
+ * @param block - a block id the rows carry.
+ * @returns the tallies; zeros for an id no row carries.
+ */
+export function blockTally(rows: readonly SideRow[], block: number): { readonly added: number; readonly deleted: number } {
+  let added = 0
+  let deleted = 0
+  for (const row of rows) {
+    if (row.block !== block) continue
+    if (row.left !== null) deleted += 1
+    if (row.right !== null) added += 1
+  }
+  return { added, deleted }
+}

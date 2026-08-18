@@ -210,7 +210,15 @@ export function stageStateOf(xy: string): StageState {
   return { staged: index !== ' ', unstaged: worktree !== ' ' }
 }
 
-/** Why an operation failed, in terms the drawer can explain to a person. */
+/**
+ * Why an operation failed, in terms the drawer can explain to a person.
+ *
+ * The last two are caller-derived, which is why {@link classifyFailure} never
+ * returns them: `stale` is a sha mismatch the caller compared before running
+ * git at all, and `invalid` an argument combination the caller refused before
+ * anything spawned. They ride the same union so a `GitOpResult` needs no
+ * parallel classification for the operations that produce them.
+ */
 export type OpFailure =
   | 'auth'
   | 'network'
@@ -219,6 +227,8 @@ export type OpFailure =
   | 'conflict'
   | 'nothing-to-commit'
   | 'dirty'
+  | 'stale'
+  | 'invalid'
   | 'unknown'
 
 /**

@@ -1693,8 +1693,41 @@
 .sideCodeAdd { background: var(--gs-add-line); }
 .sideCodeDel { background: var(--gs-del-line); }
 /* The block affordance: a changed row's cells carry the block tint above, and
-   hovering one outlines it — the place the block actions will hang from. */
-.sideCellBlock:hover { outline: 1px solid var(--gs-accent); outline-offset: -1px; }
+   the hovered block's every cell — code and gutter — takes the hot outline,
+   so the reader sees the unit the buttons act on rather than the one cell the
+   pointer happens to be over. `.sideCellBlock` also positions the action bar,
+   which a cell of the block's first row carries. */
+.sideCellBlock { position: relative; }
+.sideBlockHot { outline: 1px solid var(--gs-accent); outline-offset: -1px; }
+
+/* The hovered block's actions, floating on the row above the block. It lives
+   INSIDE the block's first code cell, so it travels with the column and the
+   scroll, and it only ever covers context — never the change it acts on. The
+   surface and shadow are what keep it readable over code. */
+.blockBar {
+  position: absolute; top: -21px; left: 0; z-index: 4;
+  display: flex; gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-control);
+  background: var(--gs-surface-2, var(--gs-bg));
+  box-shadow: 0 4px 14px var(--gs-shadow);
+  white-space: nowrap;
+}
+.blockBtn {
+  padding: 0 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-pill);
+  background: var(--gs-bg); color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-meta); line-height: 16px;
+  cursor: pointer;
+}
+.blockBtn:hover:not(:disabled) { color: var(--gs-fg); border-color: var(--gs-accent); }
+.blockBtn:disabled { opacity: 0.45; cursor: default; }
+/* The roll-back button stays red at rest, not only on hover: it is the one
+   action in the bar that cannot be undone, and arriving under the pointer is
+   not what should make that visible. */
+.blockBtnDanger { color: var(--gs-del); border-color: var(--gs-del-bg, var(--gs-border)); }
+.blockBtnDanger:hover:not(:disabled) { color: var(--gs-del); border-color: var(--gs-del); }
 
 /* No syntax-tint classes here: Shiki resolves a real TextMate theme and emits a
    hex per token, so the panel writes colour inline. A four-class approximation

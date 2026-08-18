@@ -212,3 +212,47 @@ describe('emitPatch, hunk offsets', () => {
     expect(emitPatch(parsePatch(TWO_HUNKS)!, selectAll)).toContain('@@ -10,2 +11,2 @@')
   })
 })
+
+describe('emitPatch for reverse apply — the mirrored unselected rules', () => {
+  // A `git apply --reverse` target holds the POST-image: the working tree for a
+  // discard, the index for an unstage. So an unselected addition is context
+  // there (the target has it) and an unselected deletion is dropped (the
+  // target never had it) — each the mirror of the forward rule above.
+  const file = (): FilePatch => parsePatch(TWO_HUNKS)!
+
+  it('an unselected + line becomes context, because the target has it', () => {
+    // Roll back only `const b = 2`→`const b = 20`: `const c = 3` stays in the
+    // working tree, so the patch has to show it as present.
+    const out = emitPatch(file(), (h, l) => h === 0 && (l === 1 || l === 2), true)
+    expect(out).toContain(' const c = 3')
+    expect(out).not.toContain('+const c = 3')
+  })
+
+  it('an unselected - line is dropped, because the target never had it', () => {
+    // The c insertion only, mirrored: `const b = 2` exists in neither the
+    // working tree nor the index this patch reverse-applies to, so claiming
+    // it as context would break the match. (The assertions end in a newline
+    // because `const b = 2` is a prefix of the context line `const b = 20`.)
+    const out = emitPatch(file(), (h, l) => h === 0 && l === 3, true)
+    expect(out).toContain('+const c = 3')
+    expect(out).toContain(' const b = 20\n')
+    expect(out).not.toContain('const b = 2\n')
+  })
+
+  it('keeps the sign of a selected line, either way', () => {
+    const out = emitPatch(file(), (h, l) => h === 0 && (l === 1 || l === 2), true)
+    expect(out).toContain('-const b = 2')
+    expect(out).toContain('+const b = 20')
+  })
+
+  it('recomputes the counts for the mirrored emission', () => {
+    // Only the b edit, mirrored: context a + c + d (3) plus one del = old 4,
+    // context plus one add = new 4.
+    const out = emitPatch(file(), (h, l) => h === 0 && (l === 1 || l === 2), true)
+    expect(out).toContain('@@ -1,4 +1,4 @@ export class Queue')
+  })
+
+  it('selecting everything still reproduces the input byte for byte', () => {
+    expect(emitPatch(file(), selectAll, true)).toBe(TWO_HUNKS)
+  })
+})

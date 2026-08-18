@@ -17,6 +17,15 @@
  *   - an UNSELECTED `-` line becomes CONTEXT — the target still has that line,
  *     and claiming otherwise makes the patch fail to apply.
  *
+ * Those are the rules for a FORWARD apply, where the target holds the patch's
+ * pre-image. A patch meant for `git apply --REVERSE` meets the target holding
+ * the POST-image, so the unselected treatments mirror: an unselected `+` line
+ * becomes context (the target has it) and an unselected `-` line is dropped
+ * (the target does not). Confirmed against git itself: reverse-applying a
+ * forward-style subset to a working tree that also holds another block's
+ * unselected addition fails as "patch does not apply", because the dropped
+ * line is missing from the post-image git is trying to match.
+ *
  * Both counts are then recomputed from what was actually emitted. That
  * arithmetic is the reason this module exists as a tested unit: a wrong count
  * makes `git apply` fail as "corrupt patch", which tells the reader their diff
@@ -149,7 +158,7 @@ interface Emitted {
 }
 
 /** Apply the selection rules to one hunk's lines. */
-function emitHunkLines(hunk: Hunk, hunkIndex: number, isSelected: LineSelector): Emitted {
+function emitHunkLines(hunk: Hunk, hunkIndex: number, isSelected: LineSelector, reverseApply: boolean): Emitted {
   const out: string[] = []
   let oldCount = 0
   let newCount = 0
@@ -174,16 +183,29 @@ function emitHunkLines(hunk: Hunk, hunkIndex: number, isSelected: LineSelector):
     }
     const selected = isSelected(hunkIndex, lineIndex)
     if (line.kind === 'add') {
-      if (!selected) { lastKept = false; return }
+      // Forward apply: the target does not have an unselected addition, so it
+      // is not part of this patch. Reverse apply: the target DOES have it — it
+      // holds the post-image — so it has to be context or the patch will not
+      // match.
+      if (!selected && !reverseApply) { lastKept = false; return }
+      if (!selected) {
+        out.push(` ${line.text}`)
+        oldCount += 1
+        newCount += 1
+        lastKept = true
+        return
+      }
       out.push(`+${line.text}`)
       newCount += 1
       changed = true
       lastKept = true
       return
     }
-    // A deletion that is not part of this patch still EXISTS in the target, so
-    // it has to be presented as context or the patch will not apply.
+    // A deletion that is not part of this patch still EXISTS in a forward
+    // apply's target (the pre-image), so it is presented as context. A reverse
+    // apply's target never had it, so it is dropped instead.
     if (!selected) {
+      if (reverseApply) { lastKept = false; return }
       out.push(` ${line.text}`)
       oldCount += 1
       newCount += 1
@@ -213,18 +235,22 @@ function emitHunkLines(hunk: Hunk, hunkIndex: number, isSelected: LineSelector):
  *
  * @param file - a parsed patch.
  * @param isSelected - which changed lines to take.
+ * @param reverseApply - emit for `git apply --reverse`, whose target holds the
+ *          patch's POST-image rather than its pre-image: unselected additions
+ *          become context and unselected deletions are dropped (the mirror of
+ *          the forward rules). Selected lines keep their sign either way.
  * @returns the patch text, or '' when the selection is empty. The caller must
  *          treat '' as "nothing to do" and make no git call: a patch with no
  *          hunks is an error to `git apply`, not a no-op.
  */
-export function emitPatch(file: FilePatch, isSelected: LineSelector): string {
+export function emitPatch(file: FilePatch, isSelected: LineSelector, reverseApply = false): string {
   const body: string[] = []
   // Set from the first hunk that survives, so a patch starting at hunk 2 keeps
   // that hunk's own offset rather than inheriting one from hunks left out.
   let delta: number | null = null
 
   file.hunks.forEach((hunk, hunkIndex) => {
-    const emitted = emitHunkLines(hunk, hunkIndex, isSelected)
+    const emitted = emitHunkLines(hunk, hunkIndex, isSelected, reverseApply)
     if (!emitted.changed) return
     if (delta === null) delta = hunk.newStart - hunk.oldStart
     const newStart = hunk.oldStart + delta

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emitPatch, parsePatch } from '../src/patch-model.ts'
-import { alignRows, blockCount, blockLines } from '../src/client/side-rows.ts'
+import { alignRows, blockCount, blockLines, blockTally } from '../src/client/side-rows.ts'
 
 /** Join with LF and keep the trailing newline git's own output carries. */
 function diff(...lines: string[]): string {
@@ -248,5 +248,26 @@ describe('blockLines', () => {
       '+FOUR',
       ' five',
     ))
+  })
+})
+
+describe('blockTally', () => {
+  it('counts a paired edit as one line each side', () => {
+    const rows = alignRows(parsePatch(TWO_RUNS)!)
+    expect(blockTally(rows, 0)).toEqual({ added: 1, deleted: 1 })
+    expect(blockTally(rows, 1)).toEqual({ added: 1, deleted: 1 })
+  })
+
+  it('counts one-sided rows on their own side only', () => {
+    expect(blockTally(alignRows(parsePatch(THREE_DEL_ONE_ADD)!), 0)).toEqual({ added: 1, deleted: 3 })
+    expect(blockTally(alignRows(parsePatch(ONE_DEL_THREE_ADD)!), 0)).toEqual({ added: 3, deleted: 1 })
+  })
+
+  it('counts a whole new file as additions', () => {
+    expect(blockTally(alignRows(parsePatch(NEW_FILE)!), 0)).toEqual({ added: 2, deleted: 0 })
+  })
+
+  it('holds zeros for an id no row carries', () => {
+    expect(blockTally(alignRows(parsePatch(PURE_CONTEXT)!), 0)).toEqual({ added: 0, deleted: 0 })
   })
 })

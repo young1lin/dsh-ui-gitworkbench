@@ -47,7 +47,7 @@
  * All copy resolves through the app's locale runtime (`t`), so the panel follows
  * the user's language preference.
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -57,7 +57,7 @@ import {
 } from './themes.ts'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
-import { alignRows, type SideCell, type SideRow } from './side-rows.ts'
+import { alignRows, blockLines, blockTally, type SideCell, type SideRow } from './side-rows.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -188,10 +188,12 @@ export interface SyncStatus {
   readonly hasRemote: boolean
 }
 
-/** Why a write operation failed, in terms the drawer can explain. */
+/** Why a write operation failed, in terms the drawer can explain. `stale` is
+ *  a sha the host re-derived and refused; `invalid` an argument combination
+ *  the host rejected before running anything. */
 export type GitOpFailure =
   | 'auth' | 'network' | 'no-upstream' | 'diverged' | 'conflict'
-  | 'nothing-to-commit' | 'dirty' | 'unknown'
+  | 'nothing-to-commit' | 'dirty' | 'stale' | 'invalid' | 'unknown'
 
 export interface GitOpResult {
   readonly ok: boolean
@@ -202,21 +204,30 @@ export interface GitOpResult {
 }
 
 /** The host endpoints under `gitWorkbench/` that change something. */
-export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'discardFile'
+export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'discardFile' | 'applyBlocks'
 
 /** Extra arguments an operation needs beyond the worktree path. */
 export interface GitOpPayload {
   readonly paths?: readonly string[]
   readonly message?: string
   readonly amend?: boolean
-  readonly mode?: 'ff-only' | 'rebase' | 'merge'
-  /** `discardFile` only, and deliberately singular: the one irreversible thing
-   *  the drawer does takes one file per call, so a mistaken click costs one
-   *  file. */
+  /** `pull` picks how to integrate; `applyBlocks` which block mutation. One
+   *  field serves both because the payload is a flat bag keyed by op — the
+   *  host narrows and validates it per endpoint. */
+  readonly mode?: 'ff-only' | 'rebase' | 'merge' | BlockMode
+  /** `discardFile` and `applyBlocks`, and deliberately singular: the one
+   *  irreversible thing the drawer does takes one file per call, so a mistaken
+   *  click costs one file. */
   readonly path?: string
   /** `discardFile` only: the effect the confirmation stated. The host refuses
    *  if the file changed underneath the dialog and now means something else. */
   readonly expectedEffect?: string
+  /** `applyBlocks` only: the layer whose diff the `diffSha` is over, and the
+   *  block's hunk-line indices (`side-rows.blockLines`). The host re-fetches
+   *  that layer's diff and refuses unless the sha still matches. */
+  readonly layer?: SideLayer
+  readonly diffSha?: string
+  readonly lines?: readonly number[]
 }
 
 export type { DiscardAnswer, DiscardNext, DiscardPreview } from './discard-flow.ts'
@@ -224,6 +235,30 @@ export type { DiscardAnswer, DiscardNext, DiscardPreview } from './discard-flow.
 /** Which side of the index a side-by-side pane shows: `unstaged` is
  *  index→worktree (the editable side), `staged` is HEAD→index (read-only). */
 export type SideLayer = 'unstaged' | 'staged'
+
+/** A block mutation the side pane's buttons request: `stage` and `discard` act
+ *  on the unstaged layer, `unstage` on the staged one. The host enforces the
+ *  same matrix. */
+export type BlockMode = 'stage' | 'unstage' | 'discard'
+
+/**
+ * What one block action acts on, snapshotted from the diff the pane had
+ * rendered when the click (or its confirmation) happened.
+ *
+ * The snapshot is the point: `diffSha` proves the file has not changed since
+ * the pane rendered it, and `lines` — the block's hunk-line indices — only
+ * mean anything against exactly that diff. A confirmed roll-back carries the
+ * ask it opened with, so the answer cannot drift under the dialog.
+ */
+export interface BlockAsk {
+  readonly path: string
+  readonly layer: SideLayer
+  readonly diffSha: string
+  readonly lines: readonly number[]
+  /** The block's line tallies, for the roll-back confirmation's wording. */
+  readonly added: number
+  readonly deleted: number
+}
 
 /**
  * `gitWorkbench/fileSides`: one layer of one file for the side-by-side pane.
@@ -1041,9 +1076,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
       // made the drawer shake on every tick — and a tick's outcome is already
       // visible in place, in the box the user just clicked. So: the old banner
       // stays while the op runs (it still describes the last outcome), a
-      // successful stage/unstage clears it rather than replacing it, and only
-      // heavy operations and failures announce themselves at all.
-      if (result.ok && (op === 'stage' || op === 'unstage')) setOpResult(null)
+      // successful stage/unstage — tick or block — clears it rather than
+      // replacing it (the block visibly leaves its layer on the refetch), and
+      // only heavy operations and failures announce themselves at all.
+      if (result.ok && (op === 'stage' || op === 'unstage' || op === 'applyBlocks')) setOpResult(null)
       else setOpResult({ op, result })
       return result
     } finally {
@@ -1648,6 +1684,37 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     void runOp('discardFile', { path: pending.file.path, expectedEffect: pending.plan.effect })
   }
 
+  /** The BLOCK roll-back being asked about, snapshotted at click time; null
+   *  while none is open. The confirmation states this ask, and the confirmed
+   *  call carries it verbatim — so if the file moves underneath the dialog,
+   *  the host's diffSha refusal is what stops the apply, not a re-derived
+   *  (different) block. */
+  const [blockDiscard, setBlockDiscard] = useState<BlockAsk | null>(null)
+
+  /**
+   * One block action from the side pane, routed the way `askDiscard` routes a
+   * file's: stage and unstage are not destructive and run now, through the same
+   * op machinery as every tick; discard is the irreversible one, so its click
+   * only asks. The chain has no plan RPC to call — the consequence of reverting
+   * THIS block's lines is fully stated by the pane's own rows — and the
+   * "refuse if the answer changed" step is the host's stale check, which fires
+   * on the diffSha the dialog was opened against.
+   */
+  const askBlockAction = (mode: BlockMode, ask: BlockAsk): Promise<GitOpResult> => {
+    if (mode === 'discard') {
+      setBlockDiscard(ask)
+      return Promise.resolve({ ok: true })
+    }
+    return runOp('applyBlocks', { path: ask.path, layer: ask.layer, diffSha: ask.diffSha, lines: ask.lines, mode })
+  }
+
+  const confirmBlockDiscard = (): void => {
+    const ask = blockDiscard
+    if (ask === null) return
+    setBlockDiscard(null)
+    void runOp('applyBlocks', { path: ask.path, layer: ask.layer, diffSha: ask.diffSha, lines: ask.lines, mode: 'discard' })
+  }
+
   const drawerRef = useRef<HTMLDivElement>(null)
   const commitsRef = useRef<HTMLDivElement>(null)
   const treeRef = useRef<HTMLDivElement>(null)
@@ -1958,6 +2025,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   gen={gen}
                   fallbackSegment={segment}
                   fallbackLoading={loading && segment.length === 0}
+                  onBlockAction={askBlockAction}
                 />
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
@@ -1971,10 +2039,21 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
         {discardPending?.plan != null ? (
           <DiscardConfirm
             t={t}
-            file={discardPending.file}
-            plan={discardPending.plan}
+            body={discardBodyText(t, discardPending.file, discardPending.plan)}
             onCancel={() => setDiscardPending(null)}
             onConfirm={confirmDiscard}
+          />
+        ) : null}
+        {blockDiscard !== null ? (
+          <DiscardConfirm
+            t={t}
+            body={t('blockDiscardBody', {
+              path: blockDiscard.path,
+              added: blockDiscard.added,
+              deleted: blockDiscard.deleted,
+            })}
+            onCancel={() => setBlockDiscard(null)}
+            onConfirm={confirmBlockDiscard}
           />
         ) : null}
       </div>
@@ -1985,19 +2064,19 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
 /**
  * The one dialog in this drawer, because this is the one act it cannot undo.
  *
- * It never asks a generic "are you sure": the body names the file and states
- * which of the three consequences is about to happen, in the host's own reading
- * of that file taken moments ago. Cancel holds the initial focus and Escape
- * closes, because the default answer to an irreversible question is no.
+ * It never asks a generic "are you sure": the caller hands it a body that names
+ * the file and states which consequence is about to happen — the whole-file
+ * roll-back's wording derived from the host's own reading of that file, the
+ * block roll-back's from the pane's rows. Cancel holds the initial focus and
+ * Escape closes, because the default answer to an irreversible question is no.
  *
  * There is deliberately no "don't ask again". This is the only path in the
  * drawer with nothing behind it, and a checkbox whose whole function is to
  * switch off the last guard is a feature that eventually gets clicked.
  */
-function DiscardConfirm({ t, file, plan, onCancel, onConfirm }: {
+function DiscardConfirm({ t, body, onCancel, onConfirm }: {
   t: Translate
-  file: GitFile
-  plan: DiscardPreview
+  body: string
   onCancel: () => void
   onConfirm: () => void
 }): ReactNode {
@@ -2015,12 +2094,6 @@ function DiscardConfirm({ t, file, plan, onCancel, onConfirm }: {
     window.addEventListener('keydown', onKey, true)
     return () => { window.removeEventListener('keydown', onKey, true) }
   }, [onCancel])
-
-  const body = plan.effect === 'delete'
-    ? t('discardBodyDelete', { path: file.path })
-    : plan.effect === 'unrename'
-      ? t('discardBodyUnrename', { path: file.path, previousPath: plan.previousPath ?? '' })
-      : t('discardBodyRestore', { path: file.path, added: file.addedLines, deleted: file.deletedLines })
 
   return (
     <div className={css.confirmScrim} onClick={onCancel}>
@@ -2040,6 +2113,18 @@ function DiscardConfirm({ t, file, plan, onCancel, onConfirm }: {
       </div>
     </div>
   )
+}
+
+/**
+ * The whole-file roll-back's consequence, in the host's own fresh reading of
+ * the file — the difference between "goes back to its committed content" and
+ * "leaves the disk and cannot come back" is the entire question the dialog
+ * asks, and it is exactly what a stale row gets wrong.
+ */
+function discardBodyText(t: Translate, file: GitFile, plan: DiscardPreview): string {
+  if (plan.effect === 'delete') return t('discardBodyDelete', { path: file.path })
+  if (plan.effect === 'unrename') return t('discardBodyUnrename', { path: file.path, previousPath: plan.previousPath ?? '' })
+  return t('discardBodyRestore', { path: file.path, added: file.addedLines, deleted: file.deletedLines })
 }
 
 /**
@@ -4478,16 +4563,18 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * index, two columns with the whole file, aligned row by row.
  *
  * The rows come from `side-rows.ts` over the layer's full-context diff, so the
- * alignment is read off the diff rather than computed. Read-only in this cut:
- * the block actions and the editable right column later tasks add act on this
- * same row model — a block id rides every changed row's cells as
- * `data-block`, which is where those buttons will hang.
+ * alignment is read off the diff rather than computed. A change block — a
+ * maximal run of changed rows — carries its own actions: hovering any of its
+ * cells outlines the whole block and floats its buttons (stage + roll back on
+ * the unstaged tab, unstage on the staged one). The click carries the block's
+ * hunk-line indices and the rendered diff's sha, so the host can prove the
+ * file has not changed since the pane drew it.
  *
  * `tooLarge` and `binary` fall back to the unified view the pane already had
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen, fallbackSegment, fallbackLoading }: {
+function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction }: {
   t: Translate
   path: string
   palette: string
@@ -4500,6 +4587,8 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
   /** The unified-view material for the fallbacks. */
   fallbackSegment: string
   fallbackLoading: boolean
+  /** Run one block action; a discard routes to the drawer's confirmation. */
+  onBlockAction: (mode: BlockMode, ask: BlockAsk) => Promise<GitOpResult>
 }): ReactNode {
   const [layer, setLayer] = useState<SideLayer>('unstaged')
   const [sides, setSides] = useState<FileSides | null>(null)
@@ -4507,6 +4596,12 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
   // this client (the two halves reload on different cycles). The unified view
   // still renders, so an old host costs the new pane, not the diff.
   const [failed, setFailed] = useState(false)
+  // The block under the pointer, or null over context rows and gutters. Hover
+  // names the BLOCK, not the cell: the outline and the buttons belong to a
+  // whole run of rows, and a per-cell affordance would scatter them.
+  const [hotBlock, setHotBlock] = useState<number | null>(null)
+  // The block whose stage/unstage call is in flight, disabling its buttons.
+  const [pendingBlock, setPendingBlock] = useState<number | null>(null)
 
   // Switching tabs refetches: the two layers are different diffs of the same
   // file, and neither is a transform of the other client-side.
@@ -4546,6 +4641,47 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
     [rows, lang, shikiTheme, grammarGen],
   )
 
+  /**
+   * One bubbling hover listener turns the cell under the pointer into its
+   * block id: every changed row's code cells carry `data-block`, so `closest`
+   * reads the block off whatever the pointer is over — no handler per cell,
+   * and a pointer over context or a gutter simply clears the hot block.
+   */
+  const onBodyHover = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const hit = (event.target as Element).closest('[data-block]')
+    const id = hit === null ? null : Number(hit.getAttribute('data-block'))
+    setHotBlock(prev => (prev === id ? prev : id))
+  }
+
+  /**
+   * Run one block action with the coordinates of the diff on screen.
+   *
+   * Discard never acts from the click — the drawer opens the confirmation,
+   * and the confirmed call carries this same snapshot, so a file that moved
+   * underneath the dialog is refused host-side rather than re-derived from
+   * whatever the poll has fetched since. Stage and unstage run now; the
+   * clicked block's buttons stay disabled until the answer lands, and the
+   * drawer's op lock refuses any other block click meanwhile.
+   */
+  const runBlock = async (mode: BlockMode, block: number): Promise<void> => {
+    if (sides === null) return
+    const ask: BlockAsk = {
+      path, layer, diffSha: sides.diffSha,
+      lines: blockLines(rows, block),
+      ...blockTally(rows, block),
+    }
+    if (mode === 'discard') {
+      void onBlockAction(mode, ask)
+      return
+    }
+    setPendingBlock(block)
+    try {
+      await onBlockAction(mode, ask)
+    } finally {
+      setPendingBlock(null)
+    }
+  }
+
   /** The pane the drawer had before this view existed, notice included. */
   const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
     ? <DiffView segment={fallbackSegment} path={path} palette={palette} />
@@ -4563,6 +4699,9 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
     )
   }
   if (rows.length === 0) return <div className={css.empty}>{t('noTextDiff')}</div>
+  // The hovered block's first row hosts the action bar; a del-only block has
+  // no right cell, so its bar rides the left one instead.
+  const hotFirst = hotBlock === null ? -1 : rows.findIndex(row => row.block === hotBlock)
   return (
     <div className={css.sidePane}>
       <div className={css.sideTabs}>
@@ -4582,20 +4721,56 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
       {/* One grid holds every row's four cells, so the column boundary is the
           same for all rows — a per-row grid would let the divider drift with
           each row's content. `data-block` on a row's cells names the change
-          block they belong to; the block actions hang off exactly that. */}
-      <div className={css.sideBody}>
-        {rows.map((row, i) => (
-          <Fragment key={i}>
-            <span className={sideNumClass(row, 'left')}>{row.left === null ? '' : row.left.line}</span>
-            <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}`} data-block={row.block >= 0 ? row.block : undefined}>
-              {renderSideCode(row.left, leftSyntax[i])}
+          block they belong to; the hover listener below reads it back off
+          whatever cell the pointer is over, and the whole block — outline and
+          action bar — answers to it as one unit. */}
+      <div className={css.sideBody} onMouseOver={onBodyHover} onMouseLeave={() => { setHotBlock(null) }}>
+        {rows.map((row, i) => {
+          const hot = hotBlock !== null && row.block === hotBlock
+          const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+          const bar = hot && i === hotFirst ? (
+            <span className={css.blockBar}>
+              {layer === 'staged' ? (
+                <button
+                  type="button"
+                  className={css.blockBtn}
+                  disabled={pendingBlock !== null}
+                  onClick={() => { void runBlock('unstage', row.block) }}
+                >{t('blockUnstage')}</button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className={css.blockBtn}
+                    disabled={pendingBlock !== null}
+                    onClick={() => { void runBlock('stage', row.block) }}
+                  >{t('blockStage')}</button>
+                  <button
+                    type="button"
+                    className={`${css.blockBtn} ${css.blockBtnDanger}`}
+                    disabled={pendingBlock !== null}
+                    onClick={() => { void runBlock('discard', row.block) }}
+                  >{t('blockDiscard')}</button>
+                </>
+              )}
             </span>
-            <span className={sideNumClass(row, 'right')}>{row.right === null ? '' : row.right.line}</span>
-            <span className={`${css.sideCode} ${sideCodeClass(row, 'right')}`} data-block={row.block >= 0 ? row.block : undefined}>
-              {renderSideCode(row.right, rightSyntax[i])}
-            </span>
-          </Fragment>
-        ))}
+          ) : null
+          const barInLeft = bar !== null && row.right === null
+          return (
+            <Fragment key={i}>
+              <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
+              <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
+                {renderSideCode(row.left, leftSyntax[i])}
+                {barInLeft ? bar : null}
+              </span>
+              <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
+              <span className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
+                {renderSideCode(row.right, rightSyntax[i])}
+                {barInLeft ? null : bar}
+              </span>
+            </Fragment>
+          )
+        })}
       </div>
     </div>
   )

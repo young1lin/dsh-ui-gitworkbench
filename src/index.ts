@@ -41,14 +41,15 @@
  *
  * @module @young1lin/dsh-ui-gitworkbench
  */
-import { createHash, randomBytes } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { runApplyBlocks, sha1Hex, type ApplyBlocksIo } from './apply-blocks.js'
 import { saveJsonAtomic } from './atomic-json.js'
 import { CommitPayloadCache, cacheKey } from './commit-cache.js'
 import {
@@ -537,12 +538,9 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (bytes !== null && targetTooLarge(bytes.length, countBufferLines(bytes))) {
       return { ...emptySides(), tooLarge: true }
     }
-    let diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    const diff = await this.layerDiffText(cwd, path, 'unstaged', signal)
     if (binaryDiffOutput(diff)) {
       return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
-    }
-    if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
-      diff = await untrackedSegment(cwd, path, SIDE_BYTE_CAP) ?? ''
     }
     // The diff half of the guard, AFTER the artifact exists: the target-side
     // checks above cannot see a worktree-deleted large file (no target to
@@ -573,7 +571,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (targetTooLarge(targetBytes.length, countBufferLines(targetBytes))) {
       return { ...emptySides(), tooLarge: true, targetSha: sha }
     }
-    const diff = (await this.git(cwd, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    const diff = await this.layerDiffText(cwd, path, 'staged', signal)
     if (binaryDiffOutput(diff)) {
       return { ...emptySides(), binary: true, targetSha: sha }
     }
@@ -597,6 +595,63 @@ export class GitWorkbenchService extends TypertRemoteService {
   private async worktreeBlobSha(cwd: string, path: string, signal: AbortSignal): Promise<string> {
     const hashed = await this.git(cwd, ['hash-object', '--', path], signal)
     return hashed.exitCode === 0 ? hashed.stdout.trim() : ''
+  }
+
+  /**
+   * The layer's full-context diff — the one artifact the side pane aligns its
+   * rows on and `applyBlocks` re-checks its sha against.
+   *
+   * Both callers go through here by design: `fileSides` stamps the text it
+   * returns with {@link sha1Hex} and `applyBlocks` re-derives the stamp over
+   * its own fresh fetch, so the two ends of the stale comparison are over the
+   * SAME text by construction, not by two fetch sites staying in step.
+   */
+  private async layerDiffText(cwd: string, path: string, layer: 'unstaged' | 'staged', signal: AbortSignal): Promise<string> {
+    if (layer === 'staged') {
+      return (await this.git(cwd, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    }
+    const diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    // Untracked files have no index entry, so `git diff` reports nothing for
+    // them; the synthesized new-file segment is their unstaged diff.
+    if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
+      return await untrackedSegment(cwd, path, SIDE_BYTE_CAP) ?? ''
+    }
+    return diff
+  }
+
+  /**
+   * Apply one change block of a side-by-side diff: stage it into the index,
+   * unstage it back out, or roll it back out of the working tree
+   * (plain-identifier params; signal last).
+   *
+   * The client sends a selection — `path`, `layer`, the `diffSha` of the diff
+   * the pane rendered, and the block's hunk-line indices — never patch text.
+   * The sequence itself (stale check, emission, `--check`, apply, tmpfile
+   * cleanup) lives in `apply-blocks.ts`, where vitest can drive it against a
+   * real git; this method only binds the host's git helper, the layer fetch
+   * shared with `fileSides`, and the tmpfile pair. Every failure comes back as
+   * a result — the method never throws across the RPC boundary.
+   *
+   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param layer - the layer the block was selected on; the mode decides which
+   *                one that may be.
+   * @param diffSha - sha of the diff the pane rendered, re-derived and compared.
+   * @param lines - hunk-line indices of the block, as `side-rows.blockLines`
+   *                produced them client-side.
+   * @param mode - `stage` | `unstage` | `discard`.
+   * @param signal - abort signal.
+   */
+  @Remote('applyBlocks')
+  async applyBlocks(worktreePath: string, path: string, layer: string, diffSha: string, lines: readonly number[], mode: string, signal: AbortSignal): Promise<GitOpResult> {
+    const cwd = this.cwdOf(worktreePath)
+    const io: ApplyBlocksIo = {
+      git: (dir, argv) => this.git(dir, argv, signal),
+      layerDiff: (file, which) => this.layerDiffText(cwd, file, which === 'staged' ? 'staged' : 'unstaged', signal),
+      writePatch: writeTmpPatch,
+      dropPatch: dropTmpPatch,
+    }
+    return runApplyBlocks(io, cwd, path, layer, String(diffSha ?? ''), lines, mode)
   }
 
   /**
@@ -1516,18 +1571,30 @@ function randomHex(digits: number): string {
   return bytes.toString('hex').slice(0, digits)
 }
 
+/**
+ * Park patch text where git can read it: a uniquely named file under the OS
+ * temp dir, passed to `git apply` as its last argument.
+ *
+ * `git()` spawns with `stdin: 'ignore'`, so a tmpfile — not a pipe — is how a
+ * patch reaches git without changing that helper, and the temp dir keeps patch
+ * text (which can be a whole file's worth of context) out of the repository.
+ * `apply-blocks.ts` deletes what this wrote from a `finally`, whichever way
+ * the apply ended.
+ */
+async function writeTmpPatch(text: string): Promise<string> {
+  const file = join(tmpdir(), `gw-apply-${process.pid}-${randomHex(8)}.patch`)
+  await writeFile(file, text, 'utf8')
+  return file
+}
+
+/** Remove a tmpfile `writeTmpPatch` made; a file already gone is a success. */
+async function dropTmpPatch(file: string): Promise<void> {
+  await rm(file, { force: true })
+}
+
 /** The `fileSides` payload for a file with nothing to show: no diff, no target. */
 function emptySides(): FileSides {
   return { diff: '', diffSha: sha1Hex(''), targetText: '', targetSha: '', binary: false, tooLarge: false }
-}
-
-/**
- * sha1 of a string, hex — `diffSha`. Hashed over the exact string that is
- * returned, so an identical git output always produces an identical sha for
- * the block mutations to compare against.
- */
-function sha1Hex(text: string): string {
-  return createHash('sha1').update(text, 'utf8').digest('hex')
 }
 
 /**
