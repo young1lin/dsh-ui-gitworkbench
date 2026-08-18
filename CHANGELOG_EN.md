@@ -26,6 +26,7 @@ User-facing changes, newest first. Format follows [Keep a Changelog](https://kee
 
 ### Fixed
 
+- **Rolling back a directory row failed outright (`EISDIR`)**. `git status` will not descend into another repository: a nested untracked repo is reported as a single `?? sub/` line even under `--untracked-files=all`, and that row names a **directory**. The delete step lacked `recursive`, so it was the one row in the drawer whose roll-back died with `EISDIR`. The delete now lives in its own module (`src/fs-remove.ts`) with tests over both the path checks and the real filesystem behaviour.
 - **Bare-date timezone roulette**: on Windows, git's parse of a bare `--since=2026-08-18` can exclude that very day's commits; the host now expands `yyyy-mm-dd` to the whole day (`T00:00:00` / `T23:59:59`).
 - **A failed log no longer masquerades as "no match"**: an invalid regex or date shows `git log failed (exit N): <stderr>` in the empty state.
 - **The author roster once used `--all` while the list walked one ref**: people visible in the menu could be unmatchable forever (with a Chinese author whose commits all live on other branches this read convincingly as "Chinese filtering is broken" — layer-by-layer probing proved the pattern reaches git intact; branch coverage was the whole story).

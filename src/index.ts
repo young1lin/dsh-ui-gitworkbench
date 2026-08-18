@@ -42,9 +42,9 @@
  * @module @young1lin/dsh-ui-gitworkbench
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -63,6 +63,7 @@ import {
   planFromStatus,
   type DiscardEffect, type DiscardPlan,
 } from './discard-ops.js'
+import { removePathInside } from './fs-remove.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -1040,7 +1041,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         continue
       }
       try {
-        await this.removeInside(cwd, step.path)
+        await removePathInside(cwd, step.path)
       } catch (error) {
         return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
       }
@@ -1066,29 +1067,6 @@ export class GitWorkbenchService extends TypertRemoteService {
       throw new Error((status.stderr || status.stdout).trim().slice(-1000) || 'git status failed')
     }
     return planFromStatus(status.stdout, path)
-  }
-
-  /**
-   * Delete one file, having proven it is inside the worktree.
-   *
-   * `isSafeRelativePath` already rejected traversal in the plan, so this is the
-   * second lock rather than the only one: it re-checks the RESOLVED path,
-   * which is the form the filesystem actually acts on. `force` makes an absent
-   * file a success — the reader asked for it to be gone, and it is.
-   *
-   * A symlinked directory inside the worktree could still point outward; that
-   * is a repository someone already has write access to, and resolving link
-   * targets on every delete would cost a stat per segment for a case git
-   * itself does not defend against.
-   */
-  private async removeInside(cwd: string, relative: string): Promise<void> {
-    const root = resolve(cwd)
-    const target = resolve(root, relative)
-    if (target !== root && !target.startsWith(root + sep)) {
-      throw new Error(`refusing to delete outside the worktree: ${JSON.stringify(relative)}`)
-    }
-    if (target === root) throw new Error('refusing to delete the worktree root')
-    await rm(target, { force: true })
   }
 
   /**
