@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.3] - 2026-08-18
+
+### Fixed
+
+- **A bare `npm i @young1lin/dsh-ui-gitworkbench` in an empty directory died with E404 (`@deepseek-ai/dsh-compact` not found).** Every peerDependency was `*`, and when npm 7+ auto-installs a peer, `*` resolves through the **`latest` dist-tag** — which every `@deepseek-ai/*` package still points at the August 10 `0.0.1-rc.1` line, whose dependency on `dsh-compact` was never published to npm. Any install outside a dsh profile workspace therefore 404ed (dsh's 0.1.0-rc.7 release on August 17 sent more people into fresh-environment installs and into the trap). Peer ranges are now explicit — cordis `^4.0.1-rc.1`, the dsh packages `^0.1.0-rc.2` — so resolution no longer consults dist-tags; the `0.1.0-rc` dependency chain is verified to resolve standalone. The official channel, `dsh plugin --profile web add`, was never affected (the profile workspace already carries the peers). **Workaround while on 0.1.2**: `npm i @young1lin/dsh-ui-gitworkbench --legacy-peer-deps`.
+
 ## [0.1.2] - 2026-08-17
 
 ### Fixed

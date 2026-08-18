@@ -346,6 +346,9 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 ### 6.13 宿主环境可能没有 git（PATH 缺失）
 宿主 RPC 返回 `git status failed (exit N): <stderr>`（本插件的报错都带 exit code + stderr 尾部）时，先看 stderr——常见是宿主进程环境异常/git 不在 PATH，而不是目录真的不是仓库（2026-08-15 实例：目录明明是仓库却报 not a git worktree，重启 dsh web 换个健康环境即愈）。**报错透出 stderr 是定位这类问题的唯一手段**，新加 git 调用时照抄这个格式。
 
+### 6.14 发布的 peer 范围不能写 `*`——`*` 按 `latest` dist-tag 解析
+npm 7+ 自动安装 peer 时，`*` 走 **`latest` dist-tag**，不是「取版本列表最高」。`@deepseek-ai/*` 全系的 `latest` 长期停在 8 月 10 日的 `0.0.1-rc.1` 老线（那条线依赖**从未发布**的 `@deepseek-ai/dsh-compact`，公开安装必 404），能用的 `0.1.0-rc.x` 全挂 `next`。于是 0.1.2 之前任何不在 dsh profile 工作区里的裸 `npm i` 都炸 E404。规则：**peer 写显式区间**（cordis `^4.0.1-rc.1`、dsh 系 `^0.1.0-rc.2`），dsh 发新线时同步抬范围并验证 `npm pack` 出的 tarball 在空目录可装。注意 6.5 的 `auto-install-peers=false` 只管本仓库 pnpm 开发态，管不了用户侧 npm。
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）

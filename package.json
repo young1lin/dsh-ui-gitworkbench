@@ -1,6 +1,6 @@
 {
   "name": "@young1lin/dsh-ui-gitworkbench",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Out-of-tree dsh web UI plugin: a session-header git workbench chip opening a drawer with the file tree, per-file diff, history, compare, staging, commit, and sync (fetch/pull/push).",
   "type": "module",
   "main": "lib/index.js",
@@ -65,11 +65,11 @@
   },
   "packageManager": "pnpm@10.20.0",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-client-runtime": "*",
-    "@deepseek-ai/dsh-client-ui-slots": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/dsh-typert-protocol": "*",
+    "@deepseek-ai/cordis": "^4.0.1-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.2",
     "react": "^18.2.0"
   },
   "devDependencies": {

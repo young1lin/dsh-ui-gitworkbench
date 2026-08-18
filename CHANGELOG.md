@@ -2,6 +2,12 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.3] - 2026-08-18
+
+### 修复
+
+- **空目录裸 `npm i @young1lin/dsh-ui-gitworkbench` 报 E404（`@deepseek-ai/dsh-compact` not found）**：包的 peerDependency 之前全写 `*`，而 npm 7+ 自动安装 peer 时 `*` 按 **`latest` dist-tag** 解析——`@deepseek-ai/*` 全系的 `latest` 至今仍指 8 月 10 日的 `0.0.1-rc.1` 老线，那条线依赖一个从未发布到 npm 的 `dsh-compact`，于是任何不在 dsh profile 工作区里的裸安装必炸（8 月 17 日 dsh 发布 0.1.0-rc.7 后更多人在新环境首次安装撞上）。peer 范围改为显式区间：cordis `^4.0.1-rc.1`、dsh 系 `^0.1.0-rc.2`，不再依赖 dist-tag；`0.1.0-rc` 线的依赖链已实测可独立解析。官方通道 `dsh plugin --profile web add` 不受影响（profile 工作区自带全部 peer）。**0.1.2 的临时绕过**：`npm i @young1lin/dsh-ui-gitworkbench --legacy-peer-deps`。
+
 ## [0.1.2] - 2026-08-17
 
 ### 修复
