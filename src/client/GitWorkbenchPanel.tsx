@@ -59,7 +59,7 @@ import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockLines, blockTally, type SideCell, type SideRow } from './side-rows.ts'
 import {
-  applySaveOk, applySides, armEdit, DISARMED, isDirty, markConflict, reloadSides, resetSides,
+  applySaveOk, applySides, armEdit, DISARMED, editableSides, gateLeave, isDirty, markConflict, reloadSides, resetSides,
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
@@ -1652,7 +1652,36 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   // Reset the on-demand cache when the generation (refresh) advances.
   useEffect(() => { setFetched(new Map()) }, [gen])
 
-  const selectAndReveal = (path: string): void => onSelect(path)
+  // The side pane's dirty flag, reported upward: every gesture that would
+  // drop the editor's buffer asks before it acts, and the layer tab is only
+  // the rarest of them — clicking another file in the tree is this pane's
+  // PRIMARY navigation. One decision (gateLeave, in side-edit.ts) covers all
+  // of them; the deferred action sits in state until the dialog answers.
+  const [sideDirty, setSideDirty] = useState(false)
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
+  const onSideDirty = useCallback((dirty: boolean): void => { setSideDirty(dirty) }, [])
+  const guardLeave = (act: () => void): void => {
+    const gate = gateLeave(sideDirty, pendingLeave !== null)
+    if (gate.kind === 'run') {
+      act()
+      return
+    }
+    if (gate.kind === 'wait') return
+    setPendingLeave(() => act)
+  }
+  const confirmDrawerLeave = (): void => {
+    const act = pendingLeave
+    if (act === null) return
+    // Leaving drops the buffer by definition: the flag goes down with the
+    // action, not whenever the pane gets around to reporting again.
+    setPendingLeave(null)
+    setSideDirty(false)
+    act()
+  }
+  const closeDrawer = (): void => guardLeave(onClose)
+  const leaveTab = (next: Tab): void => guardLeave(() => onSwitchTab(next))
+
+  const selectAndReveal = (path: string): void => guardLeave(() => onSelect(path))
 
   /**
    * Roll-back, in two steps that are deliberately not one.
@@ -1792,7 +1821,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
       className={maximized ? `${css.overlay} ${css.overlayMax}` : css.overlay}
       data-gs-theme={theme}
       data-gs-part="overlay"
-      onClick={onClose}
+      onClick={closeDrawer}
     >
       <div
         ref={drawerRef}
@@ -1883,7 +1912,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               type="button"
               className={`${css.btn} ${css.btnIcon} ${css.btnClose}`}
               aria-label={t('close')} title={t('close')}
-              onClick={onClose}
+              onClick={closeDrawer}
             ><ChromeGlyph of="close" /></button>
           </div>
         </div>
@@ -1893,21 +1922,21 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             role="tab"
             aria-selected={tab === 'changes'}
             className={tab === 'changes' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => onSwitchTab('changes')}
+            onClick={() => leaveTab('changes')}
           >{t('tabChanges')}</button>
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'history'}
             className={tab === 'history' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => onSwitchTab('history')}
+            onClick={() => leaveTab('history')}
           >{t('tabHistory')}</button>
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'compare'}
             className={tab === 'compare' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => onSwitchTab('compare')}
+            onClick={() => leaveTab('compare')}
           >{t('tabCompare')}</button>
         </div>
         {tab === 'compare' ? (
@@ -2038,6 +2067,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   fallbackLoading={loading && segment.length === 0}
                   onBlockAction={askBlockAction}
                   onSaved={onRefresh}
+                  onDirtyChange={onSideDirty}
                 />
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
@@ -2066,6 +2096,17 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             })}
             onCancel={() => setBlockDiscard(null)}
             onConfirm={confirmBlockDiscard}
+          />
+        ) : null}
+        {/* The drawer-level unsaved-edits guard: the file being left is the
+            one the reader was editing, and the deferred gesture — another
+            file, another tab, closing — runs only on the dialog's answer. */}
+        {pendingLeave !== null ? (
+          <LeaveEditsConfirm
+            t={t}
+            path={active ?? ''}
+            onCancel={() => { setPendingLeave(null) }}
+            onConfirm={confirmDrawerLeave}
           />
         ) : null}
       </div>
@@ -4598,7 +4639,7 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved }: {
+function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
   t: Translate
   path: string
   palette: string
@@ -4619,6 +4660,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   onBlockAction: (mode: BlockMode, ask: BlockAsk) => Promise<GitOpResult>
   /** After a successful save: refresh the tree and the pane together. */
   onSaved: () => void
+  /** Reports the buffer's dirty flag outward: the drawer guards every
+   *  gesture that would drop the buffer (file selection, close, main tab)
+   *  on it, so it must live where those gestures are handled. */
+  onDirtyChange: (dirty: boolean) => void
 }): ReactNode {
   const [layer, setLayer] = useState<SideLayer>('unstaged')
   const [sides, setSides] = useState<FileSides | null>(null)
@@ -4719,6 +4764,21 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   /** The editor half of the pane, present only on the unstaged layer. */
   const editable = layer === 'unstaged' && edit.armed
   const dirty = isDirty(edit)
+  // Whether this payload may enter the editor at all: text carrying \r would
+  // be normalised to \n by the textarea the moment it landed, and the next
+  // save would rewrite every line ending in the file. The gate lives in
+  // `side-edit.ts` with the rest of the buffer's rules.
+  const armable = sides !== null && editableSides(sides)
+
+  // The drawer guards every gesture that would drop the buffer — selecting
+  // another file, closing, switching the main tab — so it needs the flag as
+  // it changes, not at click time from a stale render. Reported on the FLAG
+  // (not the buffer) so it fires on the transitions that matter; the cleanup
+  // clears it when this pane unmounts, so no orphaned flag prompts later.
+  useEffect(() => {
+    onDirtyChange(dirty)
+    return () => { onDirtyChange(false) }
+  }, [dirty, onDirtyChange])
   // The buffer's lines and their highlight, for the editor's underlay: the
   // visible text under the transparent textarea, which is what keeps syntax
   // coloring and the caret on the same grid while typing.
@@ -4737,9 +4797,11 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // editor said "I want to type here", and a second click to focus is a tax.
   useEffect(() => { if (edit.armed) taRef.current?.focus() }, [edit.armed])
 
-  /** Arm the editor from the payload on screen; the unstaged tab only. */
+  /** Arm the editor from the payload on screen; the unstaged tab, and only
+   *  for a payload `editableSides` accepts — armEdit itself refuses the rest,
+   *  so even a stray call cannot put CRLF text into the buffer. */
   const arm = (): void => {
-    if (sides === null || layer !== 'unstaged') return
+    if (sides === null || layer !== 'unstaged' || !editableSides(sides)) return
     setEdit(prev => armEdit(prev, sides))
   }
 
@@ -4958,7 +5020,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
         >{t('tabStaged')}</button>
         {/* Editing arms explicitly and saves explicitly — the two halves of
             "never per keystroke". Save enables only while dirty; Revert drops
-            the buffer back onto its basis without touching the file. */}
+            the buffer back onto its basis without touching the file. A
+            payload the CRLF gate refuses offers no Edit button at all — the
+            notice below says why rather than leaving a button that does
+            nothing. */}
         {layer === 'unstaged' ? (
           <span className={css.sideActions}>
             {edit.armed ? (
@@ -4976,13 +5041,14 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                   onClick={revert}
                 >{t('fileRevert')}</button>
               </>
-            ) : (
+            ) : armable ? (
               <button type="button" className={css.blockBtn} onClick={arm}>{t('editFile')}</button>
-            )}
+            ) : null}
           </span>
         ) : null}
       </div>
       {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
+      {layer === 'unstaged' && !armable && !edit.armed ? <div className={css.sideNotice}>{t('crlfNotice')}</div> : null}
       {/* §4's row: the file moved underneath a dirty buffer — by the poll's
           notice or by a refused save — and the reader chooses which version
           survives. Overwrite waits for the refetch the refusal triggered, so
@@ -5070,9 +5136,9 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                 </span>
                 <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
                 <span
-                  className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' ? ` ${css.sideArmable}` : ''}`}
+                  className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}
                   data-block={row.block >= 0 ? row.block : undefined}
-                  onClick={layer === 'unstaged' ? armFromCell : undefined}
+                  onClick={layer === 'unstaged' && armable ? armFromCell : undefined}
                 >
                   {renderSideCode(row.right, rightSyntax[i])}
                   {barInLeft ? null : bar}

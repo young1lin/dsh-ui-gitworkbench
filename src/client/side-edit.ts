@@ -1,7 +1,8 @@
 /**
  * The editable right column's decision core: when a fetched layer payload may
  * replace the editor buffer and when it must not, what a save's answer does to
- * the buffer's basis, and what "dirty" means.
+ * the buffer's basis, what "dirty" means, and what any gesture that would drop
+ * the buffer must ask first.
  *
  * The host's sha check is the hard wall between the editor and a concurrent
  * agent write; these rules are everything the UI does around that wall. The
@@ -64,36 +65,63 @@ export function isDirty(edit: EditState): boolean {
 }
 
 /**
+ * Whether the editor may hold this payload's text: it must carry no carriage
+ * return.
+ *
+ * The HTML textarea value API normalises `\r\n` to `\n` the moment text
+ * enters it, so an armed CRLF file (an `core.autocrlf=true` checkout, or
+ * `eol=crlf`) would save ANY later edit with every line ending rewritten —
+ * a whole-file diff the reader never asked for. The first cut declines the
+ * edit rather than translate endings on the way out: the file stays viewable
+ * and the block actions keep working (they act on git's diff, not on the
+ * buffer); only the editor is withheld, with a notice saying why.
+ */
+export function editableSides(sides: EditSides): boolean {
+  return !sides.targetText.includes('\r')
+}
+
+/** The adopt core: buffer and basis become the payload, conflict cleared. */
+function adopt(armed: boolean, sides: EditSides): EditState {
+  return { armed, buffer: sides.targetText, baseSha: sides.targetSha, baseText: sides.targetText, conflict: false }
+}
+
+/**
  * Arm the editor from the payload currently on screen: the buffer starts as
  * the working-tree text, and the first save is checked against its sha.
+ * A payload {@link editableSides} refuses is handed back unchanged — the
+ * caller shows the notice instead of an editor.
  */
 export function armEdit(edit: EditState, sides: EditSides): EditState {
-  return { armed: true, buffer: sides.targetText, baseSha: sides.targetSha, baseText: sides.targetText, conflict: false }
+  return editableSides(sides) ? adopt(true, sides) : edit
 }
 
 /**
  * A fetched payload lands over the editor.
  *
  * Clean (or disarmed): adopt — the editor follows the file, so the drawer
- * keeps up with the agent exactly as it did before editing existed. Dirty:
- * keep the buffer whatever the payload says (a poll must never overwrite
- * unsaved edits) and record whether the file itself moved, which is what the
- * reload-and-lose-edits banner keys on. An index-only change (same targetSha)
- * leaves the flag down: the diff moved, the edited file did not.
+ * keeps up with the agent exactly as it did before editing existed, and an
+ * armed editor whose file turned CRLF underneath disarms with the payload
+ * adopted (clean costs no edits, and an armed editor must never hold text
+ * the textarea would normalise). Dirty: keep the buffer whatever the payload
+ * says (a poll must never overwrite unsaved edits) and record whether the
+ * file itself moved, which is what the reload-and-lose-edits banner keys on.
+ * An index-only change (same targetSha) leaves the flag down: the diff moved,
+ * the edited file did not.
  */
 export function applySides(edit: EditState, sides: EditSides): EditState {
   if (!isDirty(edit)) {
-    return { armed: edit.armed, buffer: sides.targetText, baseSha: sides.targetSha, baseText: sides.targetText, conflict: false }
+    return adopt(edit.armed && editableSides(sides), sides)
   }
   return { ...edit, conflict: sides.targetSha !== edit.baseSha }
 }
 
 /**
  * The banner's reload action, on the user's explicit say-so: drop the edits
- * onto the fresh text and stay in the editor with a clean, current basis.
+ * onto the fresh text with a clean, current basis — and disarmed when the
+ * fresh text carries CRLF, for the same reason arming refuses it.
  */
 export function reloadSides(edit: EditState, sides: EditSides): EditState {
-  return { ...armEdit(edit, sides) }
+  return adopt(editableSides(sides), sides)
 }
 
 /**
@@ -101,7 +129,26 @@ export function reloadSides(edit: EditState, sides: EditSides): EditState {
  * screen, so the editor disarms and adopts the new payload from scratch.
  */
 export function resetSides(edit: EditState, sides: EditSides): EditState {
-  return { ...armEdit(edit, sides), armed: false }
+  return adopt(false, sides)
+}
+
+/** What a gesture that would drop the editor's surface should do. */
+export type LeaveGate = { readonly kind: 'run' } | { readonly kind: 'ask' } | { readonly kind: 'wait' }
+
+/**
+ * Decide a leave gesture — a layer tab, a file selection, the drawer's close,
+ * a main-tab switch — against unsaved edits.
+ *
+ * Every one of these drops the buffer, and the layer tab is the rarest of
+ * them: clicking another file in the tree is this pane's primary navigation,
+ * so the guard lives here, once, rather than per call site. `run` acts now;
+ * `ask` opens the unsaved-edits dialog (Stay keeps editing, Leave drops);
+ * `wait` does nothing because an ask is already open — a second gesture
+ * waits on the first's answer rather than stacking a dialog on it.
+ */
+export function gateLeave(dirty: boolean, promptOpen: boolean): LeaveGate {
+  if (!dirty) return { kind: 'run' }
+  return promptOpen ? { kind: 'wait' } : { kind: 'ask' }
 }
 
 /**

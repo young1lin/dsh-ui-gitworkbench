@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  DISARMED, applySaveOk, applySides, armEdit, isDirty, markConflict, reloadSides, resetSides,
+  DISARMED, applySaveOk, applySides, armEdit, editableSides, gateLeave, isDirty, markConflict, reloadSides, resetSides,
 } from '../src/client/side-edit.ts'
 
 const SIDES_V1 = { targetText: 'one\ntwo\n', targetSha: 'sha-v1', binary: false, tooLarge: false } as const
@@ -116,5 +116,70 @@ describe('markConflict — a refused (stale) save', () => {
     const next = markConflict(dirty)
     expect(next.buffer).toBe('my edit\n')
     expect(next.conflict).toBe(true)
+  })
+})
+
+describe('editableSides — the CRLF gate', () => {
+  it('refuses a payload whose text carries any carriage return', () => {
+    // The textarea value API normalises \r\n to \n on entry, so arming a CRLF
+    // file would make the NEXT save rewrite every line ending — the gate
+    // declines the edit rather than translate endings on the way out.
+    expect(editableSides({ ...SIDES_V1, targetText: 'one\r\ntwo\r\n' })).toBe(false)
+    expect(editableSides({ ...SIDES_V1, targetText: 'a\rb' })).toBe(false)
+  })
+
+  it('allows LF text and an absent file', () => {
+    expect(editableSides(SIDES_V1)).toBe(true)
+    expect(editableSides({ ...SIDES_V1, targetText: '', targetSha: '' })).toBe(true)
+  })
+
+  it('is what armEdit refuses on: the state is handed back unchanged', () => {
+    const crlf = { ...SIDES_V1, targetText: 'one\r\ntwo\r\n' }
+    expect(armEdit(DISARMED, crlf)).toBe(DISARMED)
+    // And an armed editor stays exactly as it was — no buffer swap.
+    const armed = armEdit(DISARMED, SIDES_V1)
+    expect(armEdit(armed, crlf)).toBe(armed)
+  })
+
+  it('disarms a clean armed editor whose file turned CRLF underneath', () => {
+    // The poll adopts while clean; a file rewritten with CRLF since must not
+    // leave an armed editor holding text the textarea would normalise.
+    const armed = armEdit(DISARMED, SIDES_V1)
+    const next = applySides(armed, { ...SIDES_V1, targetText: 'one\r\ntwo\r\n', targetSha: 'sha-crlf' })
+    expect(next).toMatchObject({ armed: false, buffer: 'one\r\ntwo\r\n', baseSha: 'sha-crlf', conflict: false })
+  })
+
+  it('disarms on reload into CRLF content, and still adopts the text', () => {
+    const dirty = { ...armEdit(DISARMED, SIDES_V1), buffer: 'my edit\n', conflict: true }
+    const next = reloadSides(dirty, { ...SIDES_V1, targetText: 'one\r\n', targetSha: 'sha-crlf' })
+    expect(next).toMatchObject({ armed: false, buffer: 'one\r\n', baseSha: 'sha-crlf', conflict: false })
+  })
+
+  it('still keeps a dirty buffer over a CRLF refresh — the save refuses anyway', () => {
+    // Dirty never adopts; the CRLF file underneath shows up as a conflict,
+    // and the host's sha check is what stops the write, not this gate.
+    const dirty = { ...armEdit(DISARMED, SIDES_V1), buffer: 'my edit\n' }
+    const next = applySides(dirty, { ...SIDES_V1, targetText: 'one\r\n', targetSha: 'sha-crlf' })
+    expect(next.buffer).toBe('my edit\n')
+    expect(next.armed).toBe(true)
+    expect(next.conflict).toBe(true)
+  })
+})
+
+describe('gateLeave — what a leave gesture does with unsaved edits', () => {
+  // The layer-tab guard and the drawer-level guards (file selection, close,
+  // main tab) all ask through the same dialog; this is the one decision they
+  // share, lifted where vitest can drive it.
+  it('runs the gesture when the buffer is clean', () => {
+    expect(gateLeave(false, false)).toEqual({ kind: 'run' })
+    expect(gateLeave(false, true)).toEqual({ kind: 'run' })
+  })
+
+  it('asks first when there are unsaved edits', () => {
+    expect(gateLeave(true, false)).toEqual({ kind: 'ask' })
+  })
+
+  it('waits when an ask is already open — gestures do not stack on it', () => {
+    expect(gateLeave(true, true)).toEqual({ kind: 'wait' })
   })
 })

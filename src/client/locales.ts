@@ -56,8 +56,9 @@ export type WorkbenchKey =
   // side-by-side block actions: the three buttons and the roll-back confirmation's wording
   | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody'
   // side-by-side editing: arm the editor, save, revert, the stale/conflict
-  // banner, and the unsaved-changes prompt on tab switch
-  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice'
+  // banner, the CRLF refusal notice, and the unsaved-changes prompt that
+  // guards every gesture dropping the buffer (tab, file, close)
+  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice'
   | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
   | 'staleTitle' | 'staleBody' | 'staleReload' | 'staleOverwrite'
   | 'unsavedTitle' | 'unsavedBody' | 'unsavedLeave' | 'unsavedStay'
@@ -233,7 +234,10 @@ export const zh: Record<WorkbenchKey, string> = {
   editFile: '编辑',
   fileSave: '保存（Ctrl/Cmd+S）',
   fileRevert: '放弃修改',
-  editingNotice: '正在编辑且未保存：保存前区块操作不可用，切换页签前会再确认一次。',
+  editingNotice: '正在编辑且未保存：保存前区块操作不可用；切走前（换页签、选其他文件、关闭抽屉）会先确认。',
+  // Why the edit affordance is withheld on a CRLF file: the editor control
+  // itself rewrites \r\n to \n, so any save would change every line ending.
+  crlfNotice: '这个文件的行尾是 CRLF，暂不支持在线编辑（编辑框会把行尾统一成 LF，保存时整份文件都会被改写）；查看和按块暂存/撤回不受影响。',
   saveFailed: '保存失败',
   saveUnavailable: '当前宿主还不支持保存（需要重启 dsh web 加载新版宿主端）。',
   saveRetry: '重试保存',
@@ -411,7 +415,10 @@ export const en: Record<WorkbenchKey, string> = {
   editFile: 'Edit',
   fileSave: 'Save (Ctrl/Cmd+S)',
   fileRevert: 'Discard edits',
-  editingNotice: 'Editing with unsaved changes: block actions wait until the file is saved, and switching tabs asks first.',
+  editingNotice: 'Editing with unsaved changes: block actions wait until the file is saved, and leaving first — another tab, another file, closing the drawer — asks.',
+  // Why the edit affordance is withheld on a CRLF file: the editor control
+  // itself rewrites \r\n to \n, so any save would change every line ending.
+  crlfNotice: 'This file has CRLF line endings, which the editor does not support yet (the edit box would turn every ending into LF, so a save rewrites the whole file); viewing and block staging/rolling back still work.',
   saveFailed: 'Save failed',
   saveUnavailable: 'This host does not support saving yet — restart dsh web to load the new host half.',
   saveRetry: 'Retry save',
