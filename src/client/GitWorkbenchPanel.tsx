@@ -47,7 +47,7 @@
  * All copy resolves through the app's locale runtime (`t`), so the panel follows
  * the user's language preference.
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -58,6 +58,10 @@ import {
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockLines, blockTally, type SideCell, type SideRow } from './side-rows.ts'
+import {
+  applySaveOk, applySides, armEdit, DISARMED, isDirty, markConflict, reloadSides, resetSides,
+  type EditState, type WriteResult,
+} from './side-edit.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -231,6 +235,7 @@ export interface GitOpPayload {
 }
 
 export type { DiscardAnswer, DiscardNext, DiscardPreview } from './discard-flow.ts'
+export type { WriteResult } from './side-edit.ts'
 
 /** Which side of the index a side-by-side pane shows: `unstaged` is
  *  index→worktree (the editable side), `staged` is HEAD→index (read-only). */
@@ -288,6 +293,8 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly fetchFileDiff: (worktreePath: string | undefined, path: string, commit: string | undefined, signal: AbortSignal) => Promise<string>
   /** One layer of one file for the side-by-side diff pane. */
   readonly fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
+  /** Save the editor buffer, checked against the sha it opened with. */
+  readonly writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
@@ -510,7 +517,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1379,6 +1386,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onTick={queueTicks}
           fetchFileDiff={fetchDiffForView}
           fetchFileSides={fetchFileSides}
+          writeChecked={writeChecked}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1578,6 +1586,8 @@ interface DrawerProps {
   fetchFileDiff: (path: string, signal: AbortSignal) => Promise<string>
   /** One layer of one file for the side-by-side pane; the drawer binds the source. */
   fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
+  /** Save the side pane's editor buffer; the drawer binds the source. */
+  writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1585,7 +1595,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2021,11 +2031,13 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   palette={theme}
                   statsPath={statsPath}
                   fetchSides={fetchFileSides}
+                  writeChecked={writeChecked}
                   scopeKey={viewKey}
                   gen={gen}
                   fallbackSegment={segment}
                   fallbackLoading={loading && segment.length === 0}
                   onBlockAction={askBlockAction}
+                  onSaved={onRefresh}
                 />
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
@@ -4570,25 +4582,43 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * hunk-line indices and the rendered diff's sha, so the host can prove the
  * file has not changed since the pane drew it.
  *
+ * The unstaged tab's right column is also EDITABLE (the staged one is not, by
+ * design: editing the index would mean writing a blob with no file behind it).
+ * Editing arms explicitly — never per keystroke — and the buffer's whole life
+ * against the file and the poll is `side-edit.ts`'s to decide: a refresh over
+ * a dirty buffer keeps the buffer, a file that moved underneath raises the
+ * reload-or-overwrite banner, and the one save path carries the sha the buffer
+ * is based on so the host can refuse a stale write. While editing, the layout
+ * trades the diff's hole-aligned grid for a dense editor column (same
+ * metrics, same gutter rhythm): one grid cannot stay diff-aligned AND hold a
+ * dense buffer whenever deletions outrun additions, and re-diffing per
+ * keystroke is exactly the editor-library work the first cut declines.
+ *
  * `tooLarge` and `binary` fall back to the unified view the pane already had
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction }: {
+function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved }: {
   t: Translate
   path: string
   palette: string
   statsPath: string | undefined
   fetchSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
+  /** Save the editor buffer; the host refuses a stale sha and nothing is written. */
+  writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   /** Names the view the fetch belongs to, as `viewKey` does for the diff cache. */
   scopeKey: string
   /** Refresh generation: a new one means the tree was re-read, so refetch. */
   gen: number
-  /** The unified-view material for the fallbacks. */
+  /** The drawer's polled view of this file's HEAD-diff; a CHANGE in it means
+   *  the drawer noticed the file move, so the pane refetches even between
+   *  refresh generations — this is how the poll reaches a dirty buffer. */
   fallbackSegment: string
   fallbackLoading: boolean
   /** Run one block action; a discard routes to the drawer's confirmation. */
   onBlockAction: (mode: BlockMode, ask: BlockAsk) => Promise<GitOpResult>
+  /** After a successful save: refresh the tree and the pane together. */
+  onSaved: () => void
 }): ReactNode {
   const [layer, setLayer] = useState<SideLayer>('unstaged')
   const [sides, setSides] = useState<FileSides | null>(null)
@@ -4602,23 +4632,68 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
   const [hotBlock, setHotBlock] = useState<number | null>(null)
   // The block whose stage/unstage call is in flight, disabling its buttons.
   const [pendingBlock, setPendingBlock] = useState<number | null>(null)
+  // The editable right column's state and its one save path. `saving` disables
+  // the controls for the call's duration; `saveFailed` carries a non-stale
+  // failure's sentence (the stale case is `edit.conflict`'s banner instead).
+  const [edit, setEdit] = useState<EditState>(DISARMED)
+  const [saving, setSaving] = useState(false)
+  const [saveFailed, setSaveFailed] = useState<{ title: string; detail: string } | null>(null)
+  // The layer a dirty-buffer tab switch is waiting on the reader to confirm.
+  const [pendingLayer, setPendingLayer] = useState<SideLayer | null>(null)
+  // Internal fetch generation: a stale save or the banner's reload refetch
+  // without waiting for the drawer's next refresh.
+  const [refetch, setRefetch] = useState(0)
+  // Which edit session the fetched payload belongs to, and what a landing
+  // payload may do with the buffer. The ref is read inside the fetch callback
+  // (which closes over a render that may be several states old by the time the
+  // answer arrives), and the adopt mode is consumed once by the next run.
+  const idRef = useRef('')
+  const adoptRef = useRef<'auto' | 'reload'>('auto')
+  const editRef = useRef(edit)
+  editRef.current = edit
+  const taRef = useRef<HTMLTextAreaElement>(null)
 
   // Switching tabs refetches: the two layers are different diffs of the same
-  // file, and neither is a transform of the other client-side.
+  // file, and neither is a transform of the other client-side. A change in the
+  // drawer's polled segment for this file refetches too — the poll's way of
+  // saying the file moved — which is what lets a change under a DIRTY buffer
+  // raise the banner within one poll interval instead of at the next refresh.
+  //
+  // Only a NEW file/layer/scope may blank the pane and disarm the editor; a
+  // refetch of the same identity keeps the current payload on screen until the
+  // answer lands, because blanking it would unmount the editor mid-keystroke.
   useEffect(() => {
+    const id = `${scopeKey}\x1f${path}\x1f${layer}`
+    const identityChanged = idRef.current !== id
+    if (identityChanged) idRef.current = id
+    const adopt = identityChanged ? 'reset' : adoptRef.current
+    adoptRef.current = 'auto'
     const ctrl = new AbortController()
     let alive = true
-    setSides(null)
-    setFailed(false)
+    if (identityChanged) {
+      setSides(null)
+      setSaveFailed(null)
+      setPendingLayer(null)
+    }
+    if (identityChanged || !editRef.current.armed) setFailed(false)
     fetchSides(statsPath, path, layer, ctrl.signal)
       .then(value => {
         if (!alive) return
-        if (value === null) setFailed(true)
-        else setSides(value)
+        // While armed, a failed background refetch keeps the pane as it is:
+        // dropping the editor over a transient RPC failure would cost the
+        // buffer's DOM (focus, IME composition) for no reader benefit.
+        if (value === null) {
+          if (!editRef.current.armed) setFailed(true)
+          return
+        }
+        setSides(value)
+        setEdit(prev => adopt === 'reset' ? resetSides(prev, value)
+          : adopt === 'reload' ? reloadSides(prev, value)
+          : applySides(prev, value))
       })
-      .catch(() => { if (alive) setFailed(true) })
+      .catch(() => { if (alive && !editRef.current.armed) setFailed(true) })
     return () => { alive = false; ctrl.abort() }
-  }, [fetchSides, statsPath, path, layer, scopeKey, gen])
+  }, [fetchSides, statsPath, path, layer, scopeKey, gen, fallbackSegment, refetch])
 
   const lang = shikiLangOf(path)
   const shikiTheme = shikiThemeOf(palette)
@@ -4640,6 +4715,125 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
     () => highlightFile(rows.map(row => row.right === null ? '' : row.right.text), lang, shikiTheme),
     [rows, lang, shikiTheme, grammarGen],
   )
+
+  /** The editor half of the pane, present only on the unstaged layer. */
+  const editable = layer === 'unstaged' && edit.armed
+  const dirty = isDirty(edit)
+  // The buffer's lines and their highlight, for the editor's underlay: the
+  // visible text under the transparent textarea, which is what keeps syntax
+  // coloring and the caret on the same grid while typing.
+  const bufferLines = useMemo(() => edit.buffer.split('\n'), [edit.buffer])
+  const editSyntax = useMemo(
+    () => edit.armed ? highlightFile(bufferLines, lang, shikiTheme) : [],
+    [edit.armed, bufferLines, lang, shikiTheme, grammarGen],
+  )
+  // The left column while editing renders dense — one row per INDEX line, no
+  // holes — because the right column is now the dense buffer; a hole-aligned
+  // left beside a dense right is the alignment the diff view owes, not the
+  // editor. Each entry keeps its index into `rows` for its syntax tokens.
+  const leftRows = useMemo(() => rows.map((row, i) => ({ row, i })).filter(entry => entry.row.left !== null), [rows])
+
+  // Arming drops the caret straight into the buffer: the click that armed the
+  // editor said "I want to type here", and a second click to focus is a tax.
+  useEffect(() => { if (edit.armed) taRef.current?.focus() }, [edit.armed])
+
+  /** Arm the editor from the payload on screen; the unstaged tab only. */
+  const arm = (): void => {
+    if (sides === null || layer !== 'unstaged') return
+    setEdit(prev => armEdit(prev, sides))
+  }
+
+  /**
+   * The one save path, shared by the Save button, Ctrl/Cmd+S and the banner's
+   * overwrite action — they differ only in WHICH sha the host is asked to
+   * check: the buffer's basis for a save, the file as it stands NOW for an
+   * explicit overwrite of a concurrent writer's version.
+   *
+   * On success the basis moves to the sha the host read back and the drawer
+   * refreshes (tree and pane together). On `stale` the banner goes up and the
+   * pane refetches WITHOUT touching the buffer, so the banner's reload and
+   * overwrite actions read the file's true current state. Everything else is
+   * a failed save with a sentence.
+   */
+  const runSave = async (expectedSha: string): Promise<void> => {
+    if (sides === null || !dirty || saving) return
+    const savedText = edit.buffer
+    // The edit session this save belongs to. A slow RPC can outlive a file or
+    // layer switch, and applying THIS save's outcome to the NEXT file's edit
+    // state would re-base that buffer onto text it never held — so every
+    // pane-local effect below is gated on the session still being current.
+    // The tree refresh on success is not: the file on disk did move.
+    const session = idRef.current
+    setSaving(true)
+    try {
+      const result = await writeChecked(statsPath, path, savedText, expectedSha, new AbortController().signal)
+      const stillHere = idRef.current === session
+      if (result === null) {
+        if (stillHere) setSaveFailed({ title: t('saveUnavailable'), detail: '' })
+      } else if (result.ok) {
+        if (stillHere) {
+          setSaveFailed(null)
+          setEdit(prev => applySaveOk(prev, savedText, result.sha ?? ''))
+        }
+        onSaved()
+      } else if (result.failure === 'stale') {
+        if (stillHere) {
+          setEdit(prev => markConflict(prev))
+          setRefetch(n => n + 1)
+        }
+      } else {
+        if (stillHere) setSaveFailed({ title: t('saveFailed'), detail: (result.error ?? '').trim() })
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /**
+   * The banner's two answers to a file that moved underneath. Overwrite may
+   * only run once the post-refusal refetch has landed (the fresh targetSha is
+   * what the host checks the overwrite against); until then the button waits,
+   * because re-sending the refused sha would just refuse again.
+   */
+  const canOverwrite = dirty && edit.conflict && sides !== null && sides.targetSha !== edit.baseSha
+  const overwrite = (): Promise<void> => sides === null ? Promise.resolve() : runSave(sides.targetSha)
+  /** Reload: the reader chose the file over the buffer; drop the edits. */
+  const reload = (): void => {
+    setSaveFailed(null)
+    adoptRef.current = 'reload'
+    setRefetch(n => n + 1)
+  }
+  /** Revert the buffer to its basis, in place; the conflict flag stands. */
+  const revert = (): void => {
+    setSaveFailed(null)
+    setEdit(prev => ({ ...prev, buffer: prev.baseText }))
+  }
+
+  /**
+   * A layer tab is one click away from dropping the buffer: with unsaved
+   * edits the click asks first, and only the dialog's answer switches.
+   */
+  const switchLayer = (next: SideLayer): void => {
+    if (next === layer) return
+    if (dirty) {
+      setPendingLayer(next)
+      return
+    }
+    setLayer(next)
+  }
+  const confirmLeave = (): void => {
+    const next = pendingLayer
+    setPendingLayer(null)
+    if (next !== null) setLayer(next)
+  }
+
+  /** Ctrl/Cmd+S inside the pane: the editor's other save affordance. */
+  const onPaneKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault()
+      if (dirty && !saving) void runSave(edit.baseSha)
+    }
+  }
 
   /**
    * One bubbling hover listener turns the cell under the pointer into its
@@ -4698,26 +4892,120 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
       </>
     )
   }
-  if (rows.length === 0) return <div className={css.empty}>{t('noTextDiff')}</div>
+  // An empty diff with the editor ARMED still edits: the file's unstaged delta
+  // can vanish (the agent staged everything) under a buffer the reader is
+  // mid-edit in, and the editor is the thing that must not disappear.
+  if (rows.length === 0 && !editable) return <div className={css.empty}>{t('noTextDiff')}</div>
   // The hovered block's first row hosts the action bar; a del-only block has
-  // no right cell, so its bar rides the left one instead.
+  // no right cell, so its bar rides the left one instead. In the editor
+  // layout the left column is dense, so the bar rides its first left row.
   const hotFirst = hotBlock === null ? -1 : rows.findIndex(row => row.block === hotBlock)
+  const hotFirstLeft = hotBlock === null ? -1 : leftRows.findIndex(entry => entry.row.block === hotBlock)
+  // Dirty buffer, no block actions: a patch computed from the loaded diff
+  // would land on top of edits the patch knows nothing about.
+  const barDisabled = pendingBlock !== null || dirty
+  const blockBar = (block: number): ReactNode => (
+    <span className={css.blockBar}>
+      {layer === 'staged' ? (
+        <button
+          type="button"
+          className={css.blockBtn}
+          disabled={barDisabled}
+          onClick={() => { void runBlock('unstage', block) }}
+        >{t('blockUnstage')}</button>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={css.blockBtn}
+            disabled={barDisabled}
+            onClick={() => { void runBlock('stage', block) }}
+          >{t('blockStage')}</button>
+          <button
+            type="button"
+            className={`${css.blockBtn} ${css.blockBtnDanger}`}
+            disabled={barDisabled}
+            onClick={() => { void runBlock('discard', block) }}
+          >{t('blockDiscard')}</button>
+        </>
+      )}
+    </span>
+  )
+  /** Clicking the working-tree column is the arm gesture readers will try
+   *  first — unless the click was really a text selection, or landed on a
+   *  block button, in which case it keeps its own meaning. */
+  const armFromCell = (event: ReactMouseEvent<HTMLSpanElement>): void => {
+    if (edit.armed) return
+    if ((event.target as Element).closest('button') !== null) return
+    const selection = window.getSelection()
+    if (selection !== null && !selection.isCollapsed) return
+    arm()
+  }
   return (
-    <div className={css.sidePane}>
+    <div className={css.sidePane} onKeyDown={onPaneKeyDown}>
       <div className={css.sideTabs}>
         <button
           type="button"
           aria-pressed={layer === 'unstaged'}
           className={layer === 'unstaged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
-          onClick={() => setLayer('unstaged')}
+          onClick={() => switchLayer('unstaged')}
         >{t('tabUnstaged')}</button>
         <button
           type="button"
           aria-pressed={layer === 'staged'}
           className={layer === 'staged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
-          onClick={() => setLayer('staged')}
+          onClick={() => switchLayer('staged')}
         >{t('tabStaged')}</button>
+        {/* Editing arms explicitly and saves explicitly — the two halves of
+            "never per keystroke". Save enables only while dirty; Revert drops
+            the buffer back onto its basis without touching the file. */}
+        {layer === 'unstaged' ? (
+          <span className={css.sideActions}>
+            {edit.armed ? (
+              <>
+                <button
+                  type="button"
+                  className={`${css.blockBtn}${dirty ? ` ${css.sideSaveReady}` : ''}`}
+                  disabled={!dirty || saving}
+                  onClick={() => { void runSave(edit.baseSha) }}
+                >{t('fileSave')}</button>
+                <button
+                  type="button"
+                  className={css.blockBtn}
+                  disabled={!dirty || saving}
+                  onClick={revert}
+                >{t('fileRevert')}</button>
+              </>
+            ) : (
+              <button type="button" className={css.blockBtn} onClick={arm}>{t('editFile')}</button>
+            )}
+          </span>
+        ) : null}
       </div>
+      {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
+      {/* §4's row: the file moved underneath a dirty buffer — by the poll's
+          notice or by a refused save — and the reader chooses which version
+          survives. Overwrite waits for the refetch the refusal triggered, so
+          it is checked against the file as it truly stands. */}
+      {dirty && edit.conflict ? (
+        <div className={css.sideBanner} role="alert">
+          <span className={css.sideBannerTitle}>{t('staleTitle')}</span>
+          <span>{t('staleBody')}</span>
+          <span className={css.sideBannerActs}>
+            <button type="button" className={`${css.blockBtn} ${css.blockBtnDanger}`} disabled={saving} onClick={reload}>{t('staleReload')}</button>
+            <button type="button" className={css.blockBtn} disabled={!canOverwrite || saving} onClick={() => { void overwrite() }}>{t('staleOverwrite')}</button>
+          </span>
+        </div>
+      ) : null}
+      {saveFailed !== null ? (
+        <div className={css.sideBanner} role="alert">
+          <span className={css.sideBannerTitle}>{saveFailed.title}</span>
+          {saveFailed.detail.length > 0 ? <span>{saveFailed.detail}</span> : null}
+          <span className={css.sideBannerActs}>
+            <button type="button" className={css.blockBtn} disabled={!dirty || saving} onClick={() => { void runSave(edit.baseSha) }}>{t('saveRetry')}</button>
+          </span>
+        </div>
+      ) : null}
       {/* One grid holds every row's four cells, so the column boundary is the
           same for all rows — a per-row grid would let the divider drift with
           each row's content. `data-block` on a row's cells names the change
@@ -4725,52 +5013,123 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen
           whatever cell the pointer is over, and the whole block — outline and
           action bar — answers to it as one unit. */}
       <div className={css.sideBody} onMouseOver={onBodyHover} onMouseLeave={() => { setHotBlock(null) }}>
-        {rows.map((row, i) => {
-          const hot = hotBlock !== null && row.block === hotBlock
-          const hotClass = hot ? ` ${css.sideBlockHot}` : ''
-          const bar = hot && i === hotFirst ? (
-            <span className={css.blockBar}>
-              {layer === 'staged' ? (
-                <button
-                  type="button"
-                  className={css.blockBtn}
-                  disabled={pendingBlock !== null}
-                  onClick={() => { void runBlock('unstage', row.block) }}
-                >{t('blockUnstage')}</button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className={css.blockBtn}
-                    disabled={pendingBlock !== null}
-                    onClick={() => { void runBlock('stage', row.block) }}
-                  >{t('blockStage')}</button>
-                  <button
-                    type="button"
-                    className={`${css.blockBtn} ${css.blockBtnDanger}`}
-                    disabled={pendingBlock !== null}
-                    onClick={() => { void runBlock('discard', row.block) }}
-                  >{t('blockDiscard')}</button>
-                </>
-              )}
-            </span>
-          ) : null
-          const barInLeft = bar !== null && row.right === null
-          return (
-            <Fragment key={i}>
-              <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
-              <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
-                {renderSideCode(row.left, leftSyntax[i])}
-                {barInLeft ? bar : null}
-              </span>
-              <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
-              <span className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
-                {renderSideCode(row.right, rightSyntax[i])}
-                {barInLeft ? null : bar}
-              </span>
-            </Fragment>
-          )
-        })}
+        {editable ? (
+          <>
+            {/* The editor layout: the left column renders the index side dense
+                (explicit rows, since the buffer cannot share the diff's
+                hole-aligned grid), the right column is the buffer. */}
+            {leftRows.map((entry, k) => {
+              const { row, i } = entry
+              const hot = hotBlock !== null && row.block === hotBlock
+              const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+              return (
+                <Fragment key={`l${i}`}>
+                  <span className={`${sideNumClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 1 }}>{row.left!.line}</span>
+                  <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 2 }} data-block={row.block >= 0 ? row.block : undefined}>
+                    {renderSideCode(row.left, leftSyntax[i])}
+                    {hot && k === hotFirstLeft ? blockBar(row.block) : null}
+                  </span>
+                </Fragment>
+              )
+            })}
+            {bufferLines.map((line, k) => (
+              <Fragment key={`r${k}`}>
+                <span className={css.sideNum} style={{ gridRow: k + 1, gridColumn: 3 }}>{k + 1}</span>
+                <span className={`${css.sideCode} ${css.sideCodeSame}`} style={{ gridRow: k + 1, gridColumn: 4 }}>{renderSideCode({ line: k + 1, text: line }, editSyntax[k])}</span>
+              </Fragment>
+            ))}
+            {/* The editor itself: a transparent textarea laid exactly over its
+                own rendered lines — same font, same 20px rhythm, same padding
+                — so the caret and the underlay never drift apart, however the
+                edits reshape the buffer. No editor library, no per-keystroke
+                diff: the buffer is one string until it is saved. */}
+            <div className={css.sideEditCell} style={{ gridRow: `1 / span ${Math.max(bufferLines.length, 1)}`, gridColumn: 4 }}>
+              <textarea
+                ref={taRef}
+                className={css.sideEditTa}
+                value={edit.buffer}
+                spellCheck={false}
+                wrap="off"
+                aria-label={path}
+                onChange={event => { setEdit(prev => ({ ...prev, buffer: event.target.value })) }}
+              />
+            </div>
+          </>
+        ) : (
+          rows.map((row, i) => {
+            const hot = hotBlock !== null && row.block === hotBlock
+            const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+            const bar = hot && i === hotFirst ? blockBar(row.block) : null
+            const barInLeft = bar !== null && row.right === null
+            return (
+              <Fragment key={i}>
+                <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
+                <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
+                  {renderSideCode(row.left, leftSyntax[i])}
+                  {barInLeft ? bar : null}
+                </span>
+                <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
+                <span
+                  className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' ? ` ${css.sideArmable}` : ''}`}
+                  data-block={row.block >= 0 ? row.block : undefined}
+                  onClick={layer === 'unstaged' ? armFromCell : undefined}
+                >
+                  {renderSideCode(row.right, rightSyntax[i])}
+                  {barInLeft ? null : bar}
+                </span>
+              </Fragment>
+            )
+          })
+        )}
+      </div>
+      {pendingLayer !== null ? (
+        <LeaveEditsConfirm t={t} path={path} onCancel={() => { setPendingLayer(null) }} onConfirm={confirmLeave} />
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The unsaved-edits guard on a layer switch: the only dialog in this pane
+ * besides the roll-back confirmation, and for the same reason — the click it
+ * answers to is one gesture away from losing work. Cancel holds the initial
+ * focus and Escape closes, because the default answer to losing edits is no.
+ */
+function LeaveEditsConfirm({ t, path, onCancel, onConfirm }: {
+  t: Translate
+  path: string
+  onCancel: () => void
+  onConfirm: () => void
+}): ReactNode {
+  const stayRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => { stayRef.current?.focus() }, [])
+  useEffect(() => {
+    // Capture phase, like the roll-back dialog: the drawer's own Escape
+    // handler closes the whole drawer, and a question about edits should not
+    // also dismiss the drawer it guards.
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true) }
+  }, [onCancel])
+  return (
+    <div className={css.confirmScrim} onClick={onCancel}>
+      <div
+        className={css.confirmBox}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={t('unsavedTitle')}
+        onClick={event => event.stopPropagation()}
+      >
+        <div className={css.confirmTitle}>{t('unsavedTitle')}</div>
+        <div className={css.confirmBody}>{t('unsavedBody', { path })}</div>
+        <div className={css.confirmActions}>
+          <button ref={stayRef} type="button" className={css.btn} onClick={onCancel}>{t('unsavedStay')}</button>
+          <button type="button" className={`${css.btn} ${css.btnDanger}`} onClick={onConfirm}>{t('unsavedLeave')}</button>
+        </div>
       </div>
     </div>
   )

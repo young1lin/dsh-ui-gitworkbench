@@ -55,6 +55,12 @@ export type WorkbenchKey =
   | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
   // side-by-side block actions: the three buttons and the roll-back confirmation's wording
   | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody'
+  // side-by-side editing: arm the editor, save, revert, the stale/conflict
+  // banner, and the unsaved-changes prompt on tab switch
+  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice'
+  | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
+  | 'staleTitle' | 'staleBody' | 'staleReload' | 'staleOverwrite'
+  | 'unsavedTitle' | 'unsavedBody' | 'unsavedLeave' | 'unsavedStay'
   | 'op.fail.auth' | 'op.fail.network' | 'op.fail.no-upstream' | 'op.fail.diverged' | 'op.fail.conflict'
   | 'op.fail.nothing-to-commit' | 'op.fail.dirty' | 'op.fail.stale' | 'op.fail.invalid' | 'op.fail.unknown'
 
@@ -221,6 +227,24 @@ export const zh: Record<WorkbenchKey, string> = {
   blockDiscard: '撤回这块',
   blockUnstage: '取消暂存这块',
   blockDiscardBody: '{path} 的这一块改动（{added} 行新增、{deleted} 行删除）将被撤回，工作区文件随之改写，无法找回。',
+  // The editable right column: editing arms explicitly (never per keystroke —
+  // an autosave racing a concurrent agent write is the data-loss case), and
+  // every save carries the sha the editor opened with.
+  editFile: '编辑',
+  fileSave: '保存（Ctrl/Cmd+S）',
+  fileRevert: '放弃修改',
+  editingNotice: '正在编辑且未保存：保存前区块操作不可用，切换页签前会再确认一次。',
+  saveFailed: '保存失败',
+  saveUnavailable: '当前宿主还不支持保存（需要重启 dsh web 加载新版宿主端）。',
+  saveRetry: '重试保存',
+  staleTitle: '这个文件在你编辑期间被修改了',
+  staleBody: '磁盘上的内容已不是编辑器打开时的那份（保存时会被拒绝，文件保持原样）。可以放弃你的修改重新加载，也可以用编辑器里的内容覆盖磁盘上的新版本。',
+  staleReload: '重新加载（丢弃修改）',
+  staleOverwrite: '用编辑器内容覆盖',
+  unsavedTitle: '有未保存的修改',
+  unsavedBody: '{path} 有未保存的修改，切换后将丢弃这些修改。',
+  unsavedLeave: '仍要切换',
+  unsavedStay: '继续编辑',
   'op.fail.auth': '认证失败。凭据提示已被禁用，请先在终端里配置好凭据再重试。',
   'op.fail.network': '网络不可达：主机名解析失败或连接不上。检查网络与远程地址后重试。',
   'op.fail.no-upstream': '当前分支没有上游分支。',
@@ -381,6 +405,24 @@ export const en: Record<WorkbenchKey, string> = {
   blockDiscard: 'Roll back block',
   blockUnstage: 'Unstage block',
   blockDiscardBody: 'This block of {path} ({added} added, {deleted} deleted lines) is rolled back and the working-tree file rewritten to do it. This cannot be undone.',
+  // The editable right column: editing arms explicitly (never per keystroke —
+  // an autosave racing a concurrent agent write is the data-loss case), and
+  // every save carries the sha the editor opened with.
+  editFile: 'Edit',
+  fileSave: 'Save (Ctrl/Cmd+S)',
+  fileRevert: 'Discard edits',
+  editingNotice: 'Editing with unsaved changes: block actions wait until the file is saved, and switching tabs asks first.',
+  saveFailed: 'Save failed',
+  saveUnavailable: 'This host does not support saving yet — restart dsh web to load the new host half.',
+  saveRetry: 'Retry save',
+  staleTitle: 'This file changed while you were editing it',
+  staleBody: 'What is on disk is no longer what the editor opened (a save is refused and nothing written). Reload and lose your edits, or overwrite the newer file with what the editor holds.',
+  staleReload: 'Reload (discard my edits)',
+  staleOverwrite: 'Overwrite with my version',
+  unsavedTitle: 'Unsaved edits',
+  unsavedBody: '{path} has unsaved edits; switching now discards them.',
+  unsavedLeave: 'Switch anyway',
+  unsavedStay: 'Keep editing',
   'op.fail.auth': 'Authentication failed. Credential prompts are disabled here — set your credentials up in a terminal first.',
   'op.fail.network': 'The network was unreachable — the host could not be resolved or the connection failed. Check connectivity and the remote URL, then retry.',
   'op.fail.no-upstream': 'This branch has no upstream.',

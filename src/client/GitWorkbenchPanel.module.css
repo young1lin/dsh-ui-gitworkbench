@@ -1729,6 +1729,59 @@
 .blockBtnDanger { color: var(--gs-del); border-color: var(--gs-del-bg, var(--gs-border)); }
 .blockBtnDanger:hover:not(:disabled) { color: var(--gs-del); border-color: var(--gs-del); }
 
+/* The editable right column. The working-tree column is readable but visibly
+   a text surface before editing is armed; the tab row carries the arm/save
+   cluster at its right end. */
+.sideArmable { cursor: text; }
+.sideActions { margin-left: auto; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
+/* Save gains the accent only once there is something to save: the button's
+   whole enabled state is the dirty flag, and colour says it sooner than the
+   pointer does. */
+.sideSaveReady { color: var(--gs-accent); border-color: var(--gs-accent); }
+
+/* The reload-or-overwrite banner (§4) and the failed-save banner: a warning
+   strip under the tabs carrying its own actions, so the decision it asks for
+   is one click away rather than a sentence away. */
+.sideBanner {
+  flex: none;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-del-bg, transparent);
+  color: var(--gs-del);
+  font-size: var(--gs-t-dense);
+}
+.sideBannerTitle { font-weight: 600; }
+.sideBannerActs { display: flex; gap: 4px; }
+
+/* The editor grid item that positions the textarea. It spans exactly the
+   buffer's rows of the fourth column; the textarea fills it absolutely. */
+.sideEditCell { position: relative; }
+/* A transparent textarea laid over its own rendered lines. Every metric that
+   decides where text lands — family, size, line-height, padding, tab size,
+   ligatures — is restated here to match `.sideBody`/`.sideCode` exactly,
+   because the caret must sit on the underlay's glyphs for the editor to read
+   as aligned. The text itself is invisible: the underlay carries the visible
+   copy (and its syntax colours), the textarea only the caret and selection. */
+.sideEditTa {
+  position: absolute; inset: 0;
+  box-sizing: border-box;
+  margin: 0; padding: 0 16px 0 10px;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--gs-accent);
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
+
 /* No syntax-tint classes here: Shiki resolves a real TextMate theme and emits a
    hex per token, so the panel writes colour inline. A four-class approximation
    painted identifiers, types and punctuation all one colour, which is what made

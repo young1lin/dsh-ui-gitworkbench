@@ -21,7 +21,7 @@ import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
-  type FileSides, type SideLayer,
+  type FileSides, type SideLayer, type WriteResult,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
@@ -105,6 +105,25 @@ export function apply(ctx: ClientContext): void {
             signal,
           ) as { ok: true; value: FileSides } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
+        },
+        // Save the side pane's editor buffer. The buffer travels with the blob
+        // sha it was opened with and the host re-derives that sha at the moment
+        // of the write, so a file that moved underneath the editor comes back
+        // `failure: 'stale'` with NOTHING written — null (transport failure, or
+        // a host half older than this client) reads as a failed save the same
+        // way every write op here folds its transport errors.
+        writeChecked: async (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal): Promise<WriteResult | null> => {
+          try {
+            const result = await connection.rpc.call(
+              '/api',
+              'gitWorkbench/writeChecked',
+              { args: { worktreePath: worktreePath ?? '', path, text, expectedSha } },
+              signal,
+            ) as { ok: true; value: WriteResult } | { ok: false; error: { message?: string } }
+            return result.ok ? result.value : null
+          } catch {
+            return null
+          }
         },
         // One page of the commit log past what `stats` bundles, so the history
         // list can grow instead of stopping at the first page. The filter is

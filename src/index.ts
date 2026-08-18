@@ -51,6 +51,7 @@ import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { runApplyBlocks, sha1Hex, type ApplyBlocksIo } from './apply-blocks.js'
 import { saveJsonAtomic } from './atomic-json.js'
+import { runWriteChecked, type WriteCheckedIo, type WriteResult } from './write-checked.js'
 import { CommitPayloadCache, cacheKey } from './commit-cache.js'
 import {
   NETWORK_GRACE_MS, NON_INTERACTIVE_ENV, capBranches, classifyFailure, clipDiff,
@@ -82,6 +83,7 @@ export type { WorktreeBinding, WorktreeOpResult }
 export type { GitFile, GitFileStatus }
 export type { DiscardEffect }
 export type { StyleEntry }
+export type { WriteResult }
 
 /** Cap the bundled unified diff so a huge change cannot blow the RPC response. */
 const DIFF_CHAR_CAP = 400_000
@@ -652,6 +654,54 @@ export class GitWorkbenchService extends TypertRemoteService {
       dropPatch: dropTmpPatch,
     }
     return runApplyBlocks(io, cwd, path, layer, String(diffSha ?? ''), lines, mode)
+  }
+
+  /**
+   * Save the side-by-side editor's buffer over the working-tree file it was
+   * opened from — the editable diff's one write (plain-identifier params;
+   * signal last).
+   *
+   * The buffer travels with the blob sha the editor opened with, and the host
+   * re-derives that sha from git at the moment of the write: a file that moved
+   * underneath the editor — an agent's write, another session's save — makes
+   * the save refuse with `failure: 'stale'` and NOTHING is written. The whole
+   * sequence (path lock, sha refusal, atomic temp+rename write, the fresh sha
+   * the next save checks against) lives in `write-checked.ts`, where vitest
+   * drives it against a real git; this method binds the host's git helper and
+   * the filesystem calls, plus the stat that keeps "file absent" from being
+   * read off a hash spawn's failure. Never throws across the RPC boundary.
+   *
+   * This is deliberately NOT a `writeFile(path, content)` primitive: the sha
+   * check and this method are one thing, and no unchecked write RPC exists or
+   * may be added in this plugin.
+   *
+   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param text - the editor buffer, verbatim; written as bytes (LF as given).
+   * @param expectedSha - the `targetSha` the buffer was opened with ('' when
+   *                     the file did not exist then), or the sha a successful
+   *                     save last returned.
+   * @param signal - abort signal.
+   */
+  @Remote('writeChecked')
+  async writeChecked(worktreePath: string, path: string, text: string, expectedSha: string, signal: AbortSignal): Promise<WriteResult> {
+    const cwd = this.cwdOf(worktreePath)
+    const io: WriteCheckedIo = {
+      git: (dir, argv) => this.git(dir, argv, signal),
+      exists: async p => {
+        try {
+          await stat(p)
+          return true
+        } catch {
+          return false
+        }
+      },
+      writeBytes: async (p, bytes) => { await writeFile(p, bytes) },
+      rename: async (from, to) => { await rename(from, to) },
+      remove: async p => { await rm(p, { force: true }) },
+      delay: ms => new Promise(resolve => { setTimeout(resolve, ms) }),
+    }
+    return runWriteChecked(io, cwd, path, typeof text === 'string' ? text : '', typeof expectedSha === 'string' ? expectedSha : '')
   }
 
   /**

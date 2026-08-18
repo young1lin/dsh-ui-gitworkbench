@@ -22,10 +22,9 @@ function delay(ms: number): Promise<void> {
  * Write a JSON value so a crash can never leave a truncated file behind.
  *
  * The value is staged into `<path>.tmp` and renamed over the destination, which
- * is atomic within a filesystem. On Windows that rename fails with EPERM while
- * another handle briefly holds the destination open (a concurrent read, an
- * antivirus scan, the search indexer); those locks are short-lived, so the
- * rename is retried with backoff before the error is surfaced.
+ * is atomic within a filesystem. The rename itself goes through
+ * {@link renameWithRetry} — the one home of the Windows EPERM backoff, shared
+ * with `write-checked.ts`'s worktree writes rather than duplicated per caller.
  * @param ensureDir - creates the containing directory, recursively.
  * @param writeText - writes a file's whole text.
  * @param rename - renames a path over another.
@@ -43,9 +42,34 @@ export async function saveJsonAtomic(
   await ensureDir(join(path, '..'))
   const tmp = `${path}.tmp`
   await writeText(tmp, `${JSON.stringify(value, null, 2)}\n`)
+  await renameWithRetry(rename, delay, tmp, path)
+}
+
+/**
+ * Rename `from` over `to`, retrying the short-lived Windows failures.
+ *
+ * On Windows a rename over an existing destination fails with EPERM while
+ * another handle briefly holds it open (a concurrent read, an antivirus scan,
+ * the search indexer); those locks are short-lived, so the rename is retried
+ * with backoff before the error is surfaced. Extracted from
+ * {@link saveJsonAtomic} when the editable diff needed the same atomic write
+ * for worktree files: one mechanism, two callers, not two mechanisms that can
+ * drift.
+ * @param rename - renames a path over another.
+ * @param delay - waits the given milliseconds.
+ * @param from - the staged temp path.
+ * @param to - the destination.
+ * @throws whatever `rename` threw, once the retries are exhausted.
+ */
+export async function renameWithRetry(
+  rename: (from: string, to: string) => Promise<void>,
+  delay: (ms: number) => Promise<void>,
+  from: string,
+  to: string,
+): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await rename(tmp, path)
+      await rename(from, to)
       return
     } catch (error) {
       if (attempt >= RENAME_RETRY_DELAYS.length) throw error
