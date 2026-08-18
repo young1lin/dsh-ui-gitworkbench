@@ -1407,6 +1407,40 @@
   white-space: nowrap;
   color: var(--gs-fg-dim); font-size: var(--gs-t-dense);
 }
+/* The file filter, revealed under the tools rather than squeezed into them:
+   the pane drags down to 170px, where the tick, the count and two icon buttons
+   already own the row. It costs a row only while it is being used. */
+.treeFilter {
+  position: relative;
+  flex: none;
+  display: flex; align-items: center;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.treeFilterInput {
+  flex: 1 1 auto; min-width: 0;
+  height: var(--gs-h-compact); box-sizing: border-box;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.treeFilterInput:focus { border-color: var(--gs-accent); }
+.treeFilterInput::placeholder { color: var(--gs-fg-faint); }
+/* Inside the field's right padding, so clearing does not move the field or
+   change its width as the button comes and goes. */
+.treeFilterClear {
+  position: absolute; right: calc(var(--gs-gutter-pane) + 6px);
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  padding: 0;
+  border: 0; border-radius: var(--gs-r-pill);
+  background: transparent; color: var(--gs-fg-faint);
+  font-size: var(--gs-t-ui); line-height: 1;
+  cursor: pointer;
+}
+.treeFilterClear:hover { color: var(--gs-fg); }
 .tree {
   flex: 1; min-height: 0;
   margin: 0; padding: 6px 0 16px;
@@ -1841,6 +1875,9 @@
    the pane drags down to, two more text buttons cannot share a row with the
    count — and these two are the pair a tree header always carries. */
 .treeIcon { width: var(--gs-h-compact); padding: 0; }
+/* Qualified, like `.funnelButtonActive`: this sits inside the shared button
+   vocabulary, which sets `color` at the same specificity a few lines above. */
+.treeIcon.treeIconOn { color: var(--gs-accent); border-color: var(--gs-accent); }
 .treeIconGlyph { display: block; font-size: var(--gs-t-meta); line-height: 1; }
 .treeIconDown { transform: rotate(90deg); }
 

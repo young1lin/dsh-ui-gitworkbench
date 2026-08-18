@@ -20,6 +20,7 @@
 /** Every key this plugin looks up — the two dictionaries below must both cover it. */
 export type WorkbenchKey =
   | 'aheadTitle' | 'behindTitle' | 'files'
+  | 'filterFiles' | 'filterFilesPlaceholder' | 'filterFilesClear' | 'filesFiltered' | 'filterNoMatch'
   | 'drawerLabel' | 'totalsDim' | 'refresh' | 'close'
   | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare'
   | 'sourceLabel' | 'workingTree'
@@ -150,6 +151,14 @@ export const zh: Record<WorkbenchKey, string> = {
   allBranches: '全部分支',
   expandAll: '展开全部',
   collapseAll: '收起全部',
+  // Filtering the file list. Separate from the funnel above the commit list:
+  // that one asks git for a different set of commits, this one only hides rows
+  // already on screen.
+  filterFiles: '过滤文件',
+  filterFilesPlaceholder: '过滤文件，空格分隔多个关键字',
+  filterFilesClear: '清除过滤',
+  filesFiltered: '{shown} / {count} 文件',
+  filterNoMatch: '没有匹配的文件',
   noBranch: '(无分支)',
   copyCommit: '复制提交说明',
   copiedCommit: '已复制',
@@ -298,6 +307,11 @@ export const en: Record<WorkbenchKey, string> = {
   allBranches: 'All branches',
   expandAll: 'Expand all',
   collapseAll: 'Collapse all',
+  filterFiles: 'Filter files',
+  filterFilesPlaceholder: 'Filter files; space-separated terms',
+  filterFilesClear: 'Clear filter',
+  filesFiltered: '{shown} / {count} files',
+  filterNoMatch: 'No file matches',
   noBranch: '(no branch)',
   copyCommit: 'Copy message',
   copiedCommit: 'Copied',

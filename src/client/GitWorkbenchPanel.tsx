@@ -60,6 +60,7 @@ import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
 import { buildDirTree, searchPaths, type DirEntry } from './dir-tree.ts'
+import { filterFiles } from './file-filter.ts'
 import { addPath, buildIndex, checkedState, isCovered, removePath } from './path-select.ts'
 import { inCalRange, localTodayIso, monthGrid, weekdayLabels } from './calendar.ts'
 import { NO_PATHS, preferredFile } from './active-file.ts'
@@ -1858,6 +1859,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           <div ref={treeRef} className={css.treeCol} style={paneStyle(panes.tree)} data-gs-part="tree">
             <FileTree
               t={t}
+              scopeKey={viewKey}
               loading={pending}
               lead={tab === 'changes' ? t('workingTree') : undefined}
               files={tickedFiles}
@@ -2663,6 +2665,30 @@ function SyncGlyph({ of }: { of: keyof typeof SYNC_GLYPH }): ReactNode {
     </svg>
   )
 }
+
+/**
+ * Filter this list: a magnifier, not the funnel above the commit list. The two
+ * are deliberately different glyphs because they do different things — the
+ * funnel asks git for a different set of commits, this only hides rows already
+ * on screen — and the drawer shows both at once.
+ */
+function FilterGlyph(): ReactNode {
+  return (
+    <svg
+      width="13" height="13" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1.25"
+      strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="4" />
+      <path d="M10 10l3.5 3.5" />
+    </svg>
+  )
+}
+
+/** Nothing folded. A constant so the filtered tree does not allocate a new Set
+ *  on every render and re-run `TreeChildren`'s memo. */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>()
 
 /**
  * Roll back: the counter-clockwise arc every editor and VCS uses for undo,
@@ -3988,10 +4014,28 @@ interface FileTreeProps {
   onDiscard?: (file: GitFile) => void
   /** Rendered under the tree in the working-tree view only. */
   footer?: ReactNode
+  /** Names what this list is OF — the working tree, or one commit, or one
+   *  comparison. The filter clears when it changes: a query typed against a
+   *  140-file commit would otherwise carry over to the next commit and hide
+   *  most of it, with nothing on screen saying why. */
+  scopeKey: string
 }
 
-function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, onDiscard, footer }: FileTreeProps): ReactNode {
-  const tree = useMemo(() => buildTree(files), [files])
+function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, onDiscard, footer, scopeKey }: FileTreeProps): ReactNode {
+  /**
+   * The filter over this list. Local, because it describes a way of LOOKING at
+   * the pane rather than anything the drawer stores: closing and reopening on
+   * an unfiltered list is what someone expects, and a query kept in the panel
+   * would have to be cleared from four places instead of one.
+   */
+  const [query, setQuery] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { setQuery(''); setFilterOpen(false) }, [scopeKey])
+
+  const shownFiles = useMemo(() => filterFiles(files, query), [files, query])
+  const filtering = shownFiles !== files
+  const tree = useMemo(() => buildTree(shownFiles), [shownFiles])
   /** Default: a dir collapses when it holds more than 12 files anywhere below it. */
   const effective = collapsed ?? defaultCollapsed(tree)
 
@@ -4037,16 +4081,41 @@ function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onColl
               state={tree.check}
               label={tree.check === 'on' ? t('unstageAll') : t('stageAll')}
               indent={0}
-              onToggle={() => onCheck(files, tree.check)}
+              // `shownFiles`, not `files`: a tick IS a git call, and the root
+              // one must stage exactly the rows it sits above. Reaching past a
+              // filter into files the pane is hiding is how "stage all" ends up
+              // meaning something the reader never saw.
+              onToggle={() => onCheck(shownFiles, tree.check)}
             />
           ) : null}
           <span className={css.treeLabel}>
             {loading === true
               ? t('loading')
-              : `${lead !== undefined ? `${lead} · ` : ''}${t('files', { count: files.length })}`}
+              : `${lead !== undefined ? `${lead} · ` : ''}${filtering
+                ? t('filesFiltered', { shown: shownFiles.length, count: files.length })
+                : t('files', { count: files.length })}`}
           </span>
         </div>
         <div className={css.treeActions} data-gs-part="tree-actions">
+          {/* Filtering is about the list, so it sits with the list's own two
+              controls rather than in the drawer chrome — and it stays lit while
+              a query is set, because a pane showing 6 of 140 files with no
+              visible reason is the one way this feature can mislead. */}
+          <button
+            type="button"
+            className={filterOpen || filtering ? `${css.treeIcon} ${css.treeIconOn}` : css.treeIcon}
+            data-gs-part="filter-files"
+            title={t('filterFiles')} aria-label={t('filterFiles')}
+            aria-pressed={filterOpen}
+            onClick={() => {
+              // Closing is also clearing. A hidden box still holding a query
+              // would leave the pane filtered with its only explanation
+              // folded away.
+              if (filterOpen) { setQuery(''); setFilterOpen(false); return }
+              setFilterOpen(true)
+              window.setTimeout(() => filterRef.current?.focus(), 0)
+            }}
+          ><FilterGlyph /></button>
           {/* Icon-only, with the label on `title`/`aria-label`: the glyph is the
               same one the rows carry, so each button previews its own result. */}
           <button
@@ -4061,12 +4130,46 @@ function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onColl
           ><span className={css.treeIconGlyph}>▸</span></button>
         </div>
       </div>
+      {filterOpen ? (
+        <div className={css.treeFilter}>
+          <input
+            ref={filterRef}
+            className={css.treeFilterInput}
+            type="text"
+            value={query}
+            placeholder={t('filterFilesPlaceholder')}
+            aria-label={t('filterFiles')}
+            spellCheck={false}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return
+              // Escape belongs to the box while it has something to undo;
+              // only an already-empty box lets it through to close the drawer.
+              if (query.length > 0) { event.stopPropagation(); setQuery(''); return }
+              event.stopPropagation()
+              setFilterOpen(false)
+            }}
+          />
+          {query.length > 0 ? (
+            <button
+              type="button" className={css.treeFilterClear}
+              title={t('filterFilesClear')} aria-label={t('filterFilesClear')}
+              onClick={() => { setQuery(''); filterRef.current?.focus() }}
+            >×</button>
+          ) : null}
+        </div>
+      ) : null}
       {loading === true ? (
         <div className={css.treeEmpty} data-gs-part="tree-loading">{t('loading')}</div>
+      ) : filtering && shownFiles.length === 0 ? (
+        <div className={css.treeEmpty} data-gs-part="tree-no-match">{t('filterNoMatch')}</div>
       ) : (
         <ul className={css.tree}>
+          {/* A filtered tree ignores the fold state entirely: the reader asked
+              for these files, and leaving them behind a directory they
+              collapsed twenty minutes ago reads as "no matches". */}
           <TreeChildren
-            node={tree} depth={0} active={active} collapsed={effective}
+            node={tree} depth={0} active={active} collapsed={filtering ? EMPTY_COLLAPSED : effective}
             onToggle={toggleOne} onSelect={onSelect} onCheck={onCheck} onDiscard={onDiscard} stageLabels={stageLabels} discardLabel={t('discardAction')}
           />
         </ul>
@@ -4145,7 +4248,8 @@ interface TreeChildrenProps {
   node: DirNode
   depth: number
   active: string | null
-  collapsed: Set<string>
+  /** Read-only: a filtered tree is handed a shared empty set rather than a copy. */
+  collapsed: ReadonlySet<string>
   onToggle: (path: string) => void
   onSelect: (path: string) => void
   /** Add or remove files from the commit set. Undefined outside the working-tree
