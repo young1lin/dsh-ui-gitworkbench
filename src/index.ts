@@ -64,6 +64,7 @@ import {
   type DiscardEffect, type DiscardPlan,
 } from './discard-ops.js'
 import { removePathInside } from './fs-remove.js'
+import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP } from './side-guard.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -92,10 +93,6 @@ const BINARY_SNIFF_BYTES = 8_000
 /** Context radius that makes `git diff` emit ONE hunk covering the whole file —
  *  the artifact the side-by-side view aligns its two columns on. */
 const FULL_CONTEXT = 1_000_000
-/** Past either of these the side-by-side view declines the file: a 2 MB patch
- *  per click is not a reasonable wire payload and the row DOM would be enormous. */
-const SIDE_LINE_CAP = 20_000
-const SIDE_BYTE_CAP = 2_000_000
 /** Untracked files measured at once. Enough to keep the disk busy, few enough
  *  that a repository with thousands of them cannot exhaust the file table. */
 const UNTRACKED_READ_CONCURRENCY = 16
@@ -520,10 +517,11 @@ export class GitWorkbenchService extends TypertRemoteService {
   /** The unstaged layer: diff index→worktree, target = the working-tree file. */
   private async unstagedSides(cwd: string, path: string, signal: AbortSignal): Promise<FileSides> {
     // Size guard first, off the stat rather than a read: declining a file past
-    // the cap must not mean loading a pathological one whole first.
+    // the cap must not mean loading a pathological one whole first. Bytes are
+    // all a stat knows; the line half of the guard needs the read below.
     try {
       const info = await stat(join(cwd, path))
-      if (info.isFile() && info.size > SIDE_BYTE_CAP) return { ...emptySides(), tooLarge: true }
+      if (info.isFile() && targetTooLarge(info.size, 0)) return { ...emptySides(), tooLarge: true }
     } catch {
       // Missing file: deleted in the working tree, which the diff below states.
     }
@@ -536,7 +534,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (bytes !== null && isBinaryPrefix(bytes, BINARY_SNIFF_BYTES)) {
       return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
     }
-    if (bytes !== null && countBufferLines(bytes) > SIDE_LINE_CAP) {
+    if (bytes !== null && targetTooLarge(bytes.length, countBufferLines(bytes))) {
       return { ...emptySides(), tooLarge: true }
     }
     let diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
@@ -546,6 +544,11 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
       diff = await untrackedSegment(cwd, path, SIDE_BYTE_CAP) ?? ''
     }
+    // The diff half of the guard, AFTER the artifact exists: the target-side
+    // checks above cannot see a worktree-deleted large file (no target to
+    // measure) or a huge left side behind a small target — but the patch text
+    // carries both, and it is the payload being bounded.
+    if (diffTooLarge(diff)) return { ...emptySides(), tooLarge: true }
     return {
       diff,
       diffSha: sha1Hex(diff),
@@ -563,15 +566,22 @@ export class GitWorkbenchService extends TypertRemoteService {
     const shown = await this.git(cwd, ['show', `:${path}`], signal)
     const sha = (await this.git(cwd, ['rev-parse', '--verify', '--quiet', `:${path}`], signal)).stdout.trim()
     const targetText = shown.exitCode === 0 ? shown.stdout : ''
-    if (targetText.length > 0 && isBinaryPrefix(Buffer.from(targetText, 'utf8'), BINARY_SNIFF_BYTES)) {
+    const targetBytes = Buffer.from(targetText, 'utf8')
+    if (targetText.length > 0 && isBinaryPrefix(targetBytes, BINARY_SNIFF_BYTES)) {
       return { ...emptySides(), binary: true, targetSha: sha }
     }
-    if (Buffer.byteLength(targetText, 'utf8') > SIDE_BYTE_CAP || countBufferLines(Buffer.from(targetText, 'utf8')) > SIDE_LINE_CAP) {
+    if (targetTooLarge(targetBytes.length, countBufferLines(targetBytes))) {
       return { ...emptySides(), tooLarge: true, targetSha: sha }
     }
     const diff = (await this.git(cwd, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
     if (binaryDiffOutput(diff)) {
       return { ...emptySides(), binary: true, targetSha: sha }
+    }
+    // Same reasoning as the unstaged layer's post-diff check: a huge HEAD side
+    // behind a small index target passes the target guard while the patch
+    // still carries the whole old file.
+    if (diffTooLarge(diff)) {
+      return { ...emptySides(), tooLarge: true, targetSha: sha }
     }
     return {
       diff,
