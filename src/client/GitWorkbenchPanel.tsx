@@ -59,8 +59,9 @@ import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockLines, blockTally, type SideCell, type SideRow } from './side-rows.ts'
 import {
-  applySaveOk, applySides, armEdit, DISARMED, editableSides, gateLeave, isDirty, markConflict, reloadSides, resetSides,
-  type EditState, type WriteResult,
+  applySaveOk, applySides, armEdit, DISARMED, editableSides, gateLeave, isDirty,
+  LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
+  type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
@@ -1655,33 +1656,47 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   // The side pane's dirty flag, reported upward: every gesture that would
   // drop the editor's buffer asks before it acts, and the layer tab is only
   // the rarest of them — clicking another file in the tree is this pane's
-  // PRIMARY navigation. One decision (gateLeave, in side-edit.ts) covers all
-  // of them; the deferred action sits in state until the dialog answers.
-  const [sideDirty, setSideDirty] = useState(false)
+  // PRIMARY navigation. The guard is the little state machine in
+  // side-edit.ts (gateLeave / leaveAsked / leaveAnswered / paneDirtyReport);
+  // the PANE is the dirty flag's only writer, so the drawer never guesses
+  // it — clearing the flag on a confirmed Leave is what let a no-op gesture
+  // (the already-active tab, the already-shown file's row) disarm the guard
+  // for every gesture after it.
+  const [leaveGuard, setLeaveGuard] = useState<LeaveGuard>(LEAVE_GUARD_CLEAR)
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
-  const onSideDirty = useCallback((dirty: boolean): void => { setSideDirty(dirty) }, [])
-  const guardLeave = (act: () => void): void => {
-    const gate = gateLeave(sideDirty, pendingLeave !== null)
-    if (gate.kind === 'run') {
-      act()
+  const onSideDirty = useCallback((dirty: boolean): void => {
+    setLeaveGuard(prev => paneDirtyReport(prev, dirty))
+  }, [])
+  const guardLeave = (act: () => void, same: boolean): void => {
+    const gate = gateLeave(leaveGuard, same)
+    if (gate.kind === 'wait') return
+    if (gate.kind === 'ask') {
+      setPendingLeave(() => act)
+      setLeaveGuard(leaveAsked)
       return
     }
-    if (gate.kind === 'wait') return
-    setPendingLeave(() => act)
+    act()
+  }
+  const settleLeaveAsk = (): void => {
+    setPendingLeave(null)
+    setLeaveGuard(leaveAnswered)
   }
   const confirmDrawerLeave = (): void => {
     const act = pendingLeave
     if (act === null) return
-    // Leaving drops the buffer by definition: the flag goes down with the
-    // action, not whenever the pane gets around to reporting again.
-    setPendingLeave(null)
-    setSideDirty(false)
+    // Leave closes the ask and runs the gesture; the flag keeps the pane's
+    // last report. A real navigation's reset reports clean on its own; a
+    // no-op gesture never should have prompted, and its Leave leaves the
+    // guard armed.
+    settleLeaveAsk()
     act()
   }
-  const closeDrawer = (): void => guardLeave(onClose)
-  const leaveTab = (next: Tab): void => guardLeave(() => onSwitchTab(next))
-
-  const selectAndReveal = (path: string): void => guardLeave(() => onSelect(path))
+  const closeDrawer = (): void => guardLeave(onClose, false)
+  const leaveTab = (next: Tab): void => guardLeave(() => onSwitchTab(next), next === tab)
+  // `active`, not `selected`: the pane's identity is the file it SHOWS, and
+  // the preferred-file fallback can leave `selected` naming a file the pane
+  // is not rendering — the row that changes nothing is the shown file's.
+  const selectAndReveal = (path: string): void => guardLeave(() => onSelect(path), path === active)
 
   /**
    * Roll-back, in two steps that are deliberately not one.
@@ -2105,7 +2120,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           <LeaveEditsConfirm
             t={t}
             path={active ?? ''}
-            onCancel={() => { setPendingLeave(null) }}
+            onCancel={settleLeaveAsk}
             onConfirm={confirmDrawerLeave}
           />
         ) : null}

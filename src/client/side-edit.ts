@@ -132,6 +132,17 @@ export function resetSides(edit: EditState, sides: EditSides): EditState {
   return adopt(false, sides)
 }
 
+/** The drawer-level unsaved-edits guard's state. */
+export interface LeaveGuard {
+  /** The pane's last dirty report — the pane is this flag's only writer. */
+  readonly dirty: boolean
+  /** Whether the unsaved-edits dialog is holding a deferred gesture. */
+  readonly askOpen: boolean
+}
+
+/** No edits, no open ask: the guard at rest. */
+export const LEAVE_GUARD_CLEAR: LeaveGuard = { dirty: false, askOpen: false }
+
 /** What a gesture that would drop the editor's surface should do. */
 export type LeaveGate = { readonly kind: 'run' } | { readonly kind: 'ask' } | { readonly kind: 'wait' }
 
@@ -139,16 +150,45 @@ export type LeaveGate = { readonly kind: 'run' } | { readonly kind: 'ask' } | { 
  * Decide a leave gesture — a layer tab, a file selection, the drawer's close,
  * a main-tab switch — against unsaved edits.
  *
- * Every one of these drops the buffer, and the layer tab is the rarest of
- * them: clicking another file in the tree is this pane's primary navigation,
- * so the guard lives here, once, rather than per call site. `run` acts now;
- * `ask` opens the unsaved-edits dialog (Stay keeps editing, Leave drops);
- * `wait` does nothing because an ask is already open — a second gesture
- * waits on the first's answer rather than stacking a dialog on it.
+ * `same` names a gesture whose target is what the pane already shows: the
+ * already-active tab, the tree row of the file already rendered. Such a
+ * gesture changes nothing the pane renders and discards nothing, so it runs
+ * without asking — a dialog over it would promise "switching discards your
+ * edits" and then discard nothing, and a Leave answer on it used to disarm
+ * the guard entirely. For a real target: `run` acts now, `ask` opens the
+ * unsaved-edits dialog (Stay keeps editing, Leave drops), `wait` does
+ * nothing because an ask is already open — a second gesture waits on the
+ * first's answer rather than stacking a dialog on it.
  */
-export function gateLeave(dirty: boolean, promptOpen: boolean): LeaveGate {
-  if (!dirty) return { kind: 'run' }
-  return promptOpen ? { kind: 'wait' } : { kind: 'ask' }
+export function gateLeave(guard: LeaveGuard, same: boolean): LeaveGate {
+  if (same) return { kind: 'run' }
+  if (!guard.dirty) return { kind: 'run' }
+  return guard.askOpen ? { kind: 'wait' } : { kind: 'ask' }
+}
+
+/** An ask opened: the gesture is held for the dialog's answer. */
+export function leaveAsked(guard: LeaveGuard): LeaveGuard {
+  return { ...guard, askOpen: true }
+}
+
+/**
+ * The dialog answered — Leave or Stay, both close the ask — and the dirty
+ * flag is deliberately NOT touched.
+ *
+ * The pane is the flag's only writer: a genuine navigation routes through
+ * `resetSides`, whose clean transition is what reports false, while a no-op
+ * gesture leaves the pane armed and dirty and the guard correctly still
+ * armed for the next one. Clearing the flag here — on the guess that "Leave
+ * means the buffer went away" — is exactly what let a Leave confirmed on a
+ * no-op gesture disarm the guard for every gesture after it.
+ */
+export function leaveAnswered(guard: LeaveGuard): LeaveGuard {
+  return { ...guard, askOpen: false }
+}
+
+/** The pane reports its dirty flag — the one transition that writes it. */
+export function paneDirtyReport(guard: LeaveGuard, dirty: boolean): LeaveGuard {
+  return { ...guard, dirty }
 }
 
 /**

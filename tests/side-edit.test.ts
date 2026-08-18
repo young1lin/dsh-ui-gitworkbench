@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  DISARMED, applySaveOk, applySides, armEdit, editableSides, gateLeave, isDirty, markConflict, reloadSides, resetSides,
+  DISARMED, LEAVE_GUARD_CLEAR, applySaveOk, applySides, armEdit, editableSides, gateLeave,
+  isDirty, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
 } from '../src/client/side-edit.ts'
 
 const SIDES_V1 = { targetText: 'one\ntwo\n', targetSha: 'sha-v1', binary: false, tooLarge: false } as const
@@ -171,15 +172,55 @@ describe('gateLeave — what a leave gesture does with unsaved edits', () => {
   // main tab) all ask through the same dialog; this is the one decision they
   // share, lifted where vitest can drive it.
   it('runs the gesture when the buffer is clean', () => {
-    expect(gateLeave(false, false)).toEqual({ kind: 'run' })
-    expect(gateLeave(false, true)).toEqual({ kind: 'run' })
+    expect(gateLeave(LEAVE_GUARD_CLEAR, false)).toEqual({ kind: 'run' })
+    expect(gateLeave({ dirty: false, askOpen: true }, false)).toEqual({ kind: 'run' })
   })
 
   it('asks first when there are unsaved edits', () => {
-    expect(gateLeave(true, false)).toEqual({ kind: 'ask' })
+    expect(gateLeave({ dirty: true, askOpen: false }, false)).toEqual({ kind: 'ask' })
   })
 
   it('waits when an ask is already open — gestures do not stack on it', () => {
-    expect(gateLeave(true, true)).toEqual({ kind: 'wait' })
+    expect(gateLeave({ dirty: true, askOpen: true }, false)).toEqual({ kind: 'wait' })
+  })
+
+  it('runs a gesture whose target is what the pane already shows, without asking', () => {
+    // The already-active tab, the tree row of the file already rendered:
+    // such a gesture discards nothing, and a dialog promising "switching
+    // discards your edits" over it would be promising a lie.
+    expect(gateLeave({ dirty: true, askOpen: false }, true)).toEqual({ kind: 'run' })
+    expect(gateLeave({ dirty: true, askOpen: true }, true)).toEqual({ kind: 'run' })
+  })
+})
+
+describe('leaveAnswered — the dialog answered, Leave or Stay', () => {
+  it('closes the ask and does not touch the dirty flag', () => {
+    // The pane is the flag's only writer. Clearing it here — on the guess
+    // that "Leave means the buffer went away" — is what let a Leave on a
+    // no-op gesture (the dialog ran, the navigation was a no-op, the pane
+    // stayed armed and dirty) disarm the guard for every later gesture.
+    expect(leaveAnswered({ dirty: true, askOpen: true })).toEqual({ dirty: true, askOpen: false })
+    expect(leaveAnswered({ dirty: false, askOpen: true })).toEqual({ dirty: false, askOpen: false })
+  })
+
+  it('keeps the guard armed after a Leave on a no-op gesture', () => {
+    // The round-2 regression, stated as the sequence: dirty buffer, a
+    // no-op gesture runs (no dialog), a DIFFERENT gesture still asks.
+    const dirty = paneDirtyReport(LEAVE_GUARD_CLEAR, true)
+    expect(gateLeave(dirty, true)).toEqual({ kind: 'run' })
+    expect(gateLeave(leaveAnswered(leaveAsked(dirty)), false)).toEqual({ kind: 'ask' })
+  })
+
+  it('clears only when the pane itself reports clean', () => {
+    // A genuine navigation resets the pane (resetSides), whose clean
+    // transition is the report that opens the guard again.
+    const navigated = paneDirtyReport(leaveAnswered(leaveAsked(paneDirtyReport(LEAVE_GUARD_CLEAR, true))), false)
+    expect(navigated).toEqual({ dirty: false, askOpen: false })
+    expect(gateLeave(navigated, false)).toEqual({ kind: 'run' })
+  })
+
+  it('leaveAsked opens the ask; paneDirtyReport reports without closing one', () => {
+    expect(leaveAsked({ dirty: true, askOpen: false })).toEqual({ dirty: true, askOpen: true })
+    expect(paneDirtyReport({ dirty: true, askOpen: true }, true)).toEqual({ dirty: true, askOpen: true })
   })
 })
