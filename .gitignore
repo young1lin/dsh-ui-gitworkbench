@@ -33,3 +33,4 @@ scripts/llm_smoke.py
 # Python virtualenv (uv / venv) -- machine-specific, never commit
 .venv/
 scripts/verify_turn_refresh.py
+scripts/verify_history_feature.py
