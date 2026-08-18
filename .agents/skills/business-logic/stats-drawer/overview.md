@@ -21,7 +21,7 @@
 |---|---|
 | `gitWorkbench/stats` | 工作区 vs HEAD 全景（`git diff HEAD` + untracked 合成段） |
 | `gitWorkbench/fileDiff` | 单文件按需 diff（tracked: `git diff HEAD --`；untracked: 宿主 readFile 合成） |
-| `gitWorkbench/commits` / `commitStats` / `compareRefs` | 历史翻页（--topo-order）/ 单提交视图 / 两分支对比 |
+| `gitWorkbench/commits` / `commitStats` / `compareRefs` | 历史翻页（--topo-order，LOG_FORMAT 带 `%an`/`%cn`/`%cI`：行内作者、悬浮卡精确日期（浏览器本地时区））；IDEA 式过滤**下推 git log**（`src/log-filter.ts` 编译 `--author/-i/-E/--grep/--since/--until/pathspec`；**裸 yyyy-mm-dd 展开成 T00:00:00/T23:59:59**——git 对裸日期的时区解析在 Windows 会掉当天提交；语法解析在 `src/client/log-filter-query.ts`，漏斗弹层=**分区页签**（用户 N/日期/路径 N，恒定高度）：作者多选（`authors` RPC，shortlog **跟当前 ref**）+日期预设+**自绘日历**（`calendar.ts` 纯函数网格）+路径目录树**含文件叶子**与扁平搜索（`repoTree` RPC、`searchPaths` 纯函数））——过滤后的页仍是单次连续游走，车道图常驻；ref 选择器支持 `--all` 全部分支（哨兵，宿主/客户端各一份字面量）；git 失败透 `error` 字段（§6.13）；单提交视图 / 两分支对比 |
 | `gitWorkbench/styleGet` / `styleSet` | 背景/CSS 两作用域读写 |
 
 ## Core Flow

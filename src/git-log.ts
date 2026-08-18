@@ -15,6 +15,20 @@ export interface GitCommit {
   readonly when: string
   readonly body: string
   /**
+   * Author name (`%an`) — who wrote the change. The history filter matches it.
+   */
+  readonly authorName: string
+  /**
+   * Committer name (`%cn`) — who applied it. Equals the author in most repos;
+   * differs on rebases, cherry-picks and patches applied by a maintainer.
+   */
+  readonly committerName: string
+  /**
+   * Committer date as strict ISO 8601 (`%cI`) — the exact moment, same clock
+   * `when` summarizes. Rendered client-side in the viewer's own timezone.
+   */
+  readonly dateIso: string
+  /**
    * Abbreviated parent hashes, in git's order — first parent first. This is the
    * DAG: the commit graph is drawn from nothing else. Empty for a root commit.
    */
@@ -27,13 +41,14 @@ export interface GitCommit {
 }
 
 /**
- * Pretty format: RS, hash, when, subject, parents, refs, body.
+ * Pretty format: RS, hash, when, subject, parents, refs, author, committer,
+ * ISO date, body.
  *
  * `body` stays last because it is the only field that may contain newlines;
- * anything after it would have to survive them. Parents (`%p`) and refs (`%D`)
- * are single-line by construction.
+ * anything after it would have to survive them. Parents (`%p`), refs (`%D`),
+ * names (`%an`, `%cn`) and the ISO date (`%cI`) are single-line by construction.
  */
-export const LOG_FORMAT = '%x1e%h%x1f%cr%x1f%s%x1f%p%x1f%D%x1f%b'
+export const LOG_FORMAT = '%x1e%h%x1f%cr%x1f%s%x1f%p%x1f%D%x1f%an%x1f%cn%x1f%cI%x1f%b'
 
 /**
  * Split `%D` into plain ref names.
@@ -76,8 +91,11 @@ export function parseLog(stdout: string): GitCommit[] {
     const subject = (parts[2] ?? '').replace(/\n+$/g, '')
     const parents = (parts[3] ?? '').trim().split(/\s+/).filter(part => part.length > 0)
     const refs = parseRefs(parts[4] ?? '')
-    const body = (parts[5] ?? '').replace(/^\n+/, '').replace(/\n+$/g, '')
-    if (hash.length > 0) out.push({ hash, subject, when, body, parents, refs })
+    const authorName = parts[5] ?? ''
+    const committerName = parts[6] ?? ''
+    const dateIso = parts[7] ?? ''
+    const body = (parts[8] ?? '').replace(/^\n+/, '').replace(/\n+$/g, '')
+    if (hash.length > 0) out.push({ hash, subject, when, body, authorName, committerName, dateIso, parents, refs })
   }
   return out
 }

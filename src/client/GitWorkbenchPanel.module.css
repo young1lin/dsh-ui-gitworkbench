@@ -726,6 +726,239 @@
 }
 .commitPopTop { display: flex; align-items: center; gap: 8px; }
 .commitPopTop .commitWhen { margin-right: auto; }
+/* Author / committer / exact date — the precise answers the row's summary
+   ("3 weeks ago") deliberately defers to the hover card. */
+.commitPopMeta {
+  display: flex; flex-direction: column; gap: 2px;
+  color: var(--gs-fg-muted);
+  font-size: var(--gs-t-dense); line-height: 16px;
+}
+/* The filter box in the history pane head — it flexes to fill the head beside
+   the title (the funnel button is flex:none), so a wide pane gets a wide box
+   and a narrow pane still leaves room to type. */
+.commitFilter {
+  flex: 1 1 auto; min-width: 120px;
+  height: var(--gs-h-control); box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.commitFilter:focus { border-color: var(--gs-accent); }
+.commitFilter::placeholder { color: var(--gs-fg-faint); }
+/* Active criteria under the head: one removable chip each, grammar tokens as
+   their own labels — the chip IS the query it would take to retype it. */
+.filterChips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.filterChip {
+  display: inline-flex; align-items: center; gap: 2px;
+  max-width: 220px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-surface-2);
+  font-size: var(--gs-t-dense); line-height: 18px;
+}
+.filterChipLabel {
+  padding: 2px 4px 2px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gs-fg-muted);
+}
+.filterChipRemove {
+  flex: none;
+  padding: 0 6px;
+  border: none; border-left: 1px solid var(--gs-border-soft);
+  background: transparent; color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 20px;
+  cursor: pointer;
+}
+.filterChipRemove:hover { color: var(--gs-danger, var(--gs-fg)); }
+.filterClear {
+  border: none; background: transparent;
+  padding: 2px 4px;
+  color: var(--gs-fg-faint);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 18px;
+  cursor: pointer;
+}
+.filterClear:hover { color: var(--gs-fg); }
+/* The funnel dropdown — RefPicker's positioning pattern (relative anchor,
+   absolute panel, dismiss-on-outside). Grows leftward: it sits at the pane's
+   right edge. */
+.funnel { position: relative; display: inline-flex; }
+/* The button itself carries no geometry of its own — it joined the shared
+   control vocabulary above (`.btn, .refButton, …`) so it reads as a sibling of
+   every other button in the drawer, not a foreign element. */
+.funnelButton.funnelButtonActive { color: var(--gs-accent); border-color: var(--gs-accent); }
+.funnelPop {
+  position: fixed; z-index: 40;
+  display: flex; flex-direction: column; gap: 6px;
+  width: 300px; max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
+  background: var(--gs-panel);
+  box-shadow: 0 16px 40px var(--gs-shadow);
+  font-size: var(--gs-t-dense);
+}
+.funnelSection { color: var(--gs-fg-faint); padding: 2px 2px 0; }
+/* One section at a time — the panel's height is a property of its design,
+   not of how many authors the repository happens to have. */
+.funnelTabs {
+  display: flex; gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.funnelTab {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid transparent; border-radius: var(--gs-r-pill);
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 16px;
+  cursor: pointer;
+}
+.funnelTab:hover { color: var(--gs-fg); }
+.funnelTab.funnelTabActive {
+  color: var(--gs-accent);
+  border-color: var(--gs-accent);
+  background: var(--gs-accent-bg, transparent);
+}
+.funnelBounds { display: flex; gap: 4px; }
+/* The calendar — modern-grid look in the drawer's own tokens. */
+.cal { display: flex; flex-direction: column; gap: 4px; }
+.calHead { display: flex; align-items: center; gap: 4px; }
+.calTitle {
+  flex: 1; text-align: center;
+  color: var(--gs-fg-muted);
+  font-size: var(--gs-t-dense); line-height: 20px;
+}
+.calNav {
+  flex: none;
+  width: 22px; height: 20px; padding: 0;
+  border: none; background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-ui);
+  cursor: pointer;
+}
+.calNav:hover { color: var(--gs-fg); }
+.calWeek, .calGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.calWeek span {
+  text-align: center;
+  color: var(--gs-fg-faint);
+  font-size: 10px; line-height: 14px;
+}
+.calGrid button {
+  height: 26px;
+  border: none; border-radius: var(--gs-r-control);
+  background: transparent;
+  color: var(--gs-fg-muted);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  cursor: pointer;
+}
+.calGrid button:hover { background: var(--gs-raise); color: var(--gs-fg); }
+.calGrid button.calOut { color: var(--gs-fg-faint); }
+.calGrid button.calToday { color: var(--gs-accent); font-weight: 600; }
+.calGrid button.calMark {
+  background: var(--gs-accent-bg, var(--gs-raise));
+  color: var(--gs-accent);
+  box-shadow: inset 0 0 0 1px var(--gs-accent);
+}
+.funnelBoundRows { display: flex; flex-direction: column; gap: 2px; }
+.funnelBoundRow {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--gs-fg-muted);
+  font-size: var(--gs-t-dense); line-height: 18px;
+}
+.funnelBoundClear {
+  flex: none;
+  padding: 0 4px;
+  border: none; background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  cursor: pointer;
+}
+.funnelBoundClear:hover { color: var(--gs-danger, var(--gs-fg)); }
+.funnelSearch {
+  padding: 5px 8px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.funnelSearch:focus { border-color: var(--gs-accent); }
+.funnelList {
+  max-height: 240px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.funnelRow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--gs-r-control);
+}
+.funnelRow:hover { background: var(--gs-raise); }
+.funnelRow input[type='checkbox'] { accent-color: var(--gs-accent); flex: none; }
+/* Tree chrome in the drawer's own visual language: children hang on an
+   indent rail, directories fold with the chevron the file tree uses, and a
+   file is a tiny CSS document — no emoji, no imported icon font. */
+.pathNode { display: flex; flex-direction: column; }
+.pathChildren {
+  display: flex; flex-direction: column;
+  margin-left: 9px;
+  border-left: 1px solid var(--gs-border-soft);
+  padding-left: 4px;
+}
+.pathFileGlyph {
+  flex: none;
+  width: 10px; height: 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--gs-fg-faint);
+  border-radius: 1px 1px 1px 3px;
+  margin: 0 2px;
+}
+.pathFileGlyph::after {
+  content: '';
+  display: block;
+  width: 4px; height: 1px;
+  margin: 2px 0 0 2px;
+  background: var(--gs-border);
+  box-shadow: 0 2px 0 var(--gs-border), 0 4px 0 var(--gs-border);
+}
+.pathDirGlyph {
+  flex: none;
+  width: 14px; height: 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--gs-fg-faint);
+  border-radius: 1px;
+  background: var(--gs-raise);
+}
+.funnelName {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gs-fg-muted);
+}
+.funnelCount { flex: none; color: var(--gs-fg-faint); }
+.funnelMore { color: var(--gs-fg-faint); padding: 4px 2px; }
+.funnelChevron {
+  flex: none;
+  width: 14px; padding: 0;
+  border: none; background: transparent;
+  color: var(--gs-fg-faint);
+  font-family: inherit; font-size: 9px; line-height: 16px;
+  cursor: pointer;
+}
+.funnelChevron:disabled { cursor: default; }
+.funnelPresets { display: flex; gap: 6px; }
+.funnelPreset { flex: none; }
+.funnelPresetActive { color: var(--gs-accent); border-color: var(--gs-accent); }
+
 .commitPopSubject {
   color: var(--gs-fg);
   font-size: var(--gs-t-ui); font-weight: 600; line-height: 18px;
@@ -954,6 +1187,13 @@
   font-size: var(--gs-t-meta); line-height: 15px;
 }
 .commitWhen { flex: none; color: var(--gs-fg-faint); }
+/* Who wrote it — sits between hash and relative time, capped so a long name
+   cannot evict the time from the row. */
+.commitAuthor {
+  flex: none; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gs-fg-dim);
+}
 
 .body { display: flex; flex: 1; min-height: 0; z-index: 1; }
 
@@ -1212,7 +1452,7 @@
 }
 .syncLevel { color: var(--gs-fg-faint); }
 .syncSpacer { flex: 1 1 auto; }
-.btn:disabled, .treeIcon:disabled, .miniBtn:disabled, .refButton:disabled {
+.btn:disabled, .treeIcon:disabled, .miniBtn:disabled, .refButton:disabled, .funnelButton:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -1359,7 +1599,7 @@
  * its own padding, radius and font-size, and the same "small secondary button"
  * had drifted to four heights and three radii across one screen.
  */
-.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton {
+.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   box-sizing: border-box;
   flex: none;
@@ -1377,7 +1617,7 @@
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .btn:hover, .miniBtn:hover, .treeIcon:hover, .commitCopy:hover,
-.scopeBtn:hover, .refButton:hover {
+.scopeBtn:hover, .refButton:hover, .funnelButton:hover {
   background: var(--gs-raise);
   color: var(--gs-fg);
   border-color: var(--gs-fg-fainter);

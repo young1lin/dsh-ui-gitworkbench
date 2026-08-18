@@ -25,6 +25,10 @@ export type WorkbenchKey =
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
+  | 'commitAuthor' | 'commitCommitter' | 'commitDate' | 'historyFilterPlaceholder' | 'historyNoMatch'
+  | 'filterClearAll' | 'filterBy' | 'filterUsers' | 'filterUserSearch' | 'filterAuthorsMore'
+  | 'filterDate' | 'filterToday' | 'filterLast7' | 'filterLast30' | 'filterAfter' | 'filterBefore'
+  | 'filterPaths' | 'filterPathsMore' | 'allBranches' | 'filterPathSearch'
   | 'compareBase' | 'compareHead' | 'comparePick' | 'compareCommits' | 'loadingCompare' | 'noBranches'
   | 'refSearch' | 'refNone' | 'refCount' | 'refTruncated' | 'refWorktrees' | 'refBranches' | 'historyRefLabel'
   | 'settings' | 'themeMode' | 'themePalette' | 'themeScope' | 'themeBackground' | 'themeCss'
@@ -112,6 +116,26 @@ export const zh: Record<WorkbenchKey, string> = {
   noTextDiff: '无文本差异',
   noCommits: '无提交历史',
   historyLabel: '提交历史',
+  commitAuthor: '作者',
+  commitCommitter: '提交者',
+  commitDate: '提交时间',
+  historyFilterPlaceholder: '筛选：user: 名字 / path: 路径 / after: 日期 / 关键词',
+  historyNoMatch: '没有匹配的提交',
+  filterClearAll: '清除全部',
+  filterBy: '筛选条件',
+  filterUsers: '用户',
+  filterUserSearch: '搜索作者',
+  filterAuthorsMore: '仅显示提交最多的 500 位作者',
+  filterDate: '日期',
+  filterToday: '今天',
+  filterLast7: '最近 7 天',
+  filterLast30: '最近 30 天',
+  filterAfter: '之后',
+  filterBefore: '之前',
+  filterPaths: '路径',
+  filterPathsMore: '文件过多，目录树已截断',
+  filterPathSearch: '搜索文件或目录',
+  allBranches: '全部分支',
   expandAll: '展开全部',
   collapseAll: '收起全部',
   noBranch: '(无分支)',
@@ -224,6 +248,26 @@ export const en: Record<WorkbenchKey, string> = {
   noTextDiff: 'No text changes',
   noCommits: 'No commit history',
   historyLabel: 'Commit history',
+  commitAuthor: 'Author',
+  commitCommitter: 'Committer',
+  commitDate: 'Committed',
+  historyFilterPlaceholder: 'Filter: user: name / path: dir / after: date / text',
+  historyNoMatch: 'No matching commits',
+  filterClearAll: 'Clear all',
+  filterBy: 'Filter by',
+  filterUsers: 'Users',
+  filterUserSearch: 'Search authors',
+  filterAuthorsMore: 'Showing the 500 busiest authors only',
+  filterDate: 'Date',
+  filterToday: 'Today',
+  filterLast7: 'Last 7 days',
+  filterLast30: 'Last 30 days',
+  filterAfter: 'After',
+  filterBefore: 'Before',
+  filterPaths: 'Paths',
+  filterPathsMore: 'Too many files — tree truncated',
+  filterPathSearch: 'Search files or folders',
+  allBranches: 'All branches',
   expandAll: 'Expand all',
   collapseAll: 'Collapse all',
   noBranch: '(no branch)',

@@ -23,6 +23,8 @@ import {
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
+import type { LogFilter } from '../log-filter.ts'
+import type { AuthorEntry } from '../shortlog.ts'
 import { en, zh } from './locales.ts'
 
 /**
@@ -91,14 +93,35 @@ export function apply(ctx: ClientContext): void {
           return result.ok ? result.value : null
         },
         // One page of the commit log past what `stats` bundles, so the history
-        // list can grow instead of stopping at the first page.
-        fetchCommits: async (worktreePath: string | undefined, ref: string, skip: number, limit: number, signal: AbortSignal): Promise<{ commits: GitCommit[]; hasMore: boolean } | null> => {
+        // list can grow instead of stopping at the first page. The filter is
+        // compiled into git log arguments host-side (IDEA-style pushdown).
+        fetchCommits: async (worktreePath: string | undefined, ref: string, skip: number, limit: number, filter: LogFilter, signal: AbortSignal): Promise<{ commits: GitCommit[]; hasMore: boolean } | null> => {
           const result = await connection.rpc.call(
             '/api',
             'gitWorkbench/commits',
-            { args: { worktreePath: worktreePath ?? '', ref, skip, limit } },
+            { args: { worktreePath: worktreePath ?? '', ref, skip, limit, filter } },
             signal,
-          ) as { ok: true; value: { commits: GitCommit[]; hasMore: boolean } } | { ok: false; error: { message?: string } }
+          ) as { ok: true; value: { commits: GitCommit[]; hasMore: boolean; error?: string } } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // Author roster for the ref the history walks, busiest first.
+        fetchAuthors: async (worktreePath: string | undefined, ref: string, signal: AbortSignal): Promise<{ authors: AuthorEntry[]; truncated: boolean } | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/authors',
+            { args: { worktreePath: worktreePath ?? '', ref } },
+            signal,
+          ) as { ok: true; value: { authors: AuthorEntry[]; truncated: boolean } } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // Every path on HEAD — the path picker's raw material.
+        fetchRepoTree: async (worktreePath: string | undefined, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean } | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/repoTree',
+            { args: { worktreePath: worktreePath ?? '' } },
+            signal,
+          ) as { ok: true; value: { paths: string[]; truncated: boolean } } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
         // Two refs compared as `base...head`, in the same shape as every other

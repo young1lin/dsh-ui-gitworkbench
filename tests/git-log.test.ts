@@ -4,20 +4,35 @@ import { commitMessageText, parseLog } from '../src/git-log.ts'
 const RS = '\x1e'
 const US = '\x1f'
 
-/** One LOG_FORMAT record: hash, when, subject, parents, refs, body. */
-function record(hash: string, when: string, subject: string, parents = '', refs = '', body = ''): string {
-  return [RS, hash, US, when, US, subject, US, parents, US, refs, US, body].join('')
+/** One LOG_FORMAT record: hash, when, subject, parents, refs, author, committer, date, body. */
+function record(
+  hash: string, when: string, subject: string, parents = '', refs = '',
+  author = '', committer = '', dateIso = '', body = '',
+): string {
+  return [RS, hash, US, when, US, subject, US, parents, US, refs, US, author, US, committer, US, dateIso, US, body].join('')
 }
 
 describe('parseLog', () => {
   it('reads a one-line subject with an empty body', () => {
-    const commits = parseLog(record('33c7e30', '3 hours ago', 'chore: store README', 'bad6090'))
+    const commits = parseLog(record('33c7e30', '3 hours ago', 'chore: store README', 'bad6090', '', 'liam', 'liam', '2026-08-18T01:00:00+08:00'))
     expect(commits).toEqual([
       {
         hash: '33c7e30', when: '3 hours ago', subject: 'chore: store README',
-        body: '', parents: ['bad6090'], refs: [],
+        body: '', authorName: 'liam', committerName: 'liam', dateIso: '2026-08-18T01:00:00+08:00',
+        parents: ['bad6090'], refs: [],
       },
     ])
+  })
+
+  it('reads author and committer separately, and the exact ISO date', () => {
+    // Rebase/cherry-pick shape: written by one person, applied by another.
+    const commits = parseLog(record(
+      'abc1234', '2 weeks ago', 'fix: upstream patch', 'def5678', '',
+      'Richard <nope emails are not fetched>', 'liam', '2026-08-04T09:30:12Z',
+    ))
+    expect(commits[0]!.authorName).toBe('Richard <nope emails are not fetched>')
+    expect(commits[0]!.committerName).toBe('liam')
+    expect(commits[0]!.dateIso).toBe('2026-08-04T09:30:12Z')
   })
 
   it('keeps a multi-line body inside one record', () => {
@@ -25,7 +40,7 @@ describe('parseLog', () => {
       record(
         'abc1234', 'yesterday',
         'docs(worktree): align spec bundle size with final-HEAD regression run',
-        'def5678', '',
+        'def5678', '', 'liam', 'liam', '2026-08-17T09:00:00+08:00',
         '\nThe fixture grew past the cap after the README landed.\n\nKeep the bundle\nunder the limit.\n',
       ),
       record('def5678', '2 days ago', 'fix: i18n', '0000000'),
@@ -75,12 +90,16 @@ describe('parseLog', () => {
 
 describe('commitMessageText', () => {
   it('is just the subject when there is no body', () => {
-    expect(commitMessageText({ hash: 'a', subject: 'one line', when: '', body: '' })).toBe('one line')
+    expect(commitMessageText({
+      hash: 'a', subject: 'one line', when: '', body: '',
+      authorName: '', committerName: '', dateIso: '',
+    })).toBe('one line')
   })
 
   it('joins subject and body with a blank line', () => {
     expect(commitMessageText({
       hash: 'a', subject: 'docs: foo', when: '', body: 'More detail.\nSecond paragraph.',
+      authorName: '', committerName: '', dateIso: '',
     })).toBe('docs: foo\n\nMore detail.\nSecond paragraph.')
   })
 })

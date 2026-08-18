@@ -60,6 +60,8 @@ import {
   type OpFailure, type PullMode, type Tracking,
 } from './git-ops.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
+import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
+import { parseShortlog, type AuthorEntry } from './shortlog.js'
 import {
   isBlankEntry, loadStyle, sanitizeEntry, stylePath,
   type StyleEntry, type StyleFile,
@@ -90,6 +92,12 @@ const HISTORY_COMMITS = 20
 const HISTORY_PAGE = 30
 /** Upper bound on a caller-supplied page size. */
 const HISTORY_PAGE_MAX = 200
+/** Author roster cap: the busiest 500 — enough for any real project's people,
+ *  and a list a popup can scroll without choking. */
+const SHORTLOG_CAP = 500
+/** Path list cap for the picker: a monorepo can outrun any popup; past this
+ *  the tree is cut and the truncation reported, never silent. */
+const TREE_PATH_CAP = 50_000
 /**
  * Most branch names sent to the browser. `worktreeStatus` is polled, so an
  * unbounded list would repeat on the wire every few seconds; the picker reports
@@ -524,16 +532,23 @@ export class GitWorkbenchService extends TypertRemoteService {
    * @param ref - ref to walk; empty means the worktree's own HEAD.
    * @param skip - commits to skip, counting back from the ref.
    * @param limit - page size; out-of-range values fall back to the default page.
+   * @param filter - history filter compiled into git log arguments (IDEA-style
+   *   pushdown: matching runs over ALL history, not the loaded pages). Absent
+   *   from older clients — treated as "no filter".
    * @param signal - abort signal.
    * @returns the page, and whether the log continues past it.
    */
   @Remote('commits')
-  async commits(worktreePath: string, ref: string, skip: number, limit: number, signal: AbortSignal): Promise<{ commits: GitCommit[]; hasMore: boolean }> {
+  async commits(worktreePath: string, ref: string, skip: number, limit: number, filter: LogFilter, signal: AbortSignal): Promise<{ commits: GitCommit[]; hasMore: boolean; error?: string }> {
     const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
-    const target = typeof ref === 'string' && ref.length > 0 ? ref : 'HEAD'
-    if (!isRefName(target)) return { commits: [], hasMore: false }
+    // '--all' is the ALL-BRANCHES sentinel (a ref cannot begin with a dash, so
+    // it collides with nothing): "who did what" must not require knowing which
+    // branch holds it — IDEA's All branches, same idea.
+    const target = ref === '--all' ? '--all' : (typeof ref === 'string' && ref.length > 0 ? ref : 'HEAD')
+    if (target !== '--all' && !isRefName(target)) return { commits: [], hasMore: false }
     const from = Number.isInteger(skip) && skip >= 0 ? skip : 0
     const size = Number.isInteger(limit) && limit > 0 && limit <= HISTORY_PAGE_MAX ? limit : HISTORY_PAGE
+    const effective = filter ?? emptyLogFilter()
     // Reading one row beyond the page answers "is there more" without a second
     // traversal of the log.
     //
@@ -543,13 +558,65 @@ export class GitWorkbenchService extends TypertRemoteService {
     // a dozen unrelated rows, and closes far from where it started. Topological
     // order keeps a branch's commits contiguous — it is what `git log --graph`
     // turns on for itself, for the same reason.
+    //
+    // Filter args go LAST: their segment ends with `--` + pathspecs, and
+    // nothing after that separator may be parsed as a flag.
     const log = await this.git(
       cwd,
-      ['log', target, '--topo-order', `--skip=${from}`, `-${size + 1}`, `--pretty=format:${LOG_FORMAT}`],
+      ['log', target, '--topo-order', `--skip=${from}`, `-${size + 1}`, `--pretty=format:${LOG_FORMAT}`, ...logFilterArgs(effective)],
       signal,
     )
+    // A bad filter (unparsable regex, invalid date) dies here, and an empty
+    // page is indistinguishable from "no match" unless the failure speaks —
+    // §6.13: the exit code + stderr tail is the only honest answer.
+    if (log.exitCode !== 0) {
+      const detail = log.stderr.length > 0 ? `: ${log.stderr.slice(-160)}` : ''
+      return { commits: [], hasMore: false, error: `git log failed (exit ${log.exitCode})${detail}` }
+    }
     const page = parseLog(log.stdout)
     return { commits: page.slice(0, size), hasMore: page.length > size }
+  }
+
+  /**
+   * Every author with commits reachable from a ref, busiest first — the
+   * history filter popup's user picker.
+   *
+   * The roster walks the SAME ref the history list walks (`git shortlog -sne
+   * <ref>`), not `--all`: a picker entry is a promise that ticking it yields
+   * commits in the list below. `--all` once listed authors whose commits live
+   * only on other refs — visible in the menu, invisible to every search.
+   * @param worktreePath - worktree whose object store resolves the ref; empty falls back to the host cwd.
+   * @param ref - ref whose history the roster counts; empty means HEAD.
+   * @param signal - abort signal.
+   */
+  @Remote('authors')
+  async authors(worktreePath: string, ref: string, signal: AbortSignal): Promise<{ authors: AuthorEntry[]; truncated: boolean }> {
+    const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
+    // Same '--all' sentinel as `commits`: when the list walks every ref, the
+    // roster counts every ref — the picker and the list stay one claim.
+    const target = ref === '--all' ? '--all' : (typeof ref === 'string' && ref.length > 0 ? ref : 'HEAD')
+    if (target !== '--all' && !isRefName(target)) return { authors: [], truncated: false }
+    const res = await this.git(cwd, ['shortlog', '-sne', target], signal)
+    return parseShortlog(res.stdout, SHORTLOG_CAP)
+  }
+
+  /**
+   * Every file path on HEAD — the filter popup's path picker, aggregated into
+   * a directory tree client-side.
+   *
+   * `-z` is load-bearing: NUL-separated output is UNQUOTED, while the default
+   * would render non-ASCII names as quoted octal escapes under
+   * `core.quotepath` and hand the picker garbage.
+   * @param worktreePath - worktree whose HEAD is listed; empty falls back to the host cwd.
+   * @param signal - abort signal.
+   */
+  @Remote('repoTree')
+  async repoTree(worktreePath: string, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean }> {
+    const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
+    const res = await this.git(cwd, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], signal)
+    const all = res.stdout.split('\0').filter(path => path.length > 0)
+    const truncated = all.length > TREE_PATH_CAP
+    return { paths: truncated ? all.slice(0, TREE_PATH_CAP) : all, truncated }
   }
 
   /**

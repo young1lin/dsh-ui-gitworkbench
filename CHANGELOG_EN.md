@@ -2,6 +2,31 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.4] - 2026-08-18
+
+### Added
+
+- **History: who, and exactly when.** Rows show the author beside the abbreviated hash; the hover card adds author, committer (only when git recorded someone other than the author — rebases, cherry-picks, maintainer-applied patches), and the exact commit time (`%cI`, rendered in your browser's own timezone — no more "3 weeks ago" as the only answer).
+- **IDEA-style pushdown history filtering**: criteria compile straight into `git log` arguments (`--author` / `--grep` / `--since` / `--until` / pathspecs) and match over **all history** before paging — not just the pages already on screen. A filtered page is still one contiguous walk, so the lane graph stays on. Matching is case-insensitive throughout; literals are regex-escaped (`a.b` matches `a.b`); the text criterion has a regex toggle.
+- **Query-box grammar**: `user:name` (repeatable, OR), `path:dir`, `after:` / `before:` dates (git approxidate — "2 weeks ago" works), bare words match the message; recognized criteria render as removable chips with a one-click *Clear all*; quotes wrap values with spaces.
+- **"Filter by" funnel with section tabs** (Users N / Date • / Paths N — constant height, each tab carries its own active-criteria count):
+  - **Users**: multi-select from `git shortlog` (counts, fuzzy search, busiest 500 with the cap stated) — walking the **current ref**, so everyone listed is findable;
+  - **Date**: presets (Today / Last 7 / Last 30 days) plus a **hand-rolled calendar** (month navigation, today accent, neighbouring-month days, After/Before toggle arming which bound a click lands in, per-bound clear — the native date widget is dated on Windows and the bundle's purity gate forbids libraries; the grid is a pure function styled entirely in theme tokens);
+  - **Paths**: a directory tree **with file leaves** ("when did this file change" in one tick; a directory past 100 files truncates visibly) plus a search box (flat results, files first, case-insensitive over the full path, root-level files included). Ticking is **tri-state checkbox-tree** semantics: a folder tick covers and visibly checks everything under it and absorbs files already ticked inside it (one chip, the folder's); unticking a file under a checked folder cascades out to its siblings; folders show a partial state.
+- **The history ref picker gains "All branches"**: finding what someone did no longer requires knowing which branch holds it; the roster follows.
+- Typing and ticking write the SAME filter (both ways), debounced 300ms, in-flight requests cancelled, criteria changes reset to page 0.
+
+### Fixed
+
+- **Bare-date timezone roulette**: on Windows, git's parse of a bare `--since=2026-08-18` can exclude that very day's commits; the host now expands `yyyy-mm-dd` to the whole day (`T00:00:00` / `T23:59:59`).
+- **A failed log no longer masquerades as "no match"**: an invalid regex or date shows `git log failed (exit N): <stderr>` in the empty state.
+- **The author roster once used `--all` while the list walked one ref**: people visible in the menu could be unmatchable forever (with a Chinese author whose commits all live on other branches this read convincingly as "Chinese filtering is broken" — layer-by-layer probing proved the pattern reaches git intact; branch coverage was the whole story).
+- The funnel button joined the shared button vocabulary (modifier specificity fixed); the filter box fills the pane head.
+
+### Changed
+
+- Person search matches the **author only** (IDEA parity; git has no author-OR-committer pushdown). The committer stays visible in the hover card.
+
 ## [0.1.3] - 2026-08-18
 
 ### Fixed

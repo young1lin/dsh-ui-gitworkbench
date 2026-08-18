@@ -57,6 +57,13 @@ import {
 } from './themes.ts'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
+import { formatCommitDate } from './commit-filter.ts'
+import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
+import { buildDirTree, searchPaths, type DirEntry } from './dir-tree.ts'
+import { addPath, buildIndex, checkedState, isCovered, removePath } from './path-select.ts'
+import { localTodayIso, monthGrid, weekdayLabels } from './calendar.ts'
+import type { LogFilter } from '../log-filter.ts'
+import type { AuthorEntry } from '../shortlog.ts'
 import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
@@ -91,6 +98,12 @@ export interface GitCommit {
   readonly when: string
   /** Everything after the subject. Empty string when the commit has none. */
   readonly body: string
+  /** Author name (`%an`). Optional only because a pre-0.1.4 host half sends none. */
+  readonly authorName?: string
+  /** Committer name (`%cn`); equals the author except on rebases and patches a maintainer applied. */
+  readonly committerName?: string
+  /** Committer date, strict ISO 8601 (`%cI`) — the exact moment `when` summarizes. */
+  readonly dateIso?: string
   /** Abbreviated parent hashes, first parent first — the graph's edges. */
   readonly parents?: readonly string[]
   /** Branch and tag names pointing here, already stripped of git's decoration syntax. */
@@ -205,7 +218,12 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
   readonly fetchCommitStats: (worktreePath: string | undefined, hash: string, signal: AbortSignal) => Promise<WorkbenchStats | null>
-  readonly fetchCommits: (worktreePath: string | undefined, ref: string, skip: number, limit: number, signal: AbortSignal) => Promise<{ commits: GitCommit[]; hasMore: boolean } | null>
+  readonly fetchCommits: (worktreePath: string | undefined, ref: string, skip: number, limit: number, filter: LogFilter, signal: AbortSignal) => Promise<{ commits: GitCommit[]; hasMore: boolean; error?: string } | null>
+  /** Author roster for the filter popup's user picker, busiest first — for the
+   *  ref the history walks, so every listed author actually has commits there. */
+  readonly fetchAuthors: (worktreePath: string | undefined, ref: string, signal: AbortSignal) => Promise<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>
+  /** Every path on HEAD — the path picker's raw material. */
+  readonly fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
   readonly fetchCompare: (worktreePath: string | undefined, base: string, head: string, signal: AbortSignal) => Promise<WorkbenchStats | null>
   readonly fetchStyle: (worktreePath: string | undefined, signal: AbortSignal) => Promise<StyleSettings | null>
   readonly saveStyle: (worktreePath: string | undefined, scope: StyleScope, entry: StyleEntry, signal: AbortSignal) => Promise<{ ok: boolean; error?: string }>
@@ -415,7 +433,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -463,6 +481,25 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   /** First page of the history list in flight — the pane says "loading", not
    *  "no commit history", which is a claim about the repository. */
   const [historyLoading, setHistoryLoading] = useState(false)
+  /** Why the history list is empty when it is git's word, not the log's: a
+   *  bad filter pattern or date, with the stderr tail to say so. */
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  /** The history filter box's raw text. Parsed into the LogFilter the host
+   *  compiles into git log arguments — the funnel popup writes here too: one
+   *  grammar, one filter, however the criterion arrived. */
+  const [historyQuery, setHistoryQuery] = useState('')
+  const historyFilterKey = serializeLogQuery(parseLogQuery(historyQuery))
+  /** Debounced by KEY, not by text: "liam " and "liam" are the same query and
+   *  must not refetch. 300ms is a keystroke's pause, not a page's wait. */
+  const [liveFilterKey, setLiveFilterKey] = useState('')
+  useEffect(() => {
+    const id = window.setTimeout(() => setLiveFilterKey(historyFilterKey), 300)
+    return () => window.clearTimeout(id)
+  }, [historyFilterKey])
+  const liveFilter = useMemo(
+    () => (liveFilterKey.length === 0 ? emptyQueryFilter() : parseLogQuery(liveFilterKey)),
+    [liveFilterKey],
+  )
   const [loadingMore, setLoadingMore] = useState(false)
   /** In-flight marker for paging, read synchronously — see {@link loadMoreCommits}. */
   const loadingRef = useRef(false)
@@ -823,17 +860,19 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     setCommitHash(null)
     setCommitStats(null)
     setHistoryLoading(true)
-    fetchCommits(statsPath, effectiveHistoryRef, 0, HISTORY_PAGE, ctrl.signal)
+    setHistoryError(null)
+    fetchCommits(statsPath, effectiveHistoryRef, 0, HISTORY_PAGE, liveFilter, ctrl.signal)
       .then(page => {
         if (!alive) return
         setHistoryLoading(false)
         if (page === null) return
         setHistoryCommits(page.commits)
         setHistoryHasMore(page.hasMore)
+        setHistoryError(page.error ?? null)
       })
       .catch(() => { if (alive) setHistoryLoading(false) })
     return () => { alive = false; ctrl.abort() }
-  }, [open, statsPath, effectiveHistoryRef, fetchCommits, gen])
+  }, [open, statsPath, effectiveHistoryRef, fetchCommits, gen, liveFilter])
 
   // Never leave the history pane empty: with a list loaded and nothing picked,
   // the newest commit is the selection.
@@ -1152,7 +1191,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     loadingRef.current = true
     setLoadingMore(true)
     const ctrl = new AbortController()
-    fetchCommits(statsPath, effectiveHistoryRef, historyCommits.length, HISTORY_PAGE, ctrl.signal)
+    fetchCommits(statsPath, effectiveHistoryRef, historyCommits.length, HISTORY_PAGE, liveFilter, ctrl.signal)
       .then(page => {
         if (page === null) return
         setHistoryCommits(prev => [...prev, ...page.commits])
@@ -1197,6 +1236,11 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onLoadMoreCommits={loadMoreCommits}
           historyRef={effectiveHistoryRef}
           onHistoryRef={setHistoryRef}
+          historyQuery={historyQuery}
+          onHistoryQuery={setHistoryQuery}
+          historyError={historyError}
+          fetchAuthors={fetchAuthors}
+          fetchRepoTree={fetchRepoTree}
           branches={branches}
           worktreeBranches={worktreeBranches}
           branchesTruncated={branchesTruncated}
@@ -1353,6 +1397,16 @@ interface DrawerProps {
   /** Ref the history list walks. */
   historyRef: string
   onHistoryRef: (ref: string) => void
+  /** The history filter box's text — the single source of the LogFilter both
+   *  the box's grammar and the funnel popup write into. */
+  historyQuery: string
+  onHistoryQuery: (query: string) => void
+  /** git's complaint when the log failed (bad pattern/date), verbatim. */
+  historyError: string | null
+  /** Author roster for the funnel popup's user picker. */
+  fetchAuthors: (worktreePath: string | undefined, ref: string, signal: AbortSignal) => Promise<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>
+  /** Every path on HEAD — the path picker's raw material. */
+  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
   /** Every local branch — the ref pickers' options, worktree or not. */
   branches: readonly string[]
   /** Branches that have a worktree, grouped to the top of every picker. */
@@ -1432,7 +1486,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1684,6 +1738,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               t={t} label={t('historyRefLabel')} value={historyRef}
               branches={branches} worktreeBranches={worktreeBranches} truncated={branchesTruncated}
               onPick={onHistoryRef}
+              allLabel={t('allBranches')}
             />
           </div>
         ) : null}
@@ -1713,6 +1768,13 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 hasMore={hasMoreCommits}
                 loadingMore={loadingMore}
                 onLoadMore={onLoadMoreCommits}
+                query={historyQuery}
+                onQueryChange={onHistoryQuery}
+                error={historyError}
+                statsPath={statsPath}
+                refName={historyRef}
+                fetchAuthors={fetchAuthors}
+                fetchRepoTree={fetchRepoTree}
               />
               <PaneDivider label={t('resizeCommits')} onDrag={paneDrag('commits', commitsRef)} />
             </>
@@ -2260,7 +2322,13 @@ function useDismissable(open: boolean, setOpen: Dispatch<SetStateAction<boolean>
  * checked-out branch is the likeliest thing to want. Enter takes the first
  * match, so a distinctive substring plus Enter reaches any branch in the list.
  */
-function RefPicker({ t, label, value, branches, worktreeBranches, truncated, onPick }: {
+/** Sentinel ref meaning "walk every ref" — same string the host special-cases
+ *  into `--all`. A real ref cannot begin with a dash, so it collides with
+ *  nothing; defined separately on both halves (client bundles import no host
+ *  values), tied by this comment and the probe. */
+const ALL_REFS = '--all'
+
+function RefPicker({ t, label, value, branches, worktreeBranches, truncated, onPick, allLabel }: {
   t: Translate
   label: string
   value: string
@@ -2270,6 +2338,10 @@ function RefPicker({ t, label, value, branches, worktreeBranches, truncated, onP
   /** Whether the host cut the branch list short. */
   truncated: boolean
   onPick: (ref: string) => void
+  /** When set, an "all branches" entry is offered above the list and shown for
+   *  the {@link ALL_REFS} sentinel — the history picker's answer to "search
+   *  must not require knowing which branch holds the commit". */
+  allLabel?: string
 }): ReactNode {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -2312,7 +2384,7 @@ function RefPicker({ t, label, value, branches, worktreeBranches, truncated, onP
         title={value.length > 0 ? value : undefined}
         onClick={() => setOpen(isOpen => !isOpen)}
       >
-        <Elided text={value.length > 0 ? value : '—'} className={css.refValue} />
+        <Elided text={value === ALL_REFS && allLabel !== undefined ? allLabel : (value.length > 0 ? value : '—')} className={css.refValue} />
         <span className={css.refCaret}>▾</span>
       </button>
       {open ? (
@@ -2326,11 +2398,24 @@ function RefPicker({ t, label, value, branches, worktreeBranches, truncated, onP
             onKeyDown={event => { if (event.key === 'Enter' && first !== undefined) choose(first) }}
           />
           <div className={css.refList} role="listbox" aria-label={label}>
+            {allLabel !== undefined && (needle.length === 0 || allLabel.toLowerCase().includes(needle)) ? (
+              <button
+                type="button"
+                role="option"
+                aria-selected={value === ALL_REFS}
+                className={value === ALL_REFS ? `${css.refRow} ${css.refRowActive}` : css.refRow}
+                title={allLabel}
+                onClick={() => choose(ALL_REFS)}
+              >
+                <span className={css.refRowSpacer} />
+                <Elided text={allLabel} className={css.refRowName} />
+              </button>
+            ) : null}
             {checkedOut.length > 0 && rest.length > 0 ? <div className={css.refGroup}>{t('refWorktrees')}</div> : null}
             {checkedOut.map(ref => row(ref, true))}
             {checkedOut.length > 0 && rest.length > 0 ? <div className={css.refGroup}>{t('refBranches')}</div> : null}
             {rest.map(ref => row(ref, false))}
-            {matched.length === 0 ? <div className={css.refEmpty}>{t('refNone')}</div> : null}
+            {matched.length === 0 && !(allLabel !== undefined && needle.length > 0 && allLabel.toLowerCase().includes(needle)) ? <div className={css.refEmpty}>{t('refNone')}</div> : null}
           </div>
           <div className={css.refFoot}>
             {t('refCount', { shown: matched.length, total: branches.length })}
@@ -2817,6 +2902,10 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
   const enterTimer = useRef(0)
   const leaveTimer = useRef(0)
   const body = commit.body ?? ''
+  const authorName = commit.authorName ?? ''
+  const committerName = commit.committerName ?? ''
+  // The viewer's own locale and timezone — that is the whole point of the line.
+  const exactDate = formatCommitDate(commit.dateIso ?? '')
 
   const cancel = (): void => {
     window.clearTimeout(enterTimer.current)
@@ -2870,6 +2959,7 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
         >
           <span className={css.commitTop}>
             <code className={css.commitHash}>{commit.hash}</code>
+            {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
             <span className={css.commitWhen}>{commit.when}</span>
           </span>
           <span className={css.commitSubjectRow}>
@@ -2902,11 +2992,157 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
             <span className={css.commitWhen}>{commit.when}</span>
             <CopyCommitButton t={t} text={commitMessageText(commit)} />
           </div>
+          {/* Who and exactly when. The row summarizes ("3 weeks ago"); the
+              hover card is where the precise question gets a precise answer —
+              full date in the VIEWER's timezone, author, and the committer
+              whenever git recorded someone other than the author. */}
+          {authorName.length > 0 || committerName.length > 0 || exactDate.length > 0 ? (
+            <div className={css.commitPopMeta}>
+              {authorName.length > 0 ? <span>{t('commitAuthor')}: {authorName}</span> : null}
+              {committerName.length > 0 && committerName !== authorName ? (
+                <span>{t('commitCommitter')}: {committerName}</span>
+              ) : null}
+              {exactDate.length > 0 ? <span>{t('commitDate')}: {exactDate}</span> : null}
+            </div>
+          ) : null}
           <div className={css.commitPopSubject}>{commit.subject}</div>
           {body.length > 0 ? <pre className={css.commitPopBody}>{body}</pre> : null}
         </div>,
         host,
       ) : null}
+    </>
+  )
+}
+
+/** The filter's own calendar — a hand-rolled 6×7 Monday-first grid (pure
+ *  arithmetic in `calendar.ts`), because the native date input renders as the
+ *  platform's bare widget and the bundle's purity gate forbids pulling in a
+ *  library. Picking a day hands `yyyy-mm-dd` to the bound the segmented
+ *  control armed; the host expands it to the whole day. */
+function FilterCalendar({ year, month, after, before, onPick, onShift }: {
+  year: number
+  month: number
+  /** Current bounds, to mark the picked days (approxidate text never matches
+   *  an iso, so a preset like "1 week ago" simply marks nothing). */
+  after: string
+  before: string
+  onPick: (iso: string) => void
+  onShift: (deltaMonths: number) => void
+}): ReactNode {
+  const grid = monthGrid(year, month, localTodayIso())
+  const title = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'long' }).format(new Date(year, month, 1))
+  return (
+    <div className={css.cal}>
+      <div className={css.calHead}>
+        <button type="button" className={css.calNav} aria-label="‹" onClick={() => onShift(-1)}>‹</button>
+        <span className={css.calTitle}>{title}</span>
+        <button type="button" className={css.calNav} aria-label="›" onClick={() => onShift(1)}>›</button>
+      </div>
+      <div className={css.calWeek}>
+        {weekdayLabels().map((label, index) => <span key={index}>{label}</span>)}
+      </div>
+      <div className={css.calGrid}>
+        {grid.flat().map(cell => cell === null ? null : (
+          <button
+            key={cell.iso}
+            type="button"
+            aria-label={cell.iso}
+            title={cell.iso}
+            className={[
+              cell.inMonth ? '' : css.calOut,
+              cell.isToday ? css.calToday : '',
+              cell.iso === after || cell.iso === before ? css.calMark : '',
+            ].filter(cls => cls.length > 0).join(' ')}
+            onClick={() => onPick(cell.iso)}
+          ><span>{cell.day}</span></button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Files shown per expanded directory. The search box is the way to a file in
+ *  a crowded directory; the tree shows enough to browse without flooding the
+ *  list, and says so when it cut the tail. */
+const PATH_FILES_SHOWN = 100
+
+/** One level of the path picker's directory tree — directories (chevron,
+ *  subtree count) then their files (doc glyph, leaf rows). Collapsed subtrees
+ *  are not in the DOM at all, so a monorepo costs only what the reader has
+ *  opened. */
+/** A checkbox that also carries the tree's third state — `indeterminate` is a
+ *  DOM property, not an attribute, so it is set through the ref. */
+function TriStateCheckbox({ state, onChange, ariaLabel }: {
+  state: 'on' | 'off' | 'partial'
+  onChange: () => void
+  ariaLabel: string
+}): ReactNode {
+  return (
+    <input
+      type="checkbox"
+      aria-label={ariaLabel}
+      checked={state === 'on'}
+      ref={el => { if (el !== null) el.indeterminate = state === 'partial' }}
+      onChange={onChange}
+    />
+  )
+}
+
+function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePath }: {
+  dirs: readonly DirEntry[]
+  depth: number
+  expanded: readonly string[]
+  /** Derived on/partial/off for any row path — the single source of truth. */
+  stateOf: (path: string) => 'on' | 'off' | 'partial'
+  onToggleOpen: (path: string) => void
+  onTogglePath: (path: string) => void
+}): ReactNode {
+  return (
+    <>
+      {dirs.map(dir => {
+        const open = expanded.includes(dir.path)
+        const expandable = dir.children.length > 0 || dir.files.length > 0
+        const shown = dir.files.slice(0, PATH_FILES_SHOWN)
+        return (
+          <div key={dir.path} className={css.pathNode}>
+            <div className={css.funnelRow} style={{ paddingLeft: depth * 16 + 2 }}>
+              <button
+                type="button"
+                className={css.funnelChevron}
+                disabled={!expandable}
+                aria-expanded={open}
+                onClick={() => onToggleOpen(dir.path)}
+              >{expandable ? (open ? '▾' : '▸') : ''}</button>
+              <TriStateCheckbox state={stateOf(dir.path)} ariaLabel={dir.path} onChange={() => onTogglePath(dir.path)} />
+              <span className={css.funnelName} title={dir.path}>{dir.name}</span>
+              <span className={css.funnelCount}>{dir.fileCount}</span>
+            </div>
+            {open ? (
+              <div className={css.pathChildren}>
+                <PathTreeRows
+                  dirs={dir.children}
+                  depth={depth + 1}
+                  expanded={expanded}
+                  stateOf={stateOf}
+                  onToggleOpen={onToggleOpen}
+                  onTogglePath={onTogglePath}
+                />
+                {shown.map(file => (
+                  <label key={file} className={css.funnelRow} style={{ paddingLeft: (depth + 1) * 16 + 2 }}>
+                    <span className={css.funnelChevron} aria-hidden="true" />
+                    <TriStateCheckbox state={stateOf(`${dir.path}/${file}`)} ariaLabel={`${dir.path}/${file}`} onChange={() => onTogglePath(`${dir.path}/${file}`)} />
+                    <span className={css.pathFileGlyph} aria-hidden="true" />
+                    <span className={css.funnelName} title={`${dir.path}/${file}`}>{file}</span>
+                  </label>
+                ))}
+                {dir.files.length > PATH_FILES_SHOWN ? (
+                  <div className={css.funnelMore}>+{dir.files.length - PATH_FILES_SHOWN}</div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
     </>
   )
 }
@@ -2929,7 +3165,7 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
  * what GitHub and GitLens do. The observer is rebuilt whenever the list grows,
  * so a page too short to fill the pane immediately triggers the next one.
  */
-function CommitList({ paneRef, style, t, loading, commits, active, onSelect, hasMore, loadingMore, onLoadMore }: {
+function CommitList({ paneRef, style, t, loading, commits, active, onSelect, hasMore, loadingMore, onLoadMore, query, onQueryChange, error, statsPath, refName, fetchAuthors, fetchRepoTree }: {
   /** The pane element, which the divider beside it measures from. Not named
    *  `ref`: React reserves that on a function component, so it would be stripped
    *  from props and never reach this element. */
@@ -2946,12 +3182,152 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
   hasMore: boolean
   loadingMore: boolean
   onLoadMore: () => void
+  /** The filter box's text. Parsed here for chips; the parent debounces the
+   *  same parse into the server-side fetch. */
+  query: string
+  onQueryChange: (query: string) => void
+  /** git's complaint when the log itself failed (bad pattern/date), verbatim. */
+  error: string | null
+  /** Which tree the author roster counts — the drawer's current source. */
+  statsPath: string | undefined
+  /** Which ref the roster and the list both walk — the picker's people are the
+   *  list's people, so a tick can never name someone with nothing to show. */
+  refName: string
+  fetchAuthors: (worktreePath: string | undefined, ref: string, signal: AbortSignal) => Promise<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>
+  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
 }): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  // One grammar, one filter: chips are the parsed criteria, and removing one
+  // rewrites the box through that same grammar.
+  const filterModel = useMemo(() => parseLogQuery(query), [query])
+  const chips = chipsFromFilter(filterModel)
+
+  // ---- funnel popup: user picker + date bounds + path tree --------------
+  const [funnelOpen, setFunnelOpen] = useState(false)
+  const [authors, setAuthors] = useState<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>(null)
+  const [authorsQuery, setAuthorsQuery] = useState('')
+  const [pathTree, setPathTree] = useState<{ dirs: readonly DirEntry[]; paths: readonly string[]; truncated: boolean } | null>(null)
+  const [expandedDirs, setExpandedDirs] = useState<readonly string[]>([])
+  const [pathsQuery, setPathsQuery] = useState('')
+  // The popup shows ONE section at a time (tabs), so a roster of dozens
+  // cannot grow the panel past the paths section — every section is reachable
+  // in one click whatever the others hold.
+  const [funnelSection, setFunnelSection] = useState<'users' | 'date' | 'paths'>('users')
+  // The calendar's displayed month, and which bound a picked day lands in.
+  const [calMonth, setCalMonth] = useState(() => { const now = new Date(); return { year: now.getFullYear(), month: now.getMonth() } })
+  const [calBound, setCalBound] = useState<'after' | 'before'>('after')
+
+  // The panel is PORTALLED to the drawer overlay (position: fixed, clamped to
+  // the viewport — the commits pane can be narrower than the panel, and an
+  // absolute panel anchored at its right edge runs off-screen). Dismissal
+  // therefore checks TWO refs: the anchor button and the panel itself; a
+  // single useDismissable root would see every click inside the portalled
+  // panel as "outside" and close it out from under the click.
+  const funnelAnchorRef = useRef<HTMLDivElement>(null)
+  const funnelPanelRef = useRef<HTMLDivElement>(null)
+  const [funnelBox, setFunnelBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
+
+  useEffect(() => {
+    if (!funnelOpen) { setFunnelBox(null); return }
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (funnelAnchorRef.current?.contains(target) === true) return
+      if (funnelPanelRef.current?.contains(target) === true) return
+      setFunnelOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') setFunnelOpen(false) }
+    // Bound on the next tick: the opening click is still travelling.
+    const id = window.setTimeout(() => document.addEventListener('mousedown', onDown), 0)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      window.clearTimeout(id)
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [funnelOpen])
+
+  useEffect(() => {
+    if (!funnelOpen) return
+    const rect = funnelAnchorRef.current?.getBoundingClientRect()
+    if (rect === undefined) return
+    const width = 300
+    const left = Math.max(12, Math.min(rect.left + rect.width - width, window.innerWidth - width - 12))
+    const top = rect.bottom + 4
+    setFunnelBox({ top, left, maxHeight: Math.max(160, window.innerHeight - top - 16) })
+  }, [funnelOpen])
+
+  // The roster and the tree are fetched when the funnel OPENS (not when the
+  // pane mounts — most visits never filter) and again when the source or the
+  // ref moves: the roster counts the very history the list walks, so the two
+  // can never disagree about who has commits.
+  useEffect(() => {
+    if (!funnelOpen) return
+    const ctrl = new AbortController()
+    setAuthors(null)
+    setPathTree(null)
+    fetchAuthors(statsPath, refName, ctrl.signal).then(roster => {
+      if (!ctrl.signal.aborted) setAuthors(roster)
+    }).catch(() => {})
+    fetchRepoTree(statsPath, ctrl.signal).then(tree => {
+      if (!ctrl.signal.aborted && tree !== null) {
+        setPathTree({ dirs: buildDirTree(tree.paths), paths: tree.paths, truncated: tree.truncated })
+      }
+    }).catch(() => {})
+    return () => { ctrl.abort() }
+  }, [funnelOpen, statsPath, refName, fetchAuthors, fetchRepoTree])
+
+  /** Every funnel interaction writes the filter through the box's grammar, so
+   *  the box, the chips and the fetch can never disagree about the query. */
+  const applyFilter = (next: LogFilter): void => { onQueryChange(serializeLogQuery(next)) }
+  const toggleUser = (name: string): void => {
+    const has = filterModel.users.includes(name)
+    applyFilter({
+      ...filterModel,
+      users: has ? filterModel.users.filter(user => user !== name) : [...filterModel.users, name],
+    })
+  }
+  // Checkbox-tree semantics: ticking a folder covers its subtree (and absorbs
+  // the files already ticked inside it); unticking a file under a checked
+  // folder cascades out. Rows DERIVE their state — on/partial/off — from the
+  // set, so a folder tick visibly checks everything under it.
+  const pathIndex = useMemo(
+    () => (pathTree === null ? null : buildIndex(pathTree.paths)),
+    [pathTree],
+  )
+  const pathState = (path: string): 'on' | 'off' | 'partial' =>
+    pathIndex === null ? 'off' : checkedState(filterModel.paths, path, pathIndex)
+  const togglePath = (path: string): void => {
+    if (pathIndex === null) return
+    applyFilter({
+      ...filterModel,
+      paths: isCovered(filterModel.paths, path)
+        ? removePath(filterModel.paths, path, pathIndex)
+        : addPath(filterModel.paths, path),
+    })
+  }
+  const toggleDirOpen = (path: string): void => {
+    setExpandedDirs(prev => prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path])
+  }
+  const needle = authorsQuery.trim().toLowerCase()
+  const matchedAuthors = authors === null
+    ? []
+    : needle.length === 0
+      ? authors.authors
+      : authors.authors.filter(entry =>
+        entry.name.toLowerCase().includes(needle) || entry.email.toLowerCase().includes(needle))
+  const DATE_PRESETS: readonly { key: WorkbenchKey; value: string }[] = [
+    { key: 'filterToday', value: 'midnight' },
+    { key: 'filterLast7', value: '1 week ago' },
+    { key: 'filterLast30', value: '30 days ago' },
+  ]
   // Recomputed only when a page lands. The layout is a single pass over the
   // loaded prefix, and every row's geometry depends on the rows above it, so
   // there is nothing finer to memoise than the whole list.
+  //
+  // Filtering does not suspend the graph: the server returns one contiguous
+  // walk of the FILTERED log, so lanes stay truthful — unlike a client-side
+  // filter, which would break the very walk it draws from.
   const graph = useMemo(
     () => layoutGraph(commits.map(commit => ({ hash: commit.hash, parents: commit.parents ?? [] }))),
     [commits],
@@ -2978,9 +3354,215 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
           worse than none. */}
       <div className={css.paneHead}>
         <span className={css.paneTitle}>{t('historyLabel')}</span>
+        <div className={css.funnel} ref={funnelAnchorRef}>
+          <button
+            type="button"
+            className={funnelOpen || chips.length > 0 ? `${css.funnelButton} ${css.funnelButtonActive}` : css.funnelButton}
+            aria-expanded={funnelOpen}
+            onClick={() => setFunnelOpen(isOpen => !isOpen)}
+          >{t('filterBy')} ▾</button>
+        </div>
+        <input
+          className={css.commitFilter}
+          type="search"
+          value={query}
+          onChange={event => onQueryChange(event.target.value)}
+          placeholder={t('historyFilterPlaceholder')}
+          aria-label={t('historyFilterPlaceholder')}
+          spellCheck={false}
+        />
       </div>
+      {funnelOpen && funnelBox !== null ? createPortal(
+        <div
+          ref={funnelPanelRef}
+          className={css.funnelPop}
+          style={funnelBox}
+          role="dialog"
+          aria-label={t('filterBy')}
+        >
+          {/* One section at a time: a roster of dozens cannot grow the panel
+              past the other sections, and each tab carries its own active
+              count so the criteria are visible without visiting the tab. */}
+          <div className={css.funnelTabs} role="tablist">
+            <button
+              type="button" role="tab" aria-selected={funnelSection === 'users'}
+              className={funnelSection === 'users' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+              onClick={() => setFunnelSection('users')}
+            >{t('filterUsers')}{filterModel.users.length > 0 ? ` (${filterModel.users.length})` : ''}</button>
+            <button
+              type="button" role="tab" aria-selected={funnelSection === 'date'}
+              className={funnelSection === 'date' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+              onClick={() => setFunnelSection('date')}
+            >{t('filterDate')}{(filterModel.after.length > 0 || filterModel.before.length > 0) ? ' •' : ''}</button>
+            <button
+              type="button" role="tab" aria-selected={funnelSection === 'paths'}
+              className={funnelSection === 'paths' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+              onClick={() => setFunnelSection('paths')}
+            >{t('filterPaths')}{filterModel.paths.length > 0 ? ` (${filterModel.paths.length})` : ''}</button>
+          </div>
+          {funnelSection === 'users' ? (
+            <>
+              <input
+                className={css.funnelSearch}
+                type="search"
+                value={authorsQuery}
+                onChange={event => setAuthorsQuery(event.target.value)}
+                placeholder={t('filterUserSearch')}
+                aria-label={t('filterUserSearch')}
+                spellCheck={false}
+              />
+              <div className={css.funnelList}>
+                {authors === null ? (
+                  <div className={css.funnelMore}>{t('loading')}</div>
+                ) : matchedAuthors.length === 0 ? (
+                  <div className={css.funnelMore}>{authors.authors.length === 0 ? t('noCommits') : t('historyNoMatch')}</div>
+                ) : matchedAuthors.map(entry => (
+                  <label key={`${entry.name}\x1f${entry.email}`} className={css.funnelRow}>
+                    <input
+                      type="checkbox"
+                      checked={filterModel.users.includes(entry.name)}
+                      onChange={() => toggleUser(entry.name)}
+                    />
+                    <span className={css.funnelName} title={`${entry.name} <${entry.email}>`}>{entry.name}</span>
+                    <span className={css.funnelCount}>{entry.count}</span>
+                  </label>
+                ))}
+                {authors?.truncated === true ? (
+                  <div className={css.funnelMore}>{t('filterAuthorsMore')}</div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+          {funnelSection === 'date' ? (
+            <>
+              <div className={css.funnelPresets}>
+                {DATE_PRESETS.map(preset => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    className={filterModel.after === preset.value ? `${css.funnelPreset} ${css.funnelPresetActive}` : css.funnelPreset}
+                    onClick={() => applyFilter({ ...filterModel, after: filterModel.after === preset.value ? '' : preset.value })}
+                  >{t(preset.key)}</button>
+                ))}
+              </div>
+              {/* Which bound a picked day lands in — the calendar is one, the
+                  range is two picks apart. */}
+              <div className={css.funnelBounds} role="group">
+                <button
+                  type="button"
+                  className={calBound === 'after' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+                  onClick={() => setCalBound('after')}
+                >{t('filterAfter')}</button>
+                <button
+                  type="button"
+                  className={calBound === 'before' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+                  onClick={() => setCalBound('before')}
+                >{t('filterBefore')}</button>
+              </div>
+              <FilterCalendar
+                year={calMonth.year}
+                month={calMonth.month}
+                after={filterModel.after}
+                before={filterModel.before}
+                onPick={iso => applyFilter({ ...filterModel, [calBound]: iso })}
+                onShift={delta => setCalMonth(current => {
+                  const next = new Date(current.year, current.month + delta, 1)
+                  return { year: next.getFullYear(), month: next.getMonth() }
+                })}
+              />
+              <div className={css.funnelBoundRows}>
+                <span className={css.funnelBoundRow}>
+                  {t('filterAfter')}: {filterModel.after.length > 0 ? filterModel.after : '—'}
+                  {filterModel.after.length > 0 ? (
+                    <button type="button" className={css.funnelBoundClear} aria-label={t('filterAfter')} onClick={() => applyFilter({ ...filterModel, after: '' })}>×</button>
+                  ) : null}
+                </span>
+                <span className={css.funnelBoundRow}>
+                  {t('filterBefore')}: {filterModel.before.length > 0 ? filterModel.before : '—'}
+                  {filterModel.before.length > 0 ? (
+                    <button type="button" className={css.funnelBoundClear} aria-label={t('filterBefore')} onClick={() => applyFilter({ ...filterModel, before: '' })}>×</button>
+                  ) : null}
+                </span>
+              </div>
+            </>
+          ) : null}
+          {funnelSection === 'paths' ? (
+            <>
+              <input
+                className={css.funnelSearch}
+                type="search"
+                value={pathsQuery}
+                onChange={event => setPathsQuery(event.target.value)}
+                placeholder={t('filterPathSearch')}
+                aria-label={t('filterPathSearch')}
+                spellCheck={false}
+              />
+              <div className={css.funnelList}>
+                {pathTree === null ? (
+                  <div className={css.funnelMore}>{t('loading')}</div>
+                ) : pathsQuery.trim().length > 0 ? (
+                  /* Search results are FLAT — the honest shape for hits (same
+                     argument as the filtered commit list), each row ticking a
+                     pathspec directly: files first, then directories. */
+                  (() => {
+                    const hits = searchPaths(pathTree.paths, pathsQuery).slice(0, 200)
+                    if (hits.length === 0) return <div className={css.funnelMore}>{t('historyNoMatch')}</div>
+                    return (
+                      <>
+                        {hits.map(hit => (
+                          <label key={hit.path} className={css.funnelRow}>
+                            <TriStateCheckbox state={pathState(hit.path)} ariaLabel={hit.path} onChange={() => togglePath(hit.path)} />
+                            {hit.isFile ? <span className={css.pathFileGlyph} aria-hidden="true" /> : <span className={css.pathDirGlyph} aria-hidden="true" />}
+                            <span className={css.funnelName} title={hit.path}>{hit.path}</span>
+                          </label>
+                        ))}
+                        {searchPaths(pathTree.paths, pathsQuery).length > 200 ? (
+                          <div className={css.funnelMore}>{t('filterPathsMore')}</div>
+                        ) : null}
+                      </>
+                    )
+                  })()
+                ) : pathTree.dirs.length === 0 ? (
+                  <div className={css.funnelMore}>{t('noCommits')}</div>
+                ) : (
+                  <PathTreeRows
+                    dirs={pathTree.dirs}
+                    depth={0}
+                    expanded={expandedDirs}
+                    stateOf={pathState}
+                    onToggleOpen={toggleDirOpen}
+                    onTogglePath={togglePath}
+                  />
+                )}
+                {pathTree?.truncated === true ? (
+                  <div className={css.funnelMore}>{t('filterPathsMore')}</div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>,
+        funnelAnchorRef.current?.closest('[data-gs-part="overlay"]') ?? (typeof document === 'undefined' ? null : document.body),
+      ) : null}
+      {chips.length > 0 ? (
+        <div className={css.filterChips}>
+          {chips.map(chip => (
+            <span key={`${chip.kind}\x1f${chip.value}`} className={css.filterChip}>
+              <span className={css.filterChipLabel}>{chip.kind}:{chip.value}</span>
+              <button
+                type="button"
+                className={css.filterChipRemove}
+                aria-label={`${chip.kind} ${chip.value}`}
+                onClick={() => onQueryChange(serializeLogQuery(removeChip(filterModel, chip.kind, chip.value)))}
+              >×</button>
+            </span>
+          ))}
+          <button type="button" className={css.filterClear} onClick={() => onQueryChange('')}>{t('filterClearAll')}</button>
+        </div>
+      ) : null}
       {commits.length === 0 ? (
-        <div className={css.empty}>{loading ? t('loading') : t('noCommits')}</div>
+        <div className={css.empty}>
+          {loading ? t('loading') : error !== null ? error : chips.length > 0 ? t('historyNoMatch') : t('noCommits')}
+        </div>
       ) : (
         <div className={css.commits} role="listbox" aria-label={t('historyLabel')} ref={scrollRef}>
           {commits.map((commit, index) => (
