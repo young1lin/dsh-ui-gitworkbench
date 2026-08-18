@@ -25,7 +25,7 @@
  *
  * Pure: no React, no CSS, no git. `tests/patch-model.test.ts` loads it directly.
  *
- * @module @young1lin/dsh-ui-gitworkbench/client/patch-model
+ * @module @young1lin/dsh-ui-gitworkbench/patch-model
  */
 
 /** One line of a hunk, with its marker stripped. */

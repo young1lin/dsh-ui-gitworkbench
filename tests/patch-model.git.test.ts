@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { emitPatch, parsePatch, selectAll, type LineSelector } from '../src/client/patch-model.ts'
+import { emitPatch, parsePatch, selectAll, type LineSelector } from '../src/patch-model.ts'
 
 /**
  * The unit tests state what a patch SHOULD look like; git decides whether it

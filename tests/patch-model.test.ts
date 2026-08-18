@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { emitPatch, parsePatch, selectAll, selectNone, type FilePatch } from '../src/client/patch-model.ts'
+import { emitPatch, parsePatch, selectAll, selectNone, type FilePatch } from '../src/patch-model.ts'
 
 /** Join with LF and keep the trailing newline git's own output carries. */
 function diff(...lines: string[]): string {
