@@ -792,59 +792,118 @@
    control vocabulary above (`.btn, .refButton, …`) so it reads as a sibling of
    every other button in the drawer, not a foreign element. */
 .funnelButton.funnelButtonActive { color: var(--gs-accent); border-color: var(--gs-accent); }
+
+/* The panel is a flex COLUMN with exactly ONE scrolling child. It used to
+   scroll itself AND cap its list at 240px: two nested scroll containers in a
+   331px box that had ~700px of anchor space to spend, so a long roster got a
+   fat inner scrollbar instead of the height already available. The tab strip
+   and the footer are `flex: none`; the list takes what is left. */
 .funnelPop {
   position: fixed; z-index: 40;
-  display: flex; flex-direction: column; gap: 6px;
-  width: 300px; max-width: calc(100vw - 24px);
+  display: flex; flex-direction: column;
+  width: 320px; max-width: calc(100vw - 24px);
   box-sizing: border-box;
-  padding: 8px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
   background: var(--gs-panel);
   box-shadow: 0 16px 40px var(--gs-shadow);
   font-size: var(--gs-t-dense);
 }
-.funnelSection { color: var(--gs-fg-faint); padding: 2px 2px 0; }
 /* One section at a time — the panel's height is a property of its design,
-   not of how many authors the repository happens to have. */
+   not of how many authors the repository happens to have. The strip is a
+   segmented control (inset track, raised active chip) rather than one
+   outlined pill beside two bare words, which read as a button and two labels
+   instead of one three-way choice. */
 .funnelTabs {
-  display: flex; gap: 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--gs-border-soft);
+  flex: none;
+  display: flex; gap: 2px;
+  margin: 8px 8px 0;
+  padding: 2px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-pill);
+  background: var(--gs-bg);
 }
 .funnelTab {
-  flex: 1;
-  padding: 4px 8px;
-  border: 1px solid transparent; border-radius: var(--gs-r-pill);
+  flex: 1; min-width: 0;
+  height: 22px; padding: 0 8px;
+  border: none; border-radius: var(--gs-r-pill);
   background: transparent;
   color: var(--gs-fg-dim);
-  font-family: inherit; font-size: var(--gs-t-dense); line-height: 16px;
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
 }
 .funnelTab:hover { color: var(--gs-fg); }
 .funnelTab.funnelTabActive {
-  color: var(--gs-accent);
-  border-color: var(--gs-accent);
-  background: var(--gs-accent-bg, transparent);
+  color: var(--gs-fg);
+  background: var(--gs-raise);
+  box-shadow: inset 0 0 0 1px var(--gs-border);
 }
-.funnelBounds { display: flex; gap: 4px; }
+.funnelTab:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+/* A tab's own criteria count, so the two sections nobody is looking at still
+   say they hold something. */
+.funnelTabCount { margin-left: 4px; color: var(--gs-accent); font-variant-numeric: tabular-nums; }
+
+/* The body of the active section. Everything inside is `flex: none` except
+   the list, which is the one thing allowed to scroll. */
+.funnelPane {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px;
+}
+.funnelCaption {
+  flex: none;
+  color: var(--gs-fg-faint);
+  font-size: 11px; line-height: 14px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+/* Which bound a picked day lands in. Deliberately NOT the tab strip's shape:
+   a rect track with an accent-tinted chip under a caption, because two
+   identical pill rows stacked six pixels apart said nothing about meaning two
+   different things. */
+.funnelBounds {
+  flex: none;
+  display: flex; gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg);
+}
+.funnelBoundBtn {
+  flex: 1; min-width: 0;
+  height: 20px; padding: 0 6px;
+  border: none; border-radius: calc(var(--gs-r-control) - 3px);
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.funnelBoundBtn:hover { color: var(--gs-fg); }
+.funnelBoundBtn.funnelBoundBtnActive {
+  color: var(--gs-accent);
+  background: var(--gs-accent-bg);
+  box-shadow: inset 0 0 0 1px var(--gs-accent-border);
+}
+
 /* The calendar — modern-grid look in the drawer's own tokens. */
-.cal { display: flex; flex-direction: column; gap: 4px; }
+.cal { flex: none; display: flex; flex-direction: column; gap: 4px; }
 .calHead { display: flex; align-items: center; gap: 4px; }
 .calTitle {
   flex: 1; text-align: center;
-  color: var(--gs-fg-muted);
+  color: var(--gs-fg);
   font-size: var(--gs-t-dense); line-height: 20px;
 }
 .calNav {
   flex: none;
   width: 22px; height: 20px; padding: 0;
-  border: none; background: transparent;
+  border: none; border-radius: var(--gs-r-control);
+  background: transparent;
   color: var(--gs-fg-dim);
   font-family: inherit; font-size: var(--gs-t-ui);
   cursor: pointer;
 }
-.calNav:hover { color: var(--gs-fg); }
+.calNav:hover { color: var(--gs-fg); background: var(--gs-raise); }
 .calWeek, .calGrid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -853,7 +912,7 @@
 .calWeek span {
   text-align: center;
   color: var(--gs-fg-faint);
-  font-size: 10px; line-height: 14px;
+  font-size: 11px; line-height: 14px;
 }
 .calGrid button {
   height: 26px;
@@ -861,91 +920,157 @@
   background: transparent;
   color: var(--gs-fg-muted);
   font-family: inherit; font-size: var(--gs-t-dense);
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
 .calGrid button:hover { background: var(--gs-raise); color: var(--gs-fg); }
-.calGrid button.calOut { color: var(--gs-fg-faint); }
+.calGrid button.calOut { color: var(--gs-fg-fainter); }
 .calGrid button.calToday { color: var(--gs-accent); font-weight: 600; }
+/* Days strictly between the two bounds: the span the filter actually means,
+   which two lone marked endpoints never showed. */
+.calGrid button.calIn { background: var(--gs-accent-bg); color: var(--gs-fg); }
 .calGrid button.calMark {
-  background: var(--gs-accent-bg, var(--gs-raise));
-  color: var(--gs-accent);
-  box-shadow: inset 0 0 0 1px var(--gs-accent);
+  background: var(--gs-accent);
+  color: var(--gs-on-accent);
+  font-weight: 600;
 }
-.funnelBoundRows { display: flex; flex-direction: column; gap: 2px; }
+
+/* The two bound readouts, side by side under the grid. */
+.funnelBoundRows { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .funnelBoundRow {
-  display: flex; align-items: center; gap: 4px;
-  color: var(--gs-fg-muted);
-  font-size: var(--gs-t-dense); line-height: 18px;
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg);
+  font-size: 11px; line-height: 16px;
 }
+.funnelBoundKey { flex: none; color: var(--gs-fg-faint); }
+.funnelBoundVal {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gs-fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.funnelBoundValSet { color: var(--gs-fg); }
 .funnelBoundClear {
   flex: none;
-  padding: 0 4px;
+  padding: 0 2px;
   border: none; background: transparent;
   color: var(--gs-fg-dim);
-  font-family: inherit; font-size: var(--gs-t-dense);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 1;
   cursor: pointer;
 }
 .funnelBoundClear:hover { color: var(--gs-danger, var(--gs-fg)); }
+
 .funnelSearch {
-  padding: 5px 8px;
+  flex: none;
+  box-sizing: border-box;
+  height: 26px; padding: 0 8px;
   border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
   background: var(--gs-bg); color: var(--gs-fg);
   font-family: inherit; font-size: var(--gs-t-dense);
   outline: none;
 }
-.funnelSearch:focus { border-color: var(--gs-accent); }
+.funnelSearch::placeholder { color: var(--gs-fg-faint); }
+.funnelSearch:focus { border-color: var(--gs-accent); box-shadow: 0 0 0 2px var(--gs-accent-bg); }
 .funnelList {
-  max-height: 240px; overflow-y: auto;
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; gap: 1px;
+  margin: 0 -4px; padding: 0 4px;
+  scrollbar-width: thin; scrollbar-color: var(--gs-fg-fainter) transparent;
 }
+.funnelList::-webkit-scrollbar { width: 10px; }
+.funnelList::-webkit-scrollbar-track { background: transparent; }
+.funnelList::-webkit-scrollbar-thumb {
+  background: var(--gs-fg-fainter);
+  border: 3px solid transparent; border-radius: 5px;
+  background-clip: content-box;
+}
+/* Every row is the same four slots — chevron, tick, glyph, name — then the
+   count. Directories used to skip the glyph that files carried, so a folder
+   name and the file names under it started at different x and the list had a
+   ragged left edge. */
 .funnelRow {
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 4px;
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box;
+  min-height: 24px; padding: 0 4px;
   border-radius: var(--gs-r-control);
+  cursor: pointer;
 }
 .funnelRow:hover { background: var(--gs-raise); }
-.funnelRow input[type='checkbox'] { accent-color: var(--gs-accent); flex: none; }
-/* Tree chrome in the drawer's own visual language: children hang on an
-   indent rail, directories fold with the chevron the file tree uses, and a
-   file is a tiny CSS document — no emoji, no imported icon font. */
-.pathNode { display: flex; flex-direction: column; }
-.pathChildren {
-  display: flex; flex-direction: column;
-  margin-left: 9px;
-  border-left: 1px solid var(--gs-border-soft);
-  padding-left: 4px;
-}
-.pathFileGlyph {
-  flex: none;
-  width: 10px; height: 12px;
+.funnelRow:has(input[type='checkbox']:checked) .funnelName,
+.funnelRow:has(input[type='checkbox']:indeterminate) .funnelName { color: var(--gs-fg); }
+/* The tick IS the input — no wrapper span, no visually-hidden twin: the live
+   probes select `[class*="funnelRow"] input[type=checkbox]` and the directory
+   row's DIRECT child, so the markup has to stay flat. `appearance: none`
+   hands us the box; the mark is a rotated border, so nothing ships as an
+   asset and every state recolors with the theme. */
+.funnelRow input[type='checkbox'] {
+  appearance: none; -webkit-appearance: none;
+  flex: none; position: relative;
   box-sizing: border-box;
-  border: 1px solid var(--gs-fg-faint);
-  border-radius: 1px 1px 1px 3px;
-  margin: 0 2px;
+  width: 14px; height: 14px; margin: 0;
+  border: 1px solid var(--gs-fg-fainter); border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
 }
-.pathFileGlyph::after {
-  content: '';
-  display: block;
-  width: 4px; height: 1px;
-  margin: 2px 0 0 2px;
-  background: var(--gs-border);
-  box-shadow: 0 2px 0 var(--gs-border), 0 4px 0 var(--gs-border);
+.funnelRow input[type='checkbox']:hover { border-color: var(--gs-fg-dim); }
+.funnelRow input[type='checkbox']:checked,
+.funnelRow input[type='checkbox']:indeterminate {
+  background: var(--gs-accent); border-color: var(--gs-accent);
 }
-.pathDirGlyph {
-  flex: none;
-  width: 14px; height: 12px;
-  box-sizing: border-box;
-  border: 1px solid var(--gs-fg-faint);
+.funnelRow input[type='checkbox']:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+.funnelRow input[type='checkbox']:checked::after {
+  content: ''; position: absolute;
+  left: 4px; top: 1px; width: 3px; height: 7px;
+  border: solid var(--gs-on-accent); border-width: 0 1.5px 1.5px 0;
+  transform: rotate(42deg);
+}
+/* Partial — a folder some of whose subtree is ticked. */
+.funnelRow input[type='checkbox']:indeterminate::after {
+  content: ''; position: absolute;
+  left: 2px; top: 5px; width: 8px; height: 2px;
   border-radius: 1px;
-  background: var(--gs-raise);
+  background: var(--gs-on-accent);
 }
+/* Tree chrome in the drawer's own visual language: a directory folds with the
+   chevron the file tree uses, and both glyphs are inline SVG in the shape
+   IntelliJ's New UI icon set uses — a 16px grid, 1px strokes, no fill,
+   rounded joins, outlines rather than the filled silhouettes the old UI
+   shipped. Drawn in `PathDirGlyph` / `PathFileGlyph` rather than imported:
+   the bundle purity gate forbids an icon package, and the picker needs
+   exactly these two. Indentation is the row's own padding ALONE; the nested
+   rail this used to draw was `--gs-border-soft` over `--gs-panel` (the same
+   value as `--gs-raise` in the GitHub palettes, so it vanished under hover)
+   and its margin double-counted every level. */
+.pathNode { display: flex; flex-direction: column; }
+.pathChildren { display: flex; flex-direction: column; }
+/* One shared slot so a folder and a file start their names at the same x —
+   New UI draws both on the same 16px grid, and the column only lines up if
+   the box does too. `--gs-fg-dim` is the neutral the tree icons sit at there:
+   present, but never louder than the filename beside them. */
+.pathFileGlyph, .pathDirGlyph {
+  flex: none;
+  width: 16px; height: 16px;
+  color: var(--gs-fg-dim);
+}
+.funnelRow:hover .pathFileGlyph,
+.funnelRow:hover .pathDirGlyph { color: var(--gs-fg-muted); }
 .funnelName {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--gs-fg-muted);
 }
-.funnelCount { flex: none; color: var(--gs-fg-faint); }
-.funnelMore { color: var(--gs-fg-faint); padding: 4px 2px; }
+.funnelCount {
+  flex: none;
+  color: var(--gs-fg-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.funnelMore { color: var(--gs-fg-faint); padding: 4px 6px; }
 .funnelChevron {
   flex: none;
   width: 14px; padding: 0;
@@ -954,10 +1079,48 @@
   font-family: inherit; font-size: 9px; line-height: 16px;
   cursor: pointer;
 }
+.funnelChevron:hover:not(:disabled) { color: var(--gs-fg); }
 .funnelChevron:disabled { cursor: default; }
-.funnelPresets { display: flex; gap: 6px; }
-.funnelPreset { flex: none; }
-.funnelPresetActive { color: var(--gs-accent); border-color: var(--gs-accent); }
+.funnelPresets { flex: none; display: flex; gap: 4px; }
+/* `.funnelPreset` shipped with `flex: none` and nothing else, so it never
+   joined the shared button vocabulary and the three date presets rendered as
+   the browser's default grey buttons — the one patch of unthemed chrome in
+   the drawer. It is in both selector lists now; this only sizes them to share
+   one row. */
+.funnelPreset { flex: 1 1 0; min-width: 0; padding: 0 6px; }
+/* Qualified, like `.funnelButtonActive`: the shared vocabulary is declared
+   several hundred lines BELOW this one, so a bare modifier would lose its
+   background to that rule's `background: transparent`. */
+.funnelPreset.funnelPresetActive {
+  color: var(--gs-accent);
+  border-color: var(--gs-accent);
+  background: var(--gs-accent-bg);
+}
+
+/* The footer says what the panel is currently asking git for. Without it the
+   only feedback lived on the chip row BEHIND the panel, so a reader had to
+   close the thing to find out whether their ticks took. */
+.funnelFoot {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--gs-border-soft);
+  background: var(--gs-bg);
+  font-size: 11px; line-height: 16px;
+}
+.funnelFootCount { color: var(--gs-fg-faint); font-variant-numeric: tabular-nums; }
+.funnelFootCountOn { color: var(--gs-fg-muted); }
+.funnelFootClear {
+  flex: none;
+  padding: 2px 6px;
+  border: none; border-radius: var(--gs-r-control);
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit; font-size: 11px; line-height: 16px;
+  cursor: pointer;
+}
+.funnelFootClear:hover:not(:disabled) { color: var(--gs-fg); background: var(--gs-raise); }
+.funnelFootClear:disabled { color: var(--gs-fg-fainter); cursor: default; }
 
 .commitPopSubject {
   color: var(--gs-fg);
@@ -1599,7 +1762,7 @@
  * its own padding, radius and font-size, and the same "small secondary button"
  * had drifted to four heights and three radii across one screen.
  */
-.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton {
+.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton, .funnelPreset {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   box-sizing: border-box;
   flex: none;
@@ -1617,13 +1780,14 @@
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .btn:hover, .miniBtn:hover, .treeIcon:hover, .commitCopy:hover,
-.scopeBtn:hover, .refButton:hover, .funnelButton:hover {
+.scopeBtn:hover, .refButton:hover, .funnelButton:hover, .funnelPreset:hover {
   background: var(--gs-raise);
   color: var(--gs-fg);
   border-color: var(--gs-fg-fainter);
 }
 .btn:focus-visible, .miniBtn:focus-visible, .treeIcon:focus-visible,
-.commitCopy:focus-visible, .scopeBtn:focus-visible, .refButton:focus-visible {
+.commitCopy:focus-visible, .scopeBtn:focus-visible, .refButton:focus-visible,
+.funnelPreset:focus-visible {
   outline: 2px solid var(--gs-accent);
   outline-offset: 1px;
 }
@@ -1634,8 +1798,9 @@
    foreign. Controls that live INSIDE a panel or pane stay 8px rects. */
 .btn, .refButton { border-radius: var(--gs-r-pill); }
 
-/* Pane tools give their vertical space back to the diff. */
-.treeIcon, .commitCopy {
+/* Pane tools give their vertical space back to the diff; the date presets sit
+   inside a 320px popover, so they take the compact height too. */
+.treeIcon, .commitCopy, .funnelPreset {
   height: var(--gs-h-compact);
   padding: var(--gs-pad-compact);
   font-size: var(--gs-t-dense);

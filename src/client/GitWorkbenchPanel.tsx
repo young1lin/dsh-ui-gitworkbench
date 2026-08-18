@@ -61,7 +61,8 @@ import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
 import { buildDirTree, searchPaths, type DirEntry } from './dir-tree.ts'
 import { addPath, buildIndex, checkedState, isCovered, removePath } from './path-select.ts'
-import { localTodayIso, monthGrid, weekdayLabels } from './calendar.ts'
+import { inCalRange, localTodayIso, monthGrid, weekdayLabels } from './calendar.ts'
+import { NO_PATHS, preferredFile } from './active-file.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
 import {
@@ -1499,11 +1500,18 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    *  while a refresh lands over it. Derived once and handed to both the header
    *  and the tree: spelling it twice is what let the header get it wrong. */
   const pending = showsPending(treeLoading, body.files.length)
+  /** The history filter's paths, which decide what a commit OPENS on. Only the
+   *  history tab has one: the changes and compare trees are not filtered, and
+   *  steering their default selection by a query the reader cannot see from
+   *  there would be a spooky action. */
+  const activeFilterPaths = useMemo(
+    () => tab === 'history' ? parseLogQuery(historyQuery).paths : NO_PATHS,
+    [tab, historyQuery],
+  )
   // A selection the current source no longer lists (e.g. after a source or tab
-  // switch) falls back to the first file — never a dangling highlight.
-  const active = selected !== null && body.files.some(file => file.path === selected)
-    ? selected
-    : body.files[0]?.path ?? null
+  // switch) falls back to the filtered file, else the first — never a dangling
+  // highlight. See `active-file.ts` for the order and the reasoning.
+  const active = preferredFile(body.files, activeFilterPaths, selected)
   const activeFile = body.files.find(file => file.path === active) ?? null
   const [fetched, setFetched] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -3019,18 +3027,22 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
  *  platform's bare widget and the bundle's purity gate forbids pulling in a
  *  library. Picking a day hands `yyyy-mm-dd` to the bound the segmented
  *  control armed; the host expands it to the whole day. */
-function FilterCalendar({ year, month, after, before, onPick, onShift }: {
+function FilterCalendar({ year, month, after, before, locale, onPick, onShift }: {
   year: number
   month: number
   /** Current bounds, to mark the picked days (approxidate text never matches
    *  an iso, so a preset like "1 week ago" simply marks nothing). */
   after: string
   before: string
+  /** BCP-47 tag from the drawer's own dictionary (`filterLocale`), NOT the
+   *  browser's — those disagree the moment the UI language is not the OS one,
+   *  and the grid printed its month in the other language. */
+  locale: string
   onPick: (iso: string) => void
   onShift: (deltaMonths: number) => void
 }): ReactNode {
   const grid = monthGrid(year, month, localTodayIso())
-  const title = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'long' }).format(new Date(year, month, 1))
+  const title = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long' }).format(new Date(year, month, 1))
   return (
     <div className={css.cal}>
       <div className={css.calHead}>
@@ -3039,7 +3051,7 @@ function FilterCalendar({ year, month, after, before, onPick, onShift }: {
         <button type="button" className={css.calNav} aria-label="›" onClick={() => onShift(1)}>›</button>
       </div>
       <div className={css.calWeek}>
-        {weekdayLabels().map((label, index) => <span key={index}>{label}</span>)}
+        {weekdayLabels(locale).map((label, index) => <span key={index}>{label}</span>)}
       </div>
       <div className={css.calGrid}>
         {grid.flat().map(cell => cell === null ? null : (
@@ -3051,6 +3063,11 @@ function FilterCalendar({ year, month, after, before, onPick, onShift }: {
             className={[
               cell.inMonth ? '' : css.calOut,
               cell.isToday ? css.calToday : '',
+              // Between the bounds, not one of them: the two endpoints alone
+              // never showed which days the filter actually admits. Both
+              // bounds are iso here or the comparison is simply false, which
+              // is what an approxidate preset should render as.
+              inCalRange(cell.iso, after, before) ? css.calIn : '',
               cell.iso === after || cell.iso === before ? css.calMark : '',
             ].filter(cls => cls.length > 0).join(' ')}
             onClick={() => onPick(cell.iso)}
@@ -3061,10 +3078,68 @@ function FilterCalendar({ year, month, after, before, onPick, onShift }: {
   )
 }
 
+/**
+ * The two node glyphs, in IntelliJ's New UI icon idiom: a 16px grid, 1px
+ * strokes, no fill, rounded joins — outlines, where the old UI shipped filled
+ * silhouettes. Hand-drawn here rather than imported, because the bundle purity
+ * gate forbids an icon package and the drawer needs exactly these two; they
+ * are shapes in that language, not JetBrains' own assets.
+ *
+ * `strokeWidth` is 1 against a viewBox that renders 1:1 at 16px, so every
+ * stroke lands on a whole pixel instead of straddling two.
+ *
+ * Every place the drawer names a file or a directory uses these: the path
+ * picker in the history filter, and the file tree behind all three tabs. The
+ * CLASS names keep their `path` prefix — `scripts/verify_history_feature.py`
+ * selects the picker's file rows by `label:has([class*="pathFileGlyph"])`.
+ */
+function PathDirGlyph(): ReactNode {
+  return (
+    <svg
+      className={css.pathDirGlyph}
+      width="16" height="16" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1"
+      strokeLinejoin="round" strokeLinecap="round"
+      aria-hidden="true"
+    >
+      {/* Body, with the tab stepping up over the left third. The step is a
+          full 2px: at 1.3px it read as a rounded rectangle with a nick in it
+          rather than a folder. Every straight edge sits on a .5 coordinate so
+          a 1px stroke lands on one pixel instead of straddling two. */}
+      <path d="M2.5 12.75V4.25A.75.75 0 0 1 3.25 3.5H6l1.6 2h5.15A.75.75 0 0 1 13.5 6.25v6.5a.75.75 0 0 1-.75.75H3.25a.75.75 0 0 1-.75-.75Z" />
+    </svg>
+  )
+}
+
+function PathFileGlyph(): ReactNode {
+  return (
+    <svg
+      className={css.pathFileGlyph}
+      width="16" height="16" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1"
+      strokeLinejoin="round" strokeLinecap="round"
+      aria-hidden="true"
+    >
+      {/* Sheet, cut back at the top-right for the fold. Narrower and one step
+          taller than the folder, sharing its optical band, so the two never
+          look like different-sized icons in one column. */}
+      <path d="M3.5 12.75V3.25A.75.75 0 0 1 4.25 2.5H9l3.5 3.5v6.75a.75.75 0 0 1-.75.75H4.25a.75.75 0 0 1-.75-.75Z" />
+      {/* The fold itself — the corner turned back on the sheet. */}
+      <path d="M9 2.5v2.75a.75.75 0 0 0 .75.75h2.75" />
+    </svg>
+  )
+}
+
 /** Files shown per expanded directory. The search box is the way to a file in
  *  a crowded directory; the tree shows enough to browse without flooding the
  *  list, and says so when it cut the tail. */
 const PATH_FILES_SHOWN = 100
+
+/** Horizontal step per nesting level in the path picker. The whole indent now
+ *  comes from this one number: `.pathChildren` used to add a margin and a rail
+ *  of its own on top of it, so every level cost 29px and a 320px popover ran
+ *  out of width three directories deep. */
+const PATH_INDENT = 14
 
 /** One level of the path picker's directory tree — directories (chevron,
  *  subtree count) then their files (doc glyph, leaf rows). Collapsed subtrees
@@ -3105,7 +3180,7 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
         const shown = dir.files.slice(0, PATH_FILES_SHOWN)
         return (
           <div key={dir.path} className={css.pathNode}>
-            <div className={css.funnelRow} style={{ paddingLeft: depth * 16 + 2 }}>
+            <div className={css.funnelRow} style={{ paddingLeft: depth * PATH_INDENT + 4 }}>
               <button
                 type="button"
                 className={css.funnelChevron}
@@ -3114,6 +3189,7 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
                 onClick={() => onToggleOpen(dir.path)}
               >{expandable ? (open ? '▾' : '▸') : ''}</button>
               <TriStateCheckbox state={stateOf(dir.path)} ariaLabel={dir.path} onChange={() => onTogglePath(dir.path)} />
+              <PathDirGlyph />
               <span className={css.funnelName} title={dir.path}>{dir.name}</span>
               <span className={css.funnelCount}>{dir.fileCount}</span>
             </div>
@@ -3128,10 +3204,10 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
                   onTogglePath={onTogglePath}
                 />
                 {shown.map(file => (
-                  <label key={file} className={css.funnelRow} style={{ paddingLeft: (depth + 1) * 16 + 2 }}>
+                  <label key={file} className={css.funnelRow} style={{ paddingLeft: (depth + 1) * PATH_INDENT + 4 }}>
                     <span className={css.funnelChevron} aria-hidden="true" />
                     <TriStateCheckbox state={stateOf(`${dir.path}/${file}`)} ariaLabel={`${dir.path}/${file}`} onChange={() => onTogglePath(`${dir.path}/${file}`)} />
-                    <span className={css.pathFileGlyph} aria-hidden="true" />
+                    <PathFileGlyph />
                     <span className={css.funnelName} title={`${dir.path}/${file}`}>{file}</span>
                   </label>
                 ))}
@@ -3202,6 +3278,14 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
   // rewrites the box through that same grammar.
   const filterModel = useMemo(() => parseLogQuery(query), [query])
   const chips = chipsFromFilter(filterModel)
+  // What the panel is currently asking git for. Each tab shows its own share
+  // so the two sections nobody is looking at still say they hold something,
+  // and the footer shows the total — the chip row that used to be the only
+  // feedback sits BEHIND the popup, so the ticks looked inert until it closed.
+  // A date bound counts as one criterion each; free text is the box's, not
+  // the popup's, so it stays out of both.
+  const dateCount = (filterModel.after.length > 0 ? 1 : 0) + (filterModel.before.length > 0 ? 1 : 0)
+  const selectedCount = filterModel.users.length + filterModel.paths.length + dateCount
 
   // ---- funnel popup: user picker + date bounds + path tree --------------
   const [funnelOpen, setFunnelOpen] = useState(false)
@@ -3388,20 +3472,29 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
               type="button" role="tab" aria-selected={funnelSection === 'users'}
               className={funnelSection === 'users' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
               onClick={() => setFunnelSection('users')}
-            >{t('filterUsers')}{filterModel.users.length > 0 ? ` (${filterModel.users.length})` : ''}</button>
+            >
+              {t('filterUsers')}
+              {filterModel.users.length > 0 ? <span className={css.funnelTabCount}>{filterModel.users.length}</span> : null}
+            </button>
             <button
               type="button" role="tab" aria-selected={funnelSection === 'date'}
               className={funnelSection === 'date' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
               onClick={() => setFunnelSection('date')}
-            >{t('filterDate')}{(filterModel.after.length > 0 || filterModel.before.length > 0) ? ' •' : ''}</button>
+            >
+              {t('filterDate')}
+              {dateCount > 0 ? <span className={css.funnelTabCount}>{dateCount}</span> : null}
+            </button>
             <button
               type="button" role="tab" aria-selected={funnelSection === 'paths'}
               className={funnelSection === 'paths' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
               onClick={() => setFunnelSection('paths')}
-            >{t('filterPaths')}{filterModel.paths.length > 0 ? ` (${filterModel.paths.length})` : ''}</button>
+            >
+              {t('filterPaths')}
+              {filterModel.paths.length > 0 ? <span className={css.funnelTabCount}>{filterModel.paths.length}</span> : null}
+            </button>
           </div>
           {funnelSection === 'users' ? (
-            <>
+            <div className={css.funnelPane}>
               <input
                 className={css.funnelSearch}
                 type="search"
@@ -3431,10 +3524,10 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                   <div className={css.funnelMore}>{t('filterAuthorsMore')}</div>
                 ) : null}
               </div>
-            </>
+            </div>
           ) : null}
           {funnelSection === 'date' ? (
-            <>
+            <div className={css.funnelPane}>
               <div className={css.funnelPresets}>
                 {DATE_PRESETS.map(preset => (
                   <button
@@ -3446,16 +3539,22 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                 ))}
               </div>
               {/* Which bound a picked day lands in — the calendar is one, the
-                  range is two picks apart. */}
-              <div className={css.funnelBounds} role="group">
+                  range is two picks apart. Captioned, and shaped as a rect
+                  track rather than the tab strip's pills: two identical pill
+                  rows six pixels apart never said they meant different
+                  things. */}
+              <span className={css.funnelCaption}>{t('filterCalendarSets')}</span>
+              <div className={css.funnelBounds} role="group" aria-label={t('filterCalendarSets')}>
                 <button
                   type="button"
-                  className={calBound === 'after' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+                  aria-pressed={calBound === 'after'}
+                  className={calBound === 'after' ? `${css.funnelBoundBtn} ${css.funnelBoundBtnActive}` : css.funnelBoundBtn}
                   onClick={() => setCalBound('after')}
                 >{t('filterAfter')}</button>
                 <button
                   type="button"
-                  className={calBound === 'before' ? `${css.funnelTab} ${css.funnelTabActive}` : css.funnelTab}
+                  aria-pressed={calBound === 'before'}
+                  className={calBound === 'before' ? `${css.funnelBoundBtn} ${css.funnelBoundBtnActive}` : css.funnelBoundBtn}
                   onClick={() => setCalBound('before')}
                 >{t('filterBefore')}</button>
               </div>
@@ -3464,6 +3563,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                 month={calMonth.month}
                 after={filterModel.after}
                 before={filterModel.before}
+                locale={t('filterLocale')}
                 onPick={iso => applyFilter({ ...filterModel, [calBound]: iso })}
                 onShift={delta => setCalMonth(current => {
                   const next = new Date(current.year, current.month + delta, 1)
@@ -3472,22 +3572,28 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
               />
               <div className={css.funnelBoundRows}>
                 <span className={css.funnelBoundRow}>
-                  {t('filterAfter')}: {filterModel.after.length > 0 ? filterModel.after : '—'}
+                  <span className={css.funnelBoundKey}>{t('filterAfter')}</span>
+                  <span className={filterModel.after.length > 0 ? `${css.funnelBoundVal} ${css.funnelBoundValSet}` : css.funnelBoundVal}>
+                    {filterModel.after.length > 0 ? filterModel.after : '—'}
+                  </span>
                   {filterModel.after.length > 0 ? (
                     <button type="button" className={css.funnelBoundClear} aria-label={t('filterAfter')} onClick={() => applyFilter({ ...filterModel, after: '' })}>×</button>
                   ) : null}
                 </span>
                 <span className={css.funnelBoundRow}>
-                  {t('filterBefore')}: {filterModel.before.length > 0 ? filterModel.before : '—'}
+                  <span className={css.funnelBoundKey}>{t('filterBefore')}</span>
+                  <span className={filterModel.before.length > 0 ? `${css.funnelBoundVal} ${css.funnelBoundValSet}` : css.funnelBoundVal}>
+                    {filterModel.before.length > 0 ? filterModel.before : '—'}
+                  </span>
                   {filterModel.before.length > 0 ? (
                     <button type="button" className={css.funnelBoundClear} aria-label={t('filterBefore')} onClick={() => applyFilter({ ...filterModel, before: '' })}>×</button>
                   ) : null}
                 </span>
               </div>
-            </>
+            </div>
           ) : null}
           {funnelSection === 'paths' ? (
-            <>
+            <div className={css.funnelPane}>
               <input
                 className={css.funnelSearch}
                 type="search"
@@ -3512,7 +3618,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                         {hits.map(hit => (
                           <label key={hit.path} className={css.funnelRow}>
                             <TriStateCheckbox state={pathState(hit.path)} ariaLabel={hit.path} onChange={() => togglePath(hit.path)} />
-                            {hit.isFile ? <span className={css.pathFileGlyph} aria-hidden="true" /> : <span className={css.pathDirGlyph} aria-hidden="true" />}
+                            {hit.isFile ? <PathFileGlyph /> : <PathDirGlyph />}
                             <span className={css.funnelName} title={hit.path}>{hit.path}</span>
                           </label>
                         ))}
@@ -3538,8 +3644,22 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                   <div className={css.funnelMore}>{t('filterPathsMore')}</div>
                 ) : null}
               </div>
-            </>
+            </div>
           ) : null}
+          {/* The panel's own readout. Clearing goes through the box's grammar
+              like every other funnel interaction, so one query string stays
+              the single source of truth. */}
+          <div className={css.funnelFoot}>
+            <span className={selectedCount > 0 ? `${css.funnelFootCount} ${css.funnelFootCountOn}` : css.funnelFootCount}>
+              {t('filterSelected', { count: selectedCount })}
+            </span>
+            <button
+              type="button"
+              className={css.funnelFootClear}
+              disabled={selectedCount === 0}
+              onClick={() => onQueryChange('')}
+            >{t('filterClearAll')}</button>
+          </div>
         </div>,
         funnelAnchorRef.current?.closest('[data-gs-part="overlay"]') ?? (typeof document === 'undefined' ? null : document.body),
       ) : null}
@@ -3900,6 +4020,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
                 title={dir.path}
               >
                 <span className={`${css.chevron} ${open ? css.chevronOpen : ''}`}>▸</span>
+                <PathDirGlyph />
                 <span className={css.treeDirName}>{dir.name}</span>
                 <span className={css.treeDirCount}>{dir.fileCount}</span>
                 <span className={css.treeDirCounts}>
@@ -3940,7 +4061,13 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
               onClick={() => onSelect(file.path)}
               title={file.previousPath !== undefined ? `${file.previousPath} → ${file.path}` : file.path}
             >
-              <span className={`${css.fileStatus} ${STATUS_BADGE[file.status]}`}>{statusGlyph(file.status)}</span>
+              {/* Icon then name, status on the right with the line counts.
+                  The badge used to lead, which put two glyphs side by side the
+                  moment the row gained a file icon; both IDEA and VS Code read
+                  left-to-right as "what this is, then what happened to it",
+                  and the badge still lands in an aligned column — `.filePath`
+                  is the only flexible child. */}
+              <PathFileGlyph />
               <span className={css.filePath}>{basePart(file.path)}</span>
               {file.binary ? <span className={css.fileBinary}>BIN</span> : (
                 <span className={css.fileCounts}>
@@ -3948,6 +4075,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
                   <span className={css.fileCountDel}>{file.deletedLines > 0 ? `−${file.deletedLines}` : ''}</span>
                 </span>
               )}
+              <span className={`${css.fileStatus} ${STATUS_BADGE[file.status]}`}>{statusGlyph(file.status)}</span>
             </button>
           </li>
         )

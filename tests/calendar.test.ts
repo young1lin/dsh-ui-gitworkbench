@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthGrid, weekdayLabels, type CalendarCell } from '../src/client/calendar.ts'
+import { inCalRange, monthGrid, weekdayLabels, type CalendarCell } from '../src/client/calendar.ts'
 
 describe('monthGrid', () => {
   it('lays out August 2026 Monday-first, previous-month days in the lead-in', () => {
@@ -40,5 +40,41 @@ describe('monthGrid', () => {
 
   it('weekdayLabels are Monday-first', () => {
     expect(weekdayLabels('en-US')).toEqual(['M', 'T', 'W', 'T', 'F', 'S', 'S'])
+  })
+})
+
+describe('inCalRange', () => {
+  it('tints the days strictly between two iso bounds', () => {
+    expect(inCalRange('2026-08-10', '2026-08-01', '2026-08-31')).toBe(true)
+    expect(inCalRange('2026-08-02', '2026-08-01', '2026-08-31')).toBe(true)
+  })
+
+  it('leaves the endpoints to the endpoint mark', () => {
+    expect(inCalRange('2026-08-01', '2026-08-01', '2026-08-31')).toBe(false)
+    expect(inCalRange('2026-08-31', '2026-08-01', '2026-08-31')).toBe(false)
+  })
+
+  it('excludes days outside the pair, month and year boundaries included', () => {
+    expect(inCalRange('2026-07-31', '2026-08-01', '2026-08-31')).toBe(false)
+    expect(inCalRange('2026-09-01', '2026-08-01', '2026-08-31')).toBe(false)
+    expect(inCalRange('2025-12-31', '2026-01-01', '2026-01-31')).toBe(false)
+    expect(inCalRange('2026-01-15', '2025-12-25', '2026-02-05')).toBe(true)
+  })
+
+  it('needs BOTH bounds — one alone is not a range', () => {
+    expect(inCalRange('2026-08-10', '2026-08-01', '')).toBe(false)
+    expect(inCalRange('2026-08-10', '', '2026-08-31')).toBe(false)
+    expect(inCalRange('2026-08-10', '', '')).toBe(false)
+  })
+
+  it('ignores approxidate bounds, which name no grid day', () => {
+    // A preset writes `after: 1 week ago`; the grid marks nothing for it, and
+    // must not lexically compare "2026-08-10" against "1 week ago" either.
+    expect(inCalRange('2026-08-10', '1 week ago', '2026-08-31')).toBe(false)
+    expect(inCalRange('2026-08-10', '2026-08-01', 'yesterday')).toBe(false)
+  })
+
+  it('an inverted pair admits nothing, the same as the log it produces', () => {
+    expect(inCalRange('2026-08-10', '2026-08-31', '2026-08-01')).toBe(false)
   })
 })

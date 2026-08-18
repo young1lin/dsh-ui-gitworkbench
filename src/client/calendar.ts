@@ -69,6 +69,27 @@ export function weekdayLabels(locale?: string): readonly string[] {
   return labels
 }
 
+/**
+ * Whether a day falls strictly BETWEEN the two bounds, so the grid can tint
+ * the span the filter admits rather than only its two endpoints.
+ *
+ * Both bounds have to be `yyyy-mm-dd` for a range to exist: the bounds also
+ * accept approxidate text (`1 week ago`), which names no grid day at all, and
+ * lexical comparison on iso dates is the same as chronological. An inverted
+ * pair (after > before) is a range git returns nothing for, and it tints
+ * nothing here for the same reason.
+ *
+ * @param iso - the cell's day.
+ * @param after - lower bound, exclusive here (it renders as an endpoint).
+ * @param before - upper bound, exclusive here.
+ */
+export function inCalRange(iso: string, after: string, before: string): boolean {
+  if (!ISO_DAY.test(after) || !ISO_DAY.test(before)) return false
+  return iso > after && iso < before
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
 /** Today as `yyyy-mm-dd` in the viewer's local timezone (for `todayIso`). */
 export function localTodayIso(): string {
   const now = new Date()

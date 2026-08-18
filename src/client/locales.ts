@@ -29,6 +29,7 @@ export type WorkbenchKey =
   | 'filterClearAll' | 'filterBy' | 'filterUsers' | 'filterUserSearch' | 'filterAuthorsMore'
   | 'filterDate' | 'filterToday' | 'filterLast7' | 'filterLast30' | 'filterAfter' | 'filterBefore'
   | 'filterPaths' | 'filterPathsMore' | 'allBranches' | 'filterPathSearch'
+  | 'filterCalendarSets' | 'filterSelected' | 'filterLocale'
   | 'compareBase' | 'compareHead' | 'comparePick' | 'compareCommits' | 'loadingCompare' | 'noBranches'
   | 'refSearch' | 'refNone' | 'refCount' | 'refTruncated' | 'refWorktrees' | 'refBranches' | 'historyRefLabel'
   | 'settings' | 'themeMode' | 'themePalette' | 'themeScope' | 'themeBackground' | 'themeCss'
@@ -135,6 +136,14 @@ export const zh: Record<WorkbenchKey, string> = {
   filterPaths: '路径',
   filterPathsMore: '文件过多，目录树已截断',
   filterPathSearch: '搜索文件或目录',
+  filterCalendarSets: '日历写入',
+  filterSelected: '已选 {count} 项',
+  // BCP-47 tag for the filter calendar. The month title and the weekday row
+  // used to come from `Intl.DateTimeFormat(undefined, …)`, i.e. the BROWSER's
+  // language — an English drawer on a zh-CN machine printed "2026年8月" over
+  // 一二三四五六日. The dictionary is what knows which language the drawer is
+  // speaking, so the tag lives here.
+  filterLocale: 'zh-CN',
   allBranches: '全部分支',
   expandAll: '展开全部',
   collapseAll: '收起全部',
@@ -267,6 +276,9 @@ export const en: Record<WorkbenchKey, string> = {
   filterPaths: 'Paths',
   filterPathsMore: 'Too many files — tree truncated',
   filterPathSearch: 'Search files or folders',
+  filterCalendarSets: 'Calendar sets',
+  filterSelected: '{count} selected',
+  filterLocale: 'en-US',
   allBranches: 'All branches',
   expandAll: 'Expand all',
   collapseAll: 'Collapse all',
