@@ -463,3 +463,57 @@ button is to click it again. Every path below produces a visible sentence.
 
 Each step is independently shippable and independently revertable. Steps 3 and
 4 do not depend on each other.
+
+---
+
+## 8. Addendum: what shipped, and where it differs
+
+Recorded after the implementation on `feat/editable-diff` and its whole-branch
+review (2026-08-19). Each item names the section it qualifies; the
+qualification is for the case named, not a retraction of the rest.
+
+**(a) While armed, the editor is a dense two-column layout — §3.2's "textarea
+overlay aligned to the row grid" is superseded for the armed state.** The
+transparent-textarea-over-its-own-rendered-lines technique is exactly what
+shipped; what it is aligned to changed. One grid cannot stay diff-aligned and
+hold a buffer whose line count diverges from the diff the moment a keystroke
+lands — that alignment would be a per-keystroke diff. So arming swaps the pane
+to a dense layout: the left column renders the index side densely (one row per
+index line, no diff holes) and the right column is the buffer. The
+diff-aligned two-column view returns the moment the buffer drops.
+
+**(b) An empty layer diff is a state of the pane's BODY, never of the pane.**
+The tab row — Unstaged/Staged, plus the Edit/Save cluster — always renders, and
+the no-change sentence renders below it. The empty cases are happy paths, not
+edge cases: a fully staged file's unstaged side, a file with nothing staged. A
+pane-level empty return there hides the other layer's tab (and its unstage
+action) for exactly those files, and the Edit button still belongs — the
+working tree is the edit target even when every change in it is already
+staged. The empty case is deliberately NOT routed to the old unified view:
+that would resurrect the merged-layer view inside the new mode.
+`side-rows.ts`'s `sideBodyState` is this decision as code.
+
+**(c) `emitPatch` grew a third parameter: reverse-apply emission.** `discard`
+(`apply --reverse` against the working tree) and `unstage` (`apply --cached
+--reverse` against the index) apply the patch at a target holding the patch's
+POST-image, so git's forward `add -p` rules mirror there: an unselected `+`
+line becomes CONTEXT (the target does have it) and an unselected `-` line is
+DROPPED (the target never had it); selected lines keep their sign either way.
+Emitted with the forward rules, a subset patch fails against the post-image
+with "patch does not apply" — confirmed against git itself and pinned by the
+staged-layer cases in `tests/patch-model.git.test.ts`.
+
+**(d) Known first-cut limits, as follow-ups.**
+
+- The block action bar is pointer-only: hover carries it, and there is no
+  keyboard path to a block's stage/roll-back buttons.
+- Highlighting is whole-buffer per change — O(buffer) per keystroke — not
+  incremental.
+- The diff-text cap counts UTF-16 code units (`String.length`), not bytes: a
+  diff of text whose characters take 3 UTF-8 bytes per unit can carry up to 3x
+  the byte budget the cap was sized for. (The target-side cap is exact — real
+  bytes off `stat`/`Buffer`.)
+- `preferredFile`'s fallback is unguarded: when the file being edited vanishes
+  from the tree (the agent committed it), the pane re-points at another file
+  and the buffer drops with it — no unsaved-edits question, because no gesture
+  fired.
