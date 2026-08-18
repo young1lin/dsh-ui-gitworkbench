@@ -47,7 +47,7 @@
  * All copy resolves through the app's locale runtime (`t`), so the panel follows
  * the user's language preference.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -56,6 +56,8 @@ import {
   type Appearance, type ColorMode, type StyleEntry, type StyleScope, type StyleSettings, type ThemeFamily,
 } from './themes.ts'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
+import { parsePatch } from '../patch-model.ts'
+import { alignRows, type SideCell, type SideRow } from './side-rows.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -71,7 +73,7 @@ import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
-import { grammarLoadCount, highlightForRows, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightFile, highlightForRows, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
@@ -219,6 +221,29 @@ export interface GitOpPayload {
 
 export type { DiscardAnswer, DiscardNext, DiscardPreview } from './discard-flow.ts'
 
+/** Which side of the index a side-by-side pane shows: `unstaged` is
+ *  index→worktree (the editable side), `staged` is HEAD→index (read-only). */
+export type SideLayer = 'unstaged' | 'staged'
+
+/**
+ * `gitWorkbench/fileSides`: one layer of one file for the side-by-side pane.
+ * Mirrors the host's `FileSides` (the client re-declares host shapes rather
+ * than importing the host module, which pulls node and the RPC decorators).
+ */
+export interface FileSides {
+  /** Unified diff at full context; '' when the layer has no change. */
+  readonly diff: string
+  /** sha1 of `diff`, echoed back by mutations to prove the same snapshot. */
+  readonly diffSha: string
+  /** Whole right-hand text, the editor's initial buffer. */
+  readonly targetText: string
+  /** Blob sha of the right-hand side; '' when it does not exist. */
+  readonly targetSha: string
+  readonly binary: boolean
+  /** True when the file is past the size guard; the client shows the old view. */
+  readonly tooLarge: boolean
+}
+
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
@@ -226,6 +251,8 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly t: Translate
   readonly fetchStats: (worktreePath: string | undefined, signal: AbortSignal) => Promise<WorkbenchStats | null>
   readonly fetchFileDiff: (worktreePath: string | undefined, path: string, commit: string | undefined, signal: AbortSignal) => Promise<string>
+  /** One layer of one file for the side-by-side diff pane. */
+  readonly fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
@@ -448,7 +475,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1315,6 +1342,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           pendingTicks={pendingTicks}
           onTick={queueTicks}
           fetchFileDiff={fetchDiffForView}
+          fetchFileSides={fetchFileSides}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1512,6 +1540,8 @@ interface DrawerProps {
   /** Queue the git calls for a tick batch. */
   onTick: (action: TickAction, paths: readonly string[]) => void
   fetchFileDiff: (path: string, signal: AbortSignal) => Promise<string>
+  /** One layer of one file for the side-by-side pane; the drawer binds the source. */
+  fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1519,7 +1549,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1917,6 +1947,18 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             {(shown === null && tab !== 'changes') || (tab === 'compare' && !comparable) ? null
               : activeFile !== null && activeFile.binary ? (
                 <div className={css.empty}>{t('binaryFile')}</div>
+              ) : tab === 'changes' && active !== null ? (
+                <SideBySideView
+                  t={t}
+                  path={active}
+                  palette={theme}
+                  statsPath={statsPath}
+                  fetchSides={fetchFileSides}
+                  scopeKey={viewKey}
+                  gen={gen}
+                  fallbackSegment={segment}
+                  fallbackLoading={loading && segment.length === 0}
+                />
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
               ) : segment.length > 0 ? (
@@ -4424,6 +4466,165 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
     <span
       key={i}
       className={tok.mark ? (row.kind === 'add' ? css.wordAdd : css.wordDel) : undefined}
+      style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
+    >{tok.text}</span>
+  ))
+}
+
+/* ---------- side-by-side diff rendering (working tree only) ---------- */
+
+/**
+ * The working tree's per-file diff as IDEA shows it: one tab per layer of the
+ * index, two columns with the whole file, aligned row by row.
+ *
+ * The rows come from `side-rows.ts` over the layer's full-context diff, so the
+ * alignment is read off the diff rather than computed. Read-only in this cut:
+ * the block actions and the editable right column later tasks add act on this
+ * same row model — a block id rides every changed row's cells as
+ * `data-block`, which is where those buttons will hang.
+ *
+ * `tooLarge` and `binary` fall back to the unified view the pane already had
+ * (history and compare keep it unconditionally), with a notice — a silently
+ * different view reads as a broken one, not a guarded one.
+ */
+function SideBySideView({ t, path, palette, statsPath, fetchSides, scopeKey, gen, fallbackSegment, fallbackLoading }: {
+  t: Translate
+  path: string
+  palette: string
+  statsPath: string | undefined
+  fetchSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
+  /** Names the view the fetch belongs to, as `viewKey` does for the diff cache. */
+  scopeKey: string
+  /** Refresh generation: a new one means the tree was re-read, so refetch. */
+  gen: number
+  /** The unified-view material for the fallbacks. */
+  fallbackSegment: string
+  fallbackLoading: boolean
+}): ReactNode {
+  const [layer, setLayer] = useState<SideLayer>('unstaged')
+  const [sides, setSides] = useState<FileSides | null>(null)
+  // Set when the RPC itself failed — most plausibly a host half older than
+  // this client (the two halves reload on different cycles). The unified view
+  // still renders, so an old host costs the new pane, not the diff.
+  const [failed, setFailed] = useState(false)
+
+  // Switching tabs refetches: the two layers are different diffs of the same
+  // file, and neither is a transform of the other client-side.
+  useEffect(() => {
+    const ctrl = new AbortController()
+    let alive = true
+    setSides(null)
+    setFailed(false)
+    fetchSides(statsPath, path, layer, ctrl.signal)
+      .then(value => {
+        if (!alive) return
+        if (value === null) setFailed(true)
+        else setSides(value)
+      })
+      .catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false; ctrl.abort() }
+  }, [fetchSides, statsPath, path, layer, scopeKey, gen])
+
+  const lang = shikiLangOf(path)
+  const shikiTheme = shikiThemeOf(palette)
+  const grammarGen = useSyncExternalStore(subscribeGrammarLoaded, grammarLoadCount)
+  const rows = useMemo(() => {
+    if (sides === null || sides.diff.length === 0) return []
+    const file = parsePatch(sides.diff)
+    // A diff with no hunk (mode-only change, or text patch-model cannot parse)
+    // has no rows to align; the no-change treatment below is the honest view.
+    return file === null ? [] : alignRows(file)
+  }, [sides])
+  // Highlight each column as one file — a row is not a program, and lexing
+  // fragments is what made the unified view paint keywords as plain text.
+  const leftSyntax = useMemo(
+    () => highlightFile(rows.map(row => row.left === null ? '' : row.left.text), lang, shikiTheme),
+    [rows, lang, shikiTheme, grammarGen],
+  )
+  const rightSyntax = useMemo(
+    () => highlightFile(rows.map(row => row.right === null ? '' : row.right.text), lang, shikiTheme),
+    [rows, lang, shikiTheme, grammarGen],
+  )
+
+  /** The pane the drawer had before this view existed, notice included. */
+  const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
+    ? <DiffView segment={fallbackSegment} path={path} palette={palette} />
+    : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : t('noTextDiff')}</div>
+
+  if (failed) return unifiedFallback()
+  if (sides === null) return <div className={css.empty}>{t('loadingDiff')}</div>
+  if (sides.binary) return <div className={css.empty}>{t('binaryFile')}</div>
+  if (sides.tooLarge) {
+    return (
+      <>
+        <div className={css.sideNotice}>{t('diffTooLarge')}</div>
+        {unifiedFallback()}
+      </>
+    )
+  }
+  if (rows.length === 0) return <div className={css.empty}>{t('noTextDiff')}</div>
+  return (
+    <div className={css.sidePane}>
+      <div className={css.sideTabs}>
+        <button
+          type="button"
+          aria-pressed={layer === 'unstaged'}
+          className={layer === 'unstaged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
+          onClick={() => setLayer('unstaged')}
+        >{t('tabUnstaged')}</button>
+        <button
+          type="button"
+          aria-pressed={layer === 'staged'}
+          className={layer === 'staged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
+          onClick={() => setLayer('staged')}
+        >{t('tabStaged')}</button>
+      </div>
+      {/* One grid holds every row's four cells, so the column boundary is the
+          same for all rows — a per-row grid would let the divider drift with
+          each row's content. `data-block` on a row's cells names the change
+          block they belong to; the block actions hang off exactly that. */}
+      <div className={css.sideBody}>
+        {rows.map((row, i) => (
+          <Fragment key={i}>
+            <span className={sideNumClass(row, 'left')}>{row.left === null ? '' : row.left.line}</span>
+            <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}`} data-block={row.block >= 0 ? row.block : undefined}>
+              {renderSideCode(row.left, leftSyntax[i])}
+            </span>
+            <span className={sideNumClass(row, 'right')}>{row.right === null ? '' : row.right.line}</span>
+            <span className={`${css.sideCode} ${sideCodeClass(row, 'right')}`} data-block={row.block >= 0 ? row.block : undefined}>
+              {renderSideCode(row.right, rightSyntax[i])}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Line-number cell class: a PRESENT cell of a changed row carries its side's
+ *  tint into the gutter; an absent one stays blank, the way a split diff shows
+ *  a one-sided change with an empty opposite pane rather than a tinted void. */
+function sideNumClass(row: SideRow, side: 'left' | 'right'): string {
+  const cell = side === 'left' ? row.left : row.right
+  if (cell === null || row.kind === 'same') return css.sideNum
+  return `${css.sideNum} ${side === 'left' ? css.sideNumDel : css.sideNumAdd}`
+}
+
+/** Code cell class: deletions tint left, additions right, context stays quiet. */
+function sideCodeClass(row: SideRow, side: 'left' | 'right'): string {
+  const cell = side === 'left' ? row.left : row.right
+  if (cell === null || row.kind === 'same') return css.sideCodeSame
+  return `${side === 'left' ? css.sideCodeDel : css.sideCodeAdd} ${css.sideCellBlock}`
+}
+
+/** One cell's Shiki runs, or its plain text when no tokens exist. */
+function renderSideCode(cell: SideCell | null, tokens: readonly HighlightRun[] | undefined): ReactNode {
+  if (cell === null) return ''
+  if (tokens === undefined || tokens.length === 0) return cell.text
+  if (tokens.length === 1 && tokens[0]!.color === undefined && !tokens[0]!.italic) return cell.text
+  return tokens.map((tok, i) => (
+    <span
+      key={i}
       style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
     >{tok.text}</span>
   ))

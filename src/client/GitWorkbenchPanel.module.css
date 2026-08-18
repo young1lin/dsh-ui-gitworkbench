@@ -1628,6 +1628,74 @@
 .wordAdd { background: var(--gs-add-word); border-radius: 2px; }
 .wordDel { background: var(--gs-del-word); border-radius: 2px; }
 
+/* Side-by-side diff pane. One grid holds EVERY row's four cells — a per-row
+   grid would let the column boundary drift with each row's content, and a
+   fixed split would clip long lines. Equal 1fr code tracks keep the two
+   columns identically wide however wide the widest line is, and the whole pane
+   (this view's single shared vertical scroll) carries the horizontal one. */
+.sidePane { display: flex; flex-direction: column; min-width: 100%; width: max-content; }
+.sideTabs {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; gap: 16px;
+  flex: none;
+  padding: 6px 16px 0;
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+}
+.sideTab {
+  position: relative;
+  padding: 2px 0 5px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--gs-t-meta); line-height: 16px; font-weight: 500;
+  color: var(--gs-fg-dim);
+  cursor: pointer;
+}
+.sideTab::after {
+  content: '';
+  position: absolute; right: 0; bottom: 1px; left: 0;
+  height: 2px; border-radius: 2px;
+  background: transparent;
+}
+.sideTabActive { color: var(--gs-accent); }
+.sideTabActive::after { background: var(--gs-accent); }
+.sideNotice {
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-info);
+  font-size: var(--gs-t-dense);
+}
+.sideBody {
+  display: grid;
+  grid-template-columns: 3.2em 1fr 3.2em 1fr;
+  margin: 0; padding: 8px 0 16px;
+  min-width: 100%; width: max-content;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
+.sideNum {
+  box-sizing: border-box;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--gs-fg-fainter);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.sideNumAdd { background: var(--gs-add-num, var(--gs-add-line)); }
+.sideNumDel { background: var(--gs-del-num, var(--gs-del-line)); }
+.sideCode { white-space: pre; padding: 0 16px 0 10px; min-height: 20px; }
+.sideCodeSame { color: var(--gs-fg-muted); }
+.sideCodeAdd { background: var(--gs-add-line); }
+.sideCodeDel { background: var(--gs-del-line); }
+/* The block affordance: a changed row's cells carry the block tint above, and
+   hovering one outlines it — the place the block actions will hang from. */
+.sideCellBlock:hover { outline: 1px solid var(--gs-accent); outline-offset: -1px; }
+
 /* No syntax-tint classes here: Shiki resolves a real TextMate theme and emits a
    hex per token, so the panel writes colour inline. A four-class approximation
    painted identifiers, types and punctuation all one colour, which is what made

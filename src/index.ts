@@ -41,8 +41,8 @@
  *
  * @module @young1lin/dsh-ui-gitworkbench
  */
-import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
@@ -89,6 +89,13 @@ const UNTRACKED_FILE_BYTE_CAP = 1_000_000
 const UNTRACKED_TOTAL_CHAR_CAP = 160_000
 /** Files with a NUL byte in the first 8k are treated as binary. */
 const BINARY_SNIFF_BYTES = 8_000
+/** Context radius that makes `git diff` emit ONE hunk covering the whole file —
+ *  the artifact the side-by-side view aligns its two columns on. */
+const FULL_CONTEXT = 1_000_000
+/** Past either of these the side-by-side view declines the file: a 2 MB patch
+ *  per click is not a reasonable wire payload and the row DOM would be enormous. */
+const SIDE_LINE_CAP = 20_000
+const SIDE_BYTE_CAP = 2_000_000
 /** Untracked files measured at once. Enough to keep the disk busy, few enough
  *  that a repository with thousands of them cannot exhaust the file table. */
 const UNTRACKED_READ_CONCURRENCY = 16
@@ -148,6 +155,30 @@ interface GitResult {
   readonly exitCode: number
   /** Last 300 chars of stderr, or the spawn exception message — for error reporting. */
   readonly stderr: string
+}
+
+/**
+ * `fileSides`: one layer of one file, as the side-by-side diff pane reads it.
+ *
+ * `diff` is the layer's full-context unified diff (index→worktree for
+ * `unstaged`, HEAD→index for `staged`) — one hunk covering the whole file,
+ * which is simultaneously the pane's row alignment and, through `patch-model`,
+ * the patch the block actions emit. `diffSha` is sha1 of exactly the string in
+ * `diff`; the block mutations echo it back to prove the file has not changed
+ * since the pane rendered it.
+ */
+export interface FileSides {
+  /** Unified diff at full context; '' when the layer has no change. */
+  readonly diff: string
+  /** sha1 of `diff`, echoed back by mutations to prove the same snapshot. */
+  readonly diffSha: string
+  /** Whole right-hand text, the editor's initial buffer. */
+  readonly targetText: string
+  /** Blob sha of the right-hand side; '' when it does not exist. */
+  readonly targetSha: string
+  readonly binary: boolean
+  /** True when the file is past the size guard; the client shows the old view. */
+  readonly tooLarge: boolean
 }
 
 /** What every write operation reports back. */
@@ -452,6 +483,122 @@ export class GitWorkbenchService extends TypertRemoteService {
     const tracked = await this.git(cwd, ['diff', 'HEAD', '--', path], signal)
     if (tracked.stdout.trim().length > 0) return { diff: tracked.stdout }
     return { diff: await untrackedSegment(cwd, path) ?? '' }
+  }
+
+  /**
+   * One layer of one file for the side-by-side diff pane: the layer's
+   * full-context diff, the right-hand text the editor starts from, and the
+   * shas later mutations check against (plain-identifier params; signal last).
+   *
+   * The two layers answer different questions about the same file — `unstaged`
+   * is index→worktree (the editable side), `staged` is HEAD→index (read-only:
+   * editing the index would mean writing a blob with no file behind it) — so
+   * the diff, the target text and the target sha each come from that layer's
+   * own sources. Untracked files have no index entry, so `git diff` reports
+   * nothing for them and the unstaged layer falls back to the synthesized
+   * new-file segment `fileDiff` already uses.
+   *
+   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param layer - `unstaged` (index→worktree) or `staged` (HEAD→index).
+   * @param signal - abort signal.
+   */
+  @Remote('fileSides')
+  async fileSides(worktreePath: string, path: string, layer: string, signal: AbortSignal): Promise<FileSides> {
+    if (layer !== 'unstaged' && layer !== 'staged') {
+      throw new Error(`unknown layer "${String(layer)}"; expected 'unstaged' or 'staged'`)
+    }
+    if (typeof path !== 'string' || !isSafePathArg(path)) {
+      throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
+    }
+    const cwd = this.cwdOf(worktreePath)
+    return layer === 'unstaged'
+      ? await this.unstagedSides(cwd, path, signal)
+      : await this.stagedSides(cwd, path, signal)
+  }
+
+  /** The unstaged layer: diff index→worktree, target = the working-tree file. */
+  private async unstagedSides(cwd: string, path: string, signal: AbortSignal): Promise<FileSides> {
+    // Size guard first, off the stat rather than a read: declining a file past
+    // the cap must not mean loading a pathological one whole first.
+    try {
+      const info = await stat(join(cwd, path))
+      if (info.isFile() && info.size > SIDE_BYTE_CAP) return { ...emptySides(), tooLarge: true }
+    } catch {
+      // Missing file: deleted in the working tree, which the diff below states.
+    }
+    let bytes: Buffer | null = null
+    try {
+      bytes = await readFile(join(cwd, path))
+    } catch {
+      bytes = null
+    }
+    if (bytes !== null && isBinaryPrefix(bytes, BINARY_SNIFF_BYTES)) {
+      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
+    }
+    if (bytes !== null && countBufferLines(bytes) > SIDE_LINE_CAP) {
+      return { ...emptySides(), tooLarge: true }
+    }
+    let diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    if (binaryDiffOutput(diff)) {
+      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
+    }
+    if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
+      diff = await untrackedSegment(cwd, path, SIDE_BYTE_CAP) ?? ''
+    }
+    return {
+      diff,
+      diffSha: sha1Hex(diff),
+      targetText: bytes === null ? '' : bytes.toString('utf8'),
+      targetSha: bytes === null ? '' : await this.worktreeBlobSha(cwd, path, signal),
+      binary: false,
+      tooLarge: false,
+    }
+  }
+
+  /** The staged layer: diff HEAD→index, target = the index blob. */
+  private async stagedSides(cwd: string, path: string, signal: AbortSignal): Promise<FileSides> {
+    // `:path` resolves the stage-0 index entry: the target text when it exists,
+    // and a failed resolution (no entry) is the empty target, not an error.
+    const shown = await this.git(cwd, ['show', `:${path}`], signal)
+    const sha = (await this.git(cwd, ['rev-parse', '--verify', '--quiet', `:${path}`], signal)).stdout.trim()
+    const targetText = shown.exitCode === 0 ? shown.stdout : ''
+    if (targetText.length > 0 && isBinaryPrefix(Buffer.from(targetText, 'utf8'), BINARY_SNIFF_BYTES)) {
+      return { ...emptySides(), binary: true, targetSha: sha }
+    }
+    if (Buffer.byteLength(targetText, 'utf8') > SIDE_BYTE_CAP || countBufferLines(Buffer.from(targetText, 'utf8')) > SIDE_LINE_CAP) {
+      return { ...emptySides(), tooLarge: true, targetSha: sha }
+    }
+    const diff = (await this.git(cwd, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    if (binaryDiffOutput(diff)) {
+      return { ...emptySides(), binary: true, targetSha: sha }
+    }
+    return {
+      diff,
+      diffSha: sha1Hex(diff),
+      targetText,
+      targetSha: sha,
+      binary: false,
+      tooLarge: false,
+    }
+  }
+
+  /** Blob sha of the working-tree file, '' when git cannot hash it. */
+  private async worktreeBlobSha(cwd: string, path: string, signal: AbortSignal): Promise<string> {
+    const hashed = await this.git(cwd, ['hash-object', '--', path], signal)
+    return hashed.exitCode === 0 ? hashed.stdout.trim() : ''
+  }
+
+  /**
+   * Whether git has never seen this path: no index entry and no HEAD entry.
+   * Those are the files whose diff has to be synthesized rather than asked of
+   * `git diff`, which reports nothing for them.
+   */
+  private async isUntracked(cwd: string, path: string, signal: AbortSignal): Promise<boolean> {
+    const listed = await this.git(cwd, ['ls-files', '--', path], signal)
+    if (listed.exitCode !== 0 || listed.stdout.trim().length > 0) return false
+    const head = await this.git(cwd, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`], signal)
+    return head.exitCode !== 0
   }
 
   /**
@@ -1320,9 +1467,11 @@ async function measureUntracked(cwd: string, path: string): Promise<UntrackedMea
  * `/dev/null` as a repo-relative path. Never throws.
  * @param cwd - worktree the path is relative to.
  * @param path - repository-relative file path.
+ * @param byteCap - refuse files larger than this; defaults to the stats
+ *                  payload's budget, which `fileSides` raises to its own.
  * @returns the segment, or null when the file is missing, binary, or oversized.
  */
-async function untrackedSegment(cwd: string, path: string): Promise<string | null> {
+async function untrackedSegment(cwd: string, path: string, byteCap: number = UNTRACKED_FILE_BYTE_CAP): Promise<string | null> {
   let bytes: Buffer
   try {
     bytes = await readFile(join(cwd, path))
@@ -1330,7 +1479,7 @@ async function untrackedSegment(cwd: string, path: string): Promise<string | nul
     return null
   }
   if (isBinaryPrefix(bytes, BINARY_SNIFF_BYTES)) return null
-  if (bytes.length > UNTRACKED_FILE_BYTE_CAP) return null
+  if (bytes.length > byteCap) return null
   const lines = countBufferLines(bytes)
   const text = bytes.toString('utf8')
   const body = text.endsWith('\n') ? text.slice(0, -1) : text
@@ -1355,6 +1504,29 @@ async function readAll(stream: Readable | undefined): Promise<string> {
 function randomHex(digits: number): string {
   const bytes = randomBytes(Math.ceil(digits / 2))
   return bytes.toString('hex').slice(0, digits)
+}
+
+/** The `fileSides` payload for a file with nothing to show: no diff, no target. */
+function emptySides(): FileSides {
+  return { diff: '', diffSha: sha1Hex(''), targetText: '', targetSha: '', binary: false, tooLarge: false }
+}
+
+/**
+ * sha1 of a string, hex — `diffSha`. Hashed over the exact string that is
+ * returned, so an identical git output always produces an identical sha for
+ * the block mutations to compare against.
+ */
+function sha1Hex(text: string): string {
+  return createHash('sha1').update(text, 'utf8').digest('hex')
+}
+
+/**
+ * Whether a diff git printed says `Binary files … differ` instead of hunks.
+ * The line starts at column 0 — inside a hunk every body line carries a
+ * marker, so a text file that mentions "Binary files" cannot match.
+ */
+function binaryDiffOutput(diff: string): boolean {
+  return /^Binary files /m.test(diff)
 }
 
 function emptyStats(worktreePath: string): WorkbenchStats {

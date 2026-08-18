@@ -26,6 +26,8 @@ export type WorkbenchKey =
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
+  // side-by-side diff pane: the two layer tabs, and the size-guard notice
+  | 'tabUnstaged' | 'tabStaged' | 'diffTooLarge'
   | 'commitAuthor' | 'commitCommitter' | 'commitDate' | 'historyFilterPlaceholder' | 'historyNoMatch'
   | 'filterClearAll' | 'filterBy' | 'filterUsers' | 'filterUserSearch' | 'filterAuthorsMore'
   | 'filterDate' | 'filterToday' | 'filterLast7' | 'filterLast30' | 'filterAfter' | 'filterBefore'
@@ -119,6 +121,11 @@ export const zh: Record<WorkbenchKey, string> = {
   binaryFile: '二进制文件 —— 不显示文本 diff',
   loadingDiff: '加载 diff…',
   noTextDiff: '无文本差异',
+  // The side-by-side pane's layer tabs: unstaged is index→worktree, staged is
+  // HEAD→index — the two halves of what the old combined view showed at once.
+  tabUnstaged: '未暂存',
+  tabStaged: '已暂存',
+  diffTooLarge: '文件过大（超过 20000 行或 2 MB），已改用普通 diff 视图',
   noCommits: '无提交历史',
   historyLabel: '提交历史',
   commitAuthor: '作者',
@@ -280,6 +287,9 @@ export const en: Record<WorkbenchKey, string> = {
   binaryFile: 'Binary file — no text diff',
   loadingDiff: 'Loading diff…',
   noTextDiff: 'No text changes',
+  tabUnstaged: 'Unstaged',
+  tabStaged: 'Staged',
+  diffTooLarge: 'File too large (over 20,000 lines or 2 MB) — showing the plain diff view',
   noCommits: 'No commit history',
   historyLabel: 'Commit history',
   commitAuthor: 'Author',

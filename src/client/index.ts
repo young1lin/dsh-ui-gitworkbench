@@ -21,6 +21,7 @@ import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
+  type FileSides, type SideLayer,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
@@ -90,6 +91,19 @@ export function apply(ctx: ClientContext): void {
             { args: { worktreePath: worktreePath ?? '', hash } },
             signal,
           ) as { ok: true; value: WorkbenchStats } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // One layer of one file for the side-by-side diff pane: that layer's
+        // full-context diff, the right-hand text, and the shas block mutations
+        // will check against. Null (an older host half, a failed call) makes
+        // the pane fall back to the unified view rather than go blank.
+        fetchFileSides: async (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal): Promise<FileSides | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/fileSides',
+            { args: { worktreePath: worktreePath ?? '', path, layer } },
+            signal,
+          ) as { ok: true; value: FileSides } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
         // One page of the commit log past what `stats` bundles, so the history
