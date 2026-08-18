@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-runtime' // informational inject ed
 import type {} from '@deepseek-ai/dsh-client-ui-slots' // SlotMap is reused, not extended
 import {
   GitWorkbenchPanel,
-  type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
+  type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
@@ -202,6 +202,22 @@ export function apply(ctx: ClientContext): void {
             { args: { worktreePath: worktreePath ?? '' } },
             signal,
           ) as { ok: true; value: SyncStatus } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // Read-only, and the only reason it is a separate call rather than a
+        // field on the file row: the confirmation must state what discarding
+        // this file would do NOW, not what the last poll saw. A row that says
+        // "modified" while git has since had the file staged, edited or removed
+        // is the difference between "goes back to its committed content" and
+        // "leaves the disk and cannot come back" — which is the entire question
+        // the dialog exists to ask.
+        fetchDiscardPlan: async (worktreePath: string | undefined, path: string, signal: AbortSignal): Promise<DiscardPreview | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/discardPlan',
+            { args: { worktreePath: worktreePath ?? '', path } },
+            signal,
+          ) as { ok: true; value: DiscardPreview } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
         runGitOp: async (op: GitOpName, worktreePath: string | undefined, payload: GitOpPayload, signal: AbortSignal): Promise<GitOpResult> => {

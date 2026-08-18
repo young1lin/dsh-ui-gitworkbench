@@ -47,6 +47,9 @@ export type WorkbenchKey =
   | 'stage' | 'unstage' | 'stageAll' | 'unstageAll' | 'stagedCount'
   | 'commit' | 'amend' | 'commitPlaceholder' | 'commitNeedMessage' | 'commitLead'
   | 'op.ok.stage' | 'op.ok.unstage' | 'op.ok.commit' | 'op.ok.fetch' | 'op.ok.pull' | 'op.ok.push'
+  | 'op.ok.discardFile'
+  | 'discardAction' | 'discardTitle' | 'discardConfirm' | 'discardCancel'
+  | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
   | 'op.fail.auth' | 'op.fail.network' | 'op.fail.no-upstream' | 'op.fail.diverged' | 'op.fail.conflict'
   | 'op.fail.nothing-to-commit' | 'op.fail.dirty' | 'op.fail.unknown'
 
@@ -180,6 +183,19 @@ export const zh: Record<WorkbenchKey, string> = {
   'op.ok.fetch': '已获取远端信息',
   'op.ok.pull': '拉取完成',
   'op.ok.push': '推送成功',
+  'op.ok.discardFile': '已撤回',
+  // The row action, and the dialog it opens. IDEA calls this Rollback and
+  // means "take the file back to its committed state" — not "undo my last
+  // edit", which is the editor's job and a different promise.
+  discardAction: '撤回改动',
+  discardTitle: '撤回改动？',
+  discardConfirm: '撤回',
+  discardCancel: '取消',
+  // One body per consequence. The dialog never says a generic "are you sure":
+  // the whole point of it is to name which of these three is about to happen.
+  discardBodyRestore: '{path} 将还原成上次提交时的样子。这里的 {added} 行新增、{deleted} 行删除无法找回。',
+  discardBodyDelete: '{path} 从未被 git 记录过，删除后无法找回。',
+  discardBodyUnrename: '撤销重命名：{path} 改回 {previousPath}，改名期间的内容改动一并丢弃。',
   'op.fail.auth': '认证失败。凭据提示已被禁用，请先在终端里配置好凭据再重试。',
   'op.fail.network': '网络不可达：主机名解析失败或连接不上。检查网络与远程地址后重试。',
   'op.fail.no-upstream': '当前分支没有上游分支。',
@@ -315,6 +331,14 @@ export const en: Record<WorkbenchKey, string> = {
   'op.ok.fetch': 'Fetched',
   'op.ok.pull': 'Pulled',
   'op.ok.push': 'Pushed',
+  'op.ok.discardFile': 'Rolled back',
+  discardAction: 'Roll back changes',
+  discardTitle: 'Roll back changes?',
+  discardConfirm: 'Roll back',
+  discardCancel: 'Cancel',
+  discardBodyRestore: '{path} goes back to its committed content. The {added} added and {deleted} deleted lines here cannot be recovered.',
+  discardBodyDelete: '{path} was never recorded by git. Deleting it cannot be undone.',
+  discardBodyUnrename: 'Undo the rename: {path} goes back to {previousPath}, and content changed along the way is lost.',
   'op.fail.auth': 'Authentication failed. Credential prompts are disabled here — set your credentials up in a terminal first.',
   'op.fail.network': 'The network was unreachable — the host could not be resolved or the connection failed. Check connectivity and the remote URL, then retry.',
   'op.fail.no-upstream': 'This branch has no upstream.',

@@ -13,8 +13,12 @@
  *     of that. A file may legitimately be named `-f`, and passed positionally
  *     it becomes an option instead of a path.
  *   - Nothing here builds a destructive command. There is no `--force`, no
- *     `reset --hard`, no `clean`. Losing committed work needs a confirmation
- *     design of its own, not a button that happens to be adjacent to Push.
+ *     `reset --hard`, no `clean`. The one action that does lose work — rolling
+ *     one file back — lives in `discard-ops.ts` instead, behind the
+ *     confirmation design this rule demanded: git's own reading of the file
+ *     rather than the client's claim, `git restore` scoped to a single
+ *     pathspec as the whole vocabulary, and a dialog that names the
+ *     consequence. It is deliberately not a button adjacent to Push.
  *
  * @module
  */
@@ -341,16 +345,44 @@ export function parseNumstat(stdout: string): Map<string, NumstatEntry> {
   return out
 }
 
+/** One porcelain line, split into the parts a caller can act on. */
+export interface StatusLine {
+  /** The two status columns, e.g. ` M`, `??`, `R `. */
+  readonly xy: string
+  /** The path git reports the file under NOW — the rename target, if renamed. */
+  readonly path: string
+  /** For a rename, the path HEAD still knows the file by; '' otherwise. */
+  readonly previousPath: string
+  readonly renamed: boolean
+}
+
+/**
+ * Split one `git status --porcelain=v1` line.
+ *
+ * Exported because more than the file list needs it: `discard-ops` plans from
+ * the RAW XY pair, which {@link parseStatus} folds away into a
+ * {@link GitFileStatus}. Sharing this keeps the quoting and `old -> new`
+ * handling in one place — a second implementation of it is how a path with a
+ * non-ASCII name ends up being acted on unescaped.
+ * @param line - one output line, branch header and blanks included.
+ * @returns the split, or null for a line that names no file.
+ */
+export function parseStatusLine(line: string): StatusLine | null {
+  if (line.length === 0 || line.startsWith('##')) return null
+  if (line.length < 3) return null
+  const { path, previousPath, renamed } = parsePath(line.slice(3))
+  if (path.length === 0) return null
+  return { xy: line.slice(0, 2), path, previousPath, renamed }
+}
+
 /** Parse porcelain lines into a MUTABLE file list — untracked entries get their
  * counts filled in by the synthesis pass afterwards. */
 export function parseStatus(stdout: string, numstat: Map<string, NumstatEntry>): MutableGitFile[] {
   const files: MutableGitFile[] = []
   for (const line of stdout.split('\n')) {
-    if (line.length === 0 || line.startsWith('##')) continue
-    if (line.length < 3) continue
-    const xy = line.slice(0, 2)
-    const { path, previousPath, renamed } = parsePath(line.slice(3))
-    if (path.length === 0) continue
+    const parsed = parseStatusLine(line)
+    if (parsed === null) continue
+    const { xy, path, previousPath, renamed } = parsed
     const counts = numstat.get(path) ?? { added: 0, deleted: 0, binary: false }
     const { staged, unstaged } = stageStateOf(xy)
     const base: MutableGitFile = {

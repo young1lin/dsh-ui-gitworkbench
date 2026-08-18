@@ -198,7 +198,7 @@ export interface GitOpResult {
 }
 
 /** The host endpoints under `gitWorkbench/` that change something. */
-export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push'
+export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'discardFile'
 
 /** Extra arguments an operation needs beyond the worktree path. */
 export interface GitOpPayload {
@@ -206,6 +206,22 @@ export interface GitOpPayload {
   readonly message?: string
   readonly amend?: boolean
   readonly mode?: 'ff-only' | 'rebase' | 'merge'
+  /** `discardFile` only, and deliberately singular: the one irreversible thing
+   *  the drawer does takes one file per call, so a mistaken click costs one
+   *  file. */
+  readonly path?: string
+  /** `discardFile` only: the effect the confirmation stated. The host refuses
+   *  if the file changed underneath the dialog and now means something else. */
+  readonly expectedEffect?: string
+}
+
+/** What the host says rolling one file back would do. */
+export interface DiscardPreview {
+  /** Absent when git reports nothing to roll back for that path. */
+  readonly effect?: 'restore' | 'delete' | 'recover' | 'unrename'
+  readonly irreversible?: boolean
+  readonly previousPath?: string
+  readonly error?: string
 }
 
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
@@ -230,6 +246,9 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly saveStyle: (worktreePath: string | undefined, scope: StyleScope, entry: StyleEntry, signal: AbortSignal) => Promise<{ ok: boolean; error?: string }>
   readonly fetchSync: (worktreePath: string | undefined, signal: AbortSignal) => Promise<SyncStatus | null>
   readonly runGitOp: (op: GitOpName, worktreePath: string | undefined, payload: GitOpPayload, signal: AbortSignal) => Promise<GitOpResult>
+  /** What rolling this file back WOULD do, read fresh so the confirmation
+   *  states the real consequence rather than one derived from a polled row. */
+  readonly fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardPreview | null>
 }
 
 /**
@@ -434,7 +453,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1283,6 +1302,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           busy={busy}
           opResult={opResult}
           runOp={runOp}
+          fetchDiscardPlan={fetchDiscardPlan}
           pendingTicks={pendingTicks}
           onTick={queueTicks}
           fetchFileDiff={fetchDiffForView}
@@ -1474,6 +1494,7 @@ interface DrawerProps {
   /** The last write operation's outcome, or null once a new one starts. */
   opResult: { op: GitOpName; result: GitOpResult } | null
   runOp: (op: GitOpName, payload?: GitOpPayload) => Promise<GitOpResult>
+  fetchDiscardPlan: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<DiscardPreview | null>
   /** Ticks awaiting their git call, keyed by path — overlaid over the file
    *  list so the click is on screen before git confirms it. */
   pendingTicks: ReadonlyMap<string, TickAction>
@@ -1487,7 +1508,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, pendingTicks, onTick, fetchFileDiff, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1513,6 +1534,9 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   // highlight. See `active-file.ts` for the order and the reasoning.
   const active = preferredFile(body.files, activeFilterPaths, selected)
   const activeFile = body.files.find(file => file.path === active) ?? null
+  /** The file whose roll-back is being asked about; `plan` is null while the
+   *  host is still being asked what it would do. */
+  const [discardPending, setDiscardPending] = useState<{ file: GitFile; plan: DiscardPreview | null } | null>(null)
   const [fetched, setFetched] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
   const bundled = active === null ? '' : segments.get(active) ?? ''
@@ -1542,6 +1566,50 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   useEffect(() => { setFetched(new Map()) }, [gen])
 
   const selectAndReveal = (path: string): void => onSelect(path)
+
+  /**
+   * Roll-back, in two steps that are deliberately not one.
+   *
+   * The click asks the host what rolling this file back would DO, and only the
+   * answer opens the dialog. Deriving the wording from the clicked row instead
+   * would mean describing a file as the last poll saw it: the difference
+   * between "goes back to its committed content" and "leaves the disk and
+   * cannot come back" is the entire subject of the question being asked, and it
+   * is exactly the thing a stale row gets wrong.
+   *
+   * `recover` — a deleted file coming back — shows no dialog at all. It loses
+   * nothing, and a confirmation in front of a pure gain is how people learn to
+   * dismiss confirmations without reading them.
+   */
+  const askDiscard = (file: GitFile): void => {
+    setDiscardPending({ file, plan: null })
+    void (async () => {
+      const preview = await fetchDiscardPlan(statsPath, file.path, new AbortController().signal)
+      // Nothing to roll back means the row was stale — the tree lists only
+      // changed files, so a file with no change is one git has since seen
+      // settled. Refreshing is the honest answer: the row goes away, which is
+      // both the feedback and the fix. A banner saying "nothing happened"
+      // would leave the row that caused it sitting right there.
+      if (preview === null || preview.effect === undefined) {
+        setDiscardPending(null)
+        onRefresh()
+        return
+      }
+      if (preview.irreversible !== true) {
+        setDiscardPending(null)
+        void runOp('discardFile', { path: file.path, expectedEffect: preview.effect })
+        return
+      }
+      setDiscardPending({ file, plan: preview })
+    })()
+  }
+
+  const confirmDiscard = (): void => {
+    const pending = discardPending
+    if (pending === null || pending.plan === null) return
+    setDiscardPending(null)
+    void runOp('discardFile', { path: pending.file.path, expectedEffect: pending.plan.effect })
+  }
 
   const drawerRef = useRef<HTMLDivElement>(null)
   const commitsRef = useRef<HTMLDivElement>(null)
@@ -1814,6 +1882,10 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 const paths = pathsFor(checked, action)
                 if (paths.length > 0) onTick(action, paths)
               } : undefined}
+              // Roll back, likewise working-tree only. The click does not act:
+              // it asks the host what the act WOULD be, and that answer is what
+              // the dialog states. See `askDiscard`.
+              onDiscard={tab === 'changes' ? askDiscard : undefined}
               footer={tab === 'changes'
                 ? (
                   <CommitBox
@@ -1845,6 +1917,75 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 <div className={css.empty}>{t('noTextDiff')}</div>
               )}
           </div>
+        </div>
+        {discardPending?.plan != null ? (
+          <DiscardConfirm
+            t={t}
+            file={discardPending.file}
+            plan={discardPending.plan}
+            onCancel={() => setDiscardPending(null)}
+            onConfirm={confirmDiscard}
+          />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The one dialog in this drawer, because this is the one act it cannot undo.
+ *
+ * It never asks a generic "are you sure": the body names the file and states
+ * which of the three consequences is about to happen, in the host's own reading
+ * of that file taken moments ago. Cancel holds the initial focus and Escape
+ * closes, because the default answer to an irreversible question is no.
+ *
+ * There is deliberately no "don't ask again". This is the only path in the
+ * drawer with nothing behind it, and a checkbox whose whole function is to
+ * switch off the last guard is a feature that eventually gets clicked.
+ */
+function DiscardConfirm({ t, file, plan, onCancel, onConfirm }: {
+  t: Translate
+  file: GitFile
+  plan: DiscardPreview
+  onCancel: () => void
+  onConfirm: () => void
+}): ReactNode {
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => { cancelRef.current?.focus() }, [])
+  useEffect(() => {
+    // Capture phase: the drawer's own Escape handler closes the whole drawer,
+    // and answering a question about deleting a file should not also dismiss
+    // the thing that asked it.
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true) }
+  }, [onCancel])
+
+  const body = plan.effect === 'delete'
+    ? t('discardBodyDelete', { path: file.path })
+    : plan.effect === 'unrename'
+      ? t('discardBodyUnrename', { path: file.path, previousPath: plan.previousPath ?? '' })
+      : t('discardBodyRestore', { path: file.path, added: file.addedLines, deleted: file.deletedLines })
+
+  return (
+    <div className={css.confirmScrim} onClick={onCancel}>
+      <div
+        className={css.confirmBox}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={t('discardTitle')}
+        onClick={event => event.stopPropagation()}
+      >
+        <div className={css.confirmTitle}>{t('discardTitle')}</div>
+        <div className={css.confirmBody}>{body}</div>
+        <div className={css.confirmActions}>
+          <button ref={cancelRef} type="button" className={css.btn} onClick={onCancel}>{t('discardCancel')}</button>
+          <button type="button" className={`${css.btn} ${css.btnDanger}`} onClick={onConfirm}>{t('discardConfirm')}</button>
         </div>
       </div>
     </div>
@@ -2519,6 +2660,29 @@ function SyncGlyph({ of }: { of: keyof typeof SYNC_GLYPH }): ReactNode {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d={SYNC_GLYPH[of]} />
+    </svg>
+  )
+}
+
+/**
+ * Roll back: the counter-clockwise arc every editor and VCS uses for undo,
+ * drawn in the same New UI idiom as the node glyphs beside it — 16px grid,
+ * 1px stroke, no fill — so the row does not mix an outlined file icon with a
+ * solid action icon.
+ */
+function RollbackGlyph(): ReactNode {
+  return (
+    <svg
+      width="14" height="14" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1.25"
+      strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* The arc, open at the upper left where the head goes. */}
+      <path d="M3.5 6.5a5 5 0 1 0 1.9-2.2" />
+      {/* The head: a corner, not a triangle — a filled arrowhead this small
+          turns into a dot at 1x. */}
+      <path d="M2.6 3.2v3.4h3.4" />
     </svg>
   )
 }
@@ -3820,11 +3984,13 @@ interface FileTreeProps {
   /** Add or remove files from the commit set. Undefined outside the working-tree
    *  view, where what a commit contains was decided long ago. */
   onCheck?: (files: readonly GitFile[], state: CheckState) => void
+  /** Roll one file back to HEAD; working-tree view only. */
+  onDiscard?: (file: GitFile) => void
   /** Rendered under the tree in the working-tree view only. */
   footer?: ReactNode
 }
 
-function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, footer }: FileTreeProps): ReactNode {
+function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, onDiscard, footer }: FileTreeProps): ReactNode {
   const tree = useMemo(() => buildTree(files), [files])
   /** Default: a dir collapses when it holds more than 12 files anywhere below it. */
   const effective = collapsed ?? defaultCollapsed(tree)
@@ -3901,7 +4067,7 @@ function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onColl
         <ul className={css.tree}>
           <TreeChildren
             node={tree} depth={0} active={active} collapsed={effective}
-            onToggle={toggleOne} onSelect={onSelect} onCheck={onCheck} stageLabels={stageLabels}
+            onToggle={toggleOne} onSelect={onSelect} onCheck={onCheck} onDiscard={onDiscard} stageLabels={stageLabels} discardLabel={t('discardAction')}
           />
         </ul>
       )}
@@ -3985,11 +4151,18 @@ interface TreeChildrenProps {
   /** Add or remove files from the commit set. Undefined outside the working-tree
    *  view, where what a commit contains was decided long ago. */
   onCheck?: (files: readonly GitFile[], state: CheckState) => void
+  /** Roll one file back to HEAD. Undefined outside the working-tree view for
+   *  the same reason `onCheck` is: a commit's files are history, and there is
+   *  nothing there to roll back. Directories never offer it — the irreversible
+   *  action does not get a gesture that takes a subtree with it. */
+  onDiscard?: (file: GitFile) => void
   /** Pre-translated, so the row does not have to carry `t` for two strings. */
   stageLabels: { stage: string; unstage: string }
+  /** Label for the roll-back action, pre-translated like `stageLabels`. */
+  discardLabel?: string
 }
 
-function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCheck, stageLabels }: TreeChildrenProps): ReactNode {
+function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCheck, onDiscard, stageLabels, discardLabel }: TreeChildrenProps): ReactNode {
   const dirNodes = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))
   const fileNodes = [...node.files].sort((a, b) => basePart(a.path).localeCompare(basePart(b.path)))
   const checkColumn = onCheck !== undefined ? TREE_CHECK_W : 0
@@ -4036,7 +4209,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
                 // row's tick — so the tick's width is part of the offset.
                 style={{ [RAIL_VAR]: `${checkColumn + TREE_BASE_INDENT + depth * TREE_INDENT + TREE_RAIL_OFFSET}px` } as CSSProperties}
               >
-                <TreeChildren node={dir} depth={depth + 1} active={active} collapsed={collapsed} onToggle={onToggle} onSelect={onSelect} onCheck={onCheck} stageLabels={stageLabels} />
+                <TreeChildren node={dir} depth={depth + 1} active={active} collapsed={collapsed} onToggle={onToggle} onSelect={onSelect} onCheck={onCheck} onDiscard={onDiscard} stageLabels={stageLabels} discardLabel={discardLabel} />
               </ul>
             ) : null}
           </li>
@@ -4077,6 +4250,17 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
               )}
               <span className={`${css.fileStatus} ${STATUS_BADGE[file.status]}`}>{statusGlyph(file.status)}</span>
             </button>
+            {onDiscard !== undefined ? (
+              /* Outside the row button, not inside it: a button in a button is
+                 invalid, and clicking roll-back must not also select the file. */
+              <button
+                type="button"
+                className={css.fileDiscard}
+                title={discardLabel}
+                aria-label={`${discardLabel ?? ''} ${file.path}`}
+                onClick={event => { event.stopPropagation(); onDiscard(file) }}
+              ><RollbackGlyph /></button>
+            ) : null}
           </li>
         )
       })}

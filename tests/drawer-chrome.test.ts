@@ -251,6 +251,37 @@ describe('one button vocabulary', () => {
   })
 })
 
+describe('the roll-back confirmation covers the drawer', () => {
+  // `.drawer > *:not(.resizer) { position: relative }` out-specifies a bare
+  // `.confirmScrim`, so an `position: absolute` written on the class alone is
+  // present, correct and ignored — the scrim laid itself out as the last flex
+  // item and the dialog appeared in a 170px strip at the bottom of the drawer.
+  // Nothing errors; it just stops being a modal.
+  it('declares the scrim as a drawer child so it out-ranks the stacking rule', () => {
+    const scoped = /\.drawer\s*>\s*\.confirmScrim\s*\{([^}]*)\}/.exec(css)
+    expect(scoped?.[1], 'no `.drawer > .confirmScrim` rule').toMatch(/position:\s*absolute/)
+    expect(scoped![1], 'the scrim must fill the drawer').toMatch(/inset:\s*0/)
+  })
+
+  it('leaves no losing copy of the same declaration on the bare class', () => {
+    // A second `position` on `.confirmScrim` would read as the authority while
+    // never applying, which is how the first version was reviewed as correct.
+    const bare = /(^|\})\s*\.confirmScrim\s*\{([^}]*)\}/m.exec(css)
+    expect(bare?.[2], 'no bare .confirmScrim rule').toBeDefined()
+    expect(bare![2], '.confirmScrim re-declares a position it cannot win').not.toMatch(/position:/)
+  })
+
+  it('puts the scrim above every bar it has to cover', () => {
+    const rank = (selector: string): number =>
+      Number(/z-index:\s*(\d+)/.exec(block(selector))?.[1] ?? '0')
+    const scrim = rank('.drawer > .confirmScrim')
+    expect(scrim, 'the scrim has no rank').toBeGreaterThan(0)
+    for (const bar of ['.drawer > .header', '.drawer > .tabs', '.drawer > .compareBar', '.drawer > .syncBar']) {
+      expect(scrim, `the scrim sits under ${bar}`).toBeGreaterThan(rank(bar))
+    }
+  })
+})
+
 describe('names stay readable when the row runs out of width', () => {
   // `direction: rtl` truncates from the left in one declaration, and reorders
   // the backslashes of a Windows path while it does it. The two-span split is

@@ -438,6 +438,13 @@
 .drawer > .tabs { z-index: 23; }
 .drawer > .compareBar { z-index: 22; }
 .drawer > .syncBar { z-index: 20; }
+/* The roll-back confirmation, and the one deliberate exception to the
+   strictly-decreasing rule above: it is the LAST child and outranks every
+   other, because it is not a popover dropping through its siblings but a
+   modal that has to cover them. It also has to be declared here — the
+   `> *:not(.resizer)` rule out-specifies a bare `.confirmScrim`, which is
+   what pinned it to the bottom of the drawer as an in-flow flex item. */
+.drawer > .confirmScrim { position: absolute; inset: 0; z-index: 40; }
 /* Maximized drops the inset and the rounding: at full bleed they would only
    waste edge pixels the diff wants. */
 .overlayMax { padding: 0; gap: 0; }
@@ -1642,6 +1649,30 @@
    toggle trails it rather than displacing the tree's left edge. */
 .fileLi { display: flex; align-items: stretch; }
 .fileLi .file { flex: 1 1 auto; min-width: 0; }
+/* Roll back, in the same 22px slot the tick occupies on the other side — the
+   row already has two gutters, and a third would eat the name.
+   It holds its width at all times and only fades in on hover or keyboard
+   focus: revealing it by `display` would re-flow the name column under the
+   pointer, and a destructive control that shifts the row as it appears is one
+   the pointer arrives at by accident. */
+.fileDiscard {
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--gs-fg-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.fileLi:hover .fileDiscard, .fileDiscard:focus-visible { opacity: 1; }
+/* Red on hover, and only on hover. Standing red would make every row of a
+   working tree look like a warning; arriving under the pointer is where the
+   colour has something to say. */
+.fileDiscard:hover { color: var(--gs-del); }
+.fileDiscard:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: -2px; border-radius: var(--gs-r-control); }
 /* Directory rows need the same two-slot row as files, but their subtree list
    has to stay a child of the <li> — hence a wrapper around just the row. */
 .treeRow { display: flex; align-items: stretch; }
@@ -1915,3 +1946,47 @@
   font-size: var(--gs-t-meta); line-height: 15px;
   cursor: default;
 }
+
+/* ---- the roll-back confirmation ----
+ *
+ * Scoped to the drawer rather than the viewport: `.drawer` is the positioned
+ * ancestor, so the scrim dims the thing the question is about and leaves the
+ * session behind it alone. It is also the only modal surface in this plugin —
+ * everything else the drawer does can be done again.
+ */
+.confirmScrim {
+  /* `position`, `inset` and the stacking rank live with the drawer's other
+     child ranks — see `.drawer > .confirmScrim`. */
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: var(--gs-backdrop);
+  animation: gsFade 120ms ease-out;
+}
+.confirmBox {
+  display: flex; flex-direction: column; gap: 10px;
+  box-sizing: border-box;
+  width: min(440px, 100%);
+  padding: 18px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-drawer);
+  background: var(--gs-bg);
+  box-shadow: 0 18px 48px var(--gs-shadow);
+}
+.confirmTitle { color: var(--gs-fg); font-size: var(--gs-t-ui); font-weight: 600; }
+/* The body carries a path, which is the one string here that can be long and
+   has no sensible break points of its own. */
+.confirmBody {
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-dense); line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+/* Cancel first in the DOM so it takes focus and the Tab order starts on the
+   harmless answer; `row-reverse` puts the destructive one where the eye ends. */
+.confirmActions { display: flex; flex-direction: row-reverse; gap: 8px; margin-top: 2px; }
+/* Qualified rather than a bare modifier: written this way it out-specifies
+   `.btn` wherever either rule sits, which is the failure the drawer already
+   shipped once. */
+.btn.btnDanger {
+  border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff);
+  font-weight: 600;
+}
+.btn.btnDanger:hover:not(:disabled) { border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff); }

@@ -42,9 +42,9 @@
  * @module @young1lin/dsh-ui-gitworkbench
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -59,6 +59,10 @@ import {
   type GitFile, type GitFileStatus, type MutableGitFile,
   type OpFailure, type PullMode, type Tracking,
 } from './git-ops.js'
+import {
+  planFromStatus,
+  type DiscardEffect, type DiscardPlan,
+} from './discard-ops.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -73,6 +77,7 @@ import {
 
 export type { WorktreeBinding, WorktreeOpResult }
 export type { GitFile, GitFileStatus }
+export type { DiscardEffect }
 export type { StyleEntry }
 
 /** Cap the bundled unified diff so a huge change cannot blow the RPC response. */
@@ -947,6 +952,143 @@ export class GitWorkbenchService extends TypertRemoteService {
   @Remote('unstage')
   async unstage(worktreePath: string, paths: readonly string[], signal: AbortSignal): Promise<GitOpResult> {
     return this.writeOp(worktreePath, () => unstageArgv(asPathList(paths)), signal)
+  }
+
+  /**
+   * What discarding this file WOULD do, without doing it.
+   *
+   * The confirmation has to state the real consequence, and only git knows it:
+   * the drawer's own file list is a poll old, and the difference between "this
+   * goes back to its committed content" and "this file leaves the disk and
+   * cannot come back" is exactly the difference the reader is being asked
+   * about. So the dialog is built from this, read fresh, rather than from the
+   * row that was clicked.
+   * @param worktreePath - directory to run in.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param signal - abort signal.
+   * @returns the effect and whether it is irreversible; `effect` is absent when
+   *          git reports nothing to discard for that path.
+   */
+  @Remote('discardPlan')
+  async discardPlan(worktreePath: string, path: string, signal: AbortSignal): Promise<{
+    effect?: DiscardEffect
+    irreversible?: boolean
+    previousPath?: string
+    error?: string
+  }> {
+    let plan: DiscardPlan | null
+    try {
+      plan = await this.planDiscard(worktreePath, path, signal)
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+    if (plan === null) return {}
+    // JSON-safe: an absent previousPath is an omitted key, never `undefined`.
+    return plan.previousPath !== undefined
+      ? { effect: plan.effect, irreversible: plan.irreversible, previousPath: plan.previousPath }
+      : { effect: plan.effect, irreversible: plan.irreversible }
+  }
+
+  /**
+   * Take one file back to its committed state — IntelliJ's Rollback.
+   *
+   * One path per call, never a list. Discarding is the only thing the drawer
+   * does that cannot be undone, and a batch entry point is the shape that
+   * turns one mistaken click into a lost afternoon; a caller that wants two
+   * files asks twice, and gets asked twice.
+   *
+   * The plan is re-derived here from a fresh `git status`, so a client that
+   * mislabels a tracked file as untracked cannot talk the host into deleting
+   * it. `expectedEffect` is what the reader was shown and agreed to: if the
+   * file changed underneath the dialog — staged, edited, reverted by someone
+   * else — the freshly derived effect no longer matches and nothing is done.
+   * @param worktreePath - directory to run in.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param expectedEffect - the effect the confirmation stated; blank skips
+   *                         the agreement check, which only the reversible
+   *                         `recover` path takes (it shows no dialog).
+   * @param signal - abort signal.
+   * @returns the operation result, with the effect actually carried out.
+   */
+  @Remote('discardFile')
+  async discardFile(worktreePath: string, path: string, expectedEffect: string | undefined, signal: AbortSignal): Promise<GitOpResult & { effect?: DiscardEffect }> {
+    let plan: DiscardPlan | null
+    try {
+      plan = await this.planDiscard(worktreePath, path, signal)
+    } catch (error) {
+      return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
+    }
+    // Nothing to discard is not a failure: the row was stale, and the tree the
+    // client refreshes onto will simply no longer carry it.
+    if (plan === null) return { ok: true }
+    if (typeof expectedEffect === 'string' && expectedEffect.length > 0 && expectedEffect !== plan.effect) {
+      return {
+        ok: false,
+        failure: 'unknown',
+        error: `this file changed since you were asked (now: ${plan.effect}); nothing was done`,
+      }
+    }
+
+    const cwd = this.cwdOf(worktreePath)
+    for (const step of plan.steps) {
+      if (step.kind === 'git') {
+        const result = await this.git(cwd, step.argv, signal)
+        const failure = classifyFailure(result.exitCode, result.stderr, result.stdout)
+        if (failure !== null) {
+          return { ok: false, failure, error: (result.stderr || result.stdout).trim().slice(-1000) }
+        }
+        continue
+      }
+      try {
+        await this.removeInside(cwd, step.path)
+      } catch (error) {
+        return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+    return { ok: true, effect: plan.effect }
+  }
+
+  /**
+   * Read the worktree's status and plan for one path.
+   *
+   * The status is the WHOLE tree's, deliberately: git pairs a deletion with an
+   * addition to see a rename, and a pathspec that admits only one of the pair
+   * reports `D` plus `??` instead — which plans as "restore one, DELETE the
+   * other" where the truth is "undo the rename".
+   */
+  private async planDiscard(worktreePath: string, path: string, signal: AbortSignal): Promise<DiscardPlan | null> {
+    if (typeof path !== 'string' || !isSafePathArg(path)) {
+      throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
+    }
+    const cwd = this.cwdOf(worktreePath)
+    const status = await this.git(cwd, ['status', '--porcelain=v1', '--untracked-files=all'], signal)
+    if (status.exitCode !== 0) {
+      throw new Error((status.stderr || status.stdout).trim().slice(-1000) || 'git status failed')
+    }
+    return planFromStatus(status.stdout, path)
+  }
+
+  /**
+   * Delete one file, having proven it is inside the worktree.
+   *
+   * `isSafeRelativePath` already rejected traversal in the plan, so this is the
+   * second lock rather than the only one: it re-checks the RESOLVED path,
+   * which is the form the filesystem actually acts on. `force` makes an absent
+   * file a success — the reader asked for it to be gone, and it is.
+   *
+   * A symlinked directory inside the worktree could still point outward; that
+   * is a repository someone already has write access to, and resolving link
+   * targets on every delete would cost a stat per segment for a case git
+   * itself does not defend against.
+   */
+  private async removeInside(cwd: string, relative: string): Promise<void> {
+    const root = resolve(cwd)
+    const target = resolve(root, relative)
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error(`refusing to delete outside the worktree: ${JSON.stringify(relative)}`)
+    }
+    if (target === root) throw new Error('refusing to delete the worktree root')
+    await rm(target, { force: true })
   }
 
   /**
