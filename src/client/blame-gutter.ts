@@ -66,18 +66,30 @@ class BlameMarker extends GutterMarker {
   }
 }
 
-/** Reserves the column's width so the code does not shift as lines scroll by:
- *  a sha and a date, in the widest digits either can be. */
-const SPACER = new BlameMarker('0000000 0000-00-00', '')
+/** Reserves the column's width so the code does not shift as lines scroll by.
+ *  Names have no fixed width, so this is a plausible one and the cell's CSS
+ *  ellipsises anything longer — a gutter that resized itself as the viewport
+ *  scrolled past a long name would shift the code under the reader. */
+const SPACER = new BlameMarker('nnnnnnnnnnnn', '')
 
 /**
  * The gutter extension.
  * @param notCommitted - the drawer's own wording for a line with no commit
  *                       behind it; git's English is never passed through.
+ * @param onPick - called with the 1-based line number the reader clicked.
  */
-export function blameGutter(notCommitted: string): Extension {
+export function blameGutter(notCommitted: string, onPick: (line: number) => void): Extension {
   return gutter({
     class: 'cm-gwBlameGutter',
+    domEventHandlers: {
+      // Picking a line is how the commit behind it is reached: the gutter
+      // shows the person, and the hash, the timestamp and the subject belong
+      // to the moment the reader has decided this is the line they care about.
+      click(view, line) {
+        onPick(view.state.doc.lineAt(line.from).number)
+        return true
+      },
+    },
     lineMarker(view, line) {
       const lines = view.state.field(blameField, false)
       if (lines === null || lines === undefined) return null

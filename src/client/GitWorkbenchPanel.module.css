@@ -2237,7 +2237,6 @@
 }
 .fbRow:hover { background: var(--gs-hover); }
 .fbRowActive { background: var(--gs-selected); color: var(--gs-fg); }
-.fbTwisty { flex: none; width: 0.9em; color: var(--gs-fg-faint); }
 .fbDirName { overflow: hidden; text-overflow: ellipsis; }
 .fbFileName { overflow: hidden; text-overflow: ellipsis; }
 .fbMain {
@@ -2267,3 +2266,30 @@
 /* The editor scrolls inside this, so the header and the notices above stay
    put — the same reason the side pane's toolbar is pinned. */
 .fbBody { flex: 1 1 0; min-height: 0; overflow: auto; padding: 4px 8px; }
+
+/* The commit behind the picked blame line. A strip rather than a floating
+   popup: it never covers the code it is about, and it survives a scroll. */
+.fbCommit {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-dim);
+  background: var(--gs-surface-2);
+  border-bottom: 1px solid var(--gs-border);
+}
+.fbCommitLine { flex: none; color: var(--gs-fg-faint); font-variant-numeric: tabular-nums; }
+.fbCommitWho { flex: none; color: var(--gs-fg); font-weight: 600; }
+.fbCommitWhen { flex: none; font-variant-numeric: tabular-nums; }
+.fbCommitHash { flex: none; font-family: inherit; color: var(--gs-fg-faint); }
+.fbCommitWhat {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+.fbCommitHint { color: var(--gs-fg-faint); }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { blameDate, blameLabel, blameTitle, shortHash } from '../src/client/blame-view.ts'
+import { blameDate, blameLabel, blameTitle, blameWhen, shortHash } from '../src/client/blame-view.ts'
 import type { BlameLine } from '../src/client/GitWorkbenchPanel.tsx'
 
 const line = (over: Partial<BlameLine> = {}): BlameLine => ({
@@ -49,8 +49,11 @@ describe('blameDate', () => {
 })
 
 describe('blameLabel', () => {
-  it('shows a short sha and a date', () => {
-    expect(blameLabel(line(), 'not committed')).toMatch(/^aaaaaaa \d{4}-\d{2}-\d{2}$/)
+  it('shows who last changed the line, not which commit did', () => {
+    // A hash is an identifier, not an answer: reading down a file the question
+    // is who wrote this, and a column of hex says nothing until you look each
+    // entry up. The commit is what a click reveals.
+    expect(blameLabel(line(), 'not committed')).toBe('young1lin')
   })
 
   it('says the drawer\'s own words for an uncommitted line', () => {
@@ -64,9 +67,33 @@ describe('blameLabel', () => {
     expect(blameLabel(undefined, 'not committed')).toBe('')
   })
 
-  it('drops the half it does not have', () => {
-    expect(blameLabel(line({ time: 0 }), 'x')).toBe('aaaaaaa')
-    expect(blameLabel(line({ hash: '' }), 'x')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  it('answers empty when git named no author', () => {
+    expect(blameLabel(line({ author: '' }), 'x')).toBe('')
+  })
+
+  it('is unaffected by a missing time or hash — the name is the whole label', () => {
+    expect(blameLabel(line({ time: 0, hash: '' }), 'x')).toBe('young1lin')
+  })
+})
+
+describe('blameWhen', () => {
+  it('carries the clock time as well as the day', () => {
+    // Two commits on one afternoon are a common thing to be telling apart.
+    expect(blameWhen(1780441400)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  })
+
+  it('agrees with the date the gutter would have shown', () => {
+    expect(blameWhen(1780441400).startsWith(blameDate(1780441400))).toBe(true)
+  })
+
+  it('pads a single-digit hour and minute', () => {
+    const at = new Date(2021, 0, 5, 9, 7)
+    expect(blameWhen(Math.floor(at.getTime() / 1000))).toBe('2021-01-05 09:07')
+  })
+
+  it('answers empty when git gave no time', () => {
+    expect(blameWhen(0)).toBe('')
+    expect(blameWhen(Number.NaN)).toBe('')
   })
 })
 

@@ -163,10 +163,17 @@ const paneTheme = EditorView.theme({
     borderRight: '1px solid var(--gs-border)',
     marginRight: '6px',
   },
-  '.cm-gwBlameCell': { whiteSpace: 'nowrap', cursor: 'default' },
+  '.cm-gwBlameCell': {
+    display: 'block',
+    maxWidth: '12ch',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
 })
 
-export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly }: {
+export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -191,13 +198,18 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
   /** A file the editor may show but must not change — a CRLF or non-UTF-8
    *  file, where any save would rewrite bytes nobody touched. */
   readOnly?: boolean
+  /** A click in the blame gutter, with the 1-based line number. */
+  onBlameClick?: (line: number) => void
 }): ReactNode {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   // Read inside CodeMirror's own callbacks, which close over the render that
   // created the view — several states old by the time a key is pressed.
-  const latest = useRef({ onChange, onSave })
-  latest.current = { onChange, onSave }
+  const latest = useRef({ onChange, onSave, onBlameClick })
+  latest.current = { onChange, onSave, onBlameClick }
+  // Stable across renders so reconfiguring the gutter does not depend on a
+  // callback identity that changes every time the pane re-renders.
+  const pick = useRef((line: number) => { latest.current.onBlameClick?.(line) }).current
 
   useEffect(() => {
     const parent = host.current
@@ -246,7 +258,7 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
     const lines = blame ?? null
     current.dispatch({
       effects: [
-        blameCompartment.reconfigure(lines === null ? [] : blameGutter(notCommitted ?? '')),
+        blameCompartment.reconfigure(lines === null ? [] : blameGutter(notCommitted ?? '', pick)),
         setBlame.of(lines),
       ],
     })

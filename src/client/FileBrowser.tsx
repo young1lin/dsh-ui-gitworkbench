@@ -29,13 +29,15 @@ import css from './GitWorkbenchPanel.module.css'
 import { CodeEditor } from './CodeEditor.tsx'
 import { buildDirTree } from './dir-tree.ts'
 import { ancestorsOf, mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
+import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
+import { blameWhen, shortHash } from './blame-view.ts'
 import { highlightFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { detectIndent } from './indent.ts'
 import {
   DISARMED, applySaveOk, armEdit, armRefusal, isDirty, markConflict,
   type EditState, type WriteResult,
 } from './side-edit.ts'
-import type { BlameAnswer, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
+import type { BlameAnswer, BlameLine, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
 
 /** Most search hits rendered at once — a one-letter query must not paint a
  *  whole repository into the DOM. */
@@ -88,6 +90,8 @@ export function FileBrowser({
   const [blameFailed, setBlameFailed] = useState(false)
   /** A file click held back by unsaved edits, waiting on the reader's answer. */
   const [pending, setPending] = useState<string | null>(null)
+  /** The line whose commit the reader asked to see, 1-based. */
+  const [picked, setPicked] = useState<number | null>(null)
   const [refetch, setRefetch] = useState(0)
   // A grammar loads asynchronously the first time a language is seen; this
   // counter re-renders the highlight once it lands.
@@ -155,8 +159,14 @@ export function FileBrowser({
     [query, all, tree, roots, expanded],
   )
 
+  useEffect(() => { setPicked(null) }, [open, blameOn])
+
   const refusal = sides === null ? null : armRefusal(sides)
   const readOnly = refusal !== null
+  /** The commit behind the picked line, or null when nothing is picked and
+   *  when the blame does not reach that far. */
+  const pickedEntry: BlameLine | null =
+    picked === null || blame === null ? null : blame.lines[picked - 1] ?? null
   const showBlame = blameOn && !dirty
   const buffer = edit.buffer
 
@@ -254,7 +264,17 @@ export function FileBrowser({
                   style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
                   onClick={() => { row.kind === 'dir' ? toggleDir(row.path) : openFile(row.path) }}
                 >
-                  <span className={css.fbTwisty}>{row.kind === 'dir' ? (row.open ? '▾' : '▸') : ''}</span>
+                  {row.kind === 'dir' ? (
+                    <>
+                      <span className={`${css.chevron} ${row.open ? css.chevronOpen : ''}`}>▸</span>
+                      <PathDirGlyph />
+                    </>
+                  ) : (
+                    <>
+                      <span className={css.chevron} aria-hidden="true" />
+                      <PathFileGlyph />
+                    </>
+                  )}
                   <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
                 </button>
               </li>
@@ -333,6 +353,36 @@ export function FileBrowser({
               ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}
             {showBlame && blame !== null && blame.truncated
               ? <div className={css.sideNotice}>{t('blameTruncated')}</div> : null}
+            {/* The strip is present for as long as blame is, so the space does
+                not jump as lines are picked — and while nothing is picked it
+                says that picking is a thing, which is the whole affordance:
+                the gutter is names, and nothing about a name looks clickable. */}
+            {showBlame ? (
+              <div className={css.fbCommit}>
+                {pickedEntry === null ? (
+                  <span className={css.fbCommitHint}>{t('blamePick')}</span>
+                ) : (
+                  <>
+                <span className={css.fbCommitLine}>{t('blameLine', { line: picked ?? 0 })}</span>
+                {pickedEntry.uncommitted ? (
+                  <span className={css.fbCommitWho}>{t('blameUncommitted')}</span>
+                ) : (
+                  <>
+                    <span className={css.fbCommitWho}>{pickedEntry.author}</span>
+                    <span className={css.fbCommitWhen}>{blameWhen(pickedEntry.time)}</span>
+                    <code className={css.fbCommitHash}>{shortHash(pickedEntry.hash)}</code>
+                    <span className={css.fbCommitWhat} title={pickedEntry.summary}>{pickedEntry.summary}</span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className={css.blockBtn}
+                  onClick={() => { setPicked(null) }}
+                >{t('close')}</button>
+                  </>
+                )}
+              </div>
+            ) : null}
             <div className={css.fbBody}>
               {loading && sides === null ? <div className={css.empty}>{t('loading')}</div>
                 : sides === null ? <div className={css.empty}>{t('saveUnavailable')}</div>
@@ -349,6 +399,7 @@ export function FileBrowser({
                     ariaLabel={open}
                     onSave={() => { void save() }}
                     blame={showBlame && blame !== null ? blame.lines : null}
+                    onBlameClick={line => { setPicked(line) }}
                     notCommitted={t('blameUncommitted')}
                     readOnly={readOnly}
                   />
