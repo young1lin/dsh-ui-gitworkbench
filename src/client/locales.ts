@@ -22,7 +22,11 @@ export type WorkbenchKey =
   | 'aheadTitle' | 'behindTitle' | 'files'
   | 'filterFiles' | 'filterFilesPlaceholder' | 'filterFilesClear' | 'filesFiltered' | 'filterNoMatch'
   | 'drawerLabel' | 'totalsDim' | 'refresh' | 'close'
-  | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare'
+  | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare' | 'tabFiles'
+  // the Files tab: browse the repository, read a file, blame it, edit it
+  | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
+  | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
+  | 'blameWhileEditing'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
@@ -79,6 +83,19 @@ export const zh: Record<WorkbenchKey, string> = {
   tabChanges: '变更',
   tabHistory: '历史',
   tabCompare: '对比',
+  tabFiles: '文件',
+  fileSearchPlaceholder: '搜索文件…',
+  filesTruncated: '文件太多，列表已截断；用搜索找剩下的。',
+  filesEmpty: '这个仓库还没有文件',
+  filesNoMatch: '没有匹配的文件',
+  filesPick: '从左边选一个文件打开',
+  filesUnsavedAsk: '有未保存的修改，打开其他文件会丢弃它们。',
+  filesDiscardOpen: '丢弃并打开',
+  // Read-only rather than withheld: in this view READING the file is the
+  // point, and only saving it back would rewrite bytes nobody touched.
+  fileReadOnlyCrlf: '这个文件的行尾是 CRLF，只能查看不能编辑（编辑器会把行尾统一成 LF，保存时整份文件都会被改写）。',
+  fileReadOnlyEncoding: '这个文件不是 UTF-8 编码，只能查看不能编辑：页面上的文字是一次有损解码，保存回去会改写每一个非 ASCII 字节。',
+  blameWhileEditing: '正在编辑，追溯已暂时收起：改过的行号已经对不上它背后的提交。保存或放弃后会重新出现。',
   historyEnd: '已到最早的提交',
   loading: '加载中…',
   maximize: '最大化',
@@ -286,6 +303,17 @@ export const en: Record<WorkbenchKey, string> = {
   tabChanges: 'Changes',
   tabHistory: 'History',
   tabCompare: 'Compare',
+  tabFiles: 'Files',
+  fileSearchPlaceholder: 'Search files…',
+  filesTruncated: 'Too many files to list; use the search for the rest.',
+  filesEmpty: 'This repository has no files yet',
+  filesNoMatch: 'No matching files',
+  filesPick: 'Pick a file on the left to open it',
+  filesUnsavedAsk: 'You have unsaved edits; opening another file discards them.',
+  filesDiscardOpen: 'Discard and open',
+  fileReadOnlyCrlf: 'This file uses CRLF line endings, so it opens read-only (the editor normalises them to LF, and a save would rewrite every line).',
+  fileReadOnlyEncoding: 'This file is not UTF-8, so it opens read-only: the text shown is a lossy decode, and saving it back would rewrite every non-ASCII byte.',
+  blameWhileEditing: 'Blame is hidden while you type: edited line numbers no longer match the commits behind them. It returns once you save or revert.',
   historyEnd: 'Start of history',
   loading: 'Loading…',
   maximize: 'Maximize',

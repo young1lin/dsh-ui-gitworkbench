@@ -1,0 +1,136 @@
+/**
+ * The file browser's row list: which rows a repository tree renders, given
+ * which directories the reader has opened.
+ *
+ * This sits on top of {@link buildDirTree}, which the history filter's path
+ * picker already uses, and adds the two things a BROWSER needs that a picker
+ * did not. First, root-level files: `buildDirTree` returns the root's child
+ * directories, so a file living on no directory — `package.json`, `README.md`
+ * — never appears in it. A picker could leave those to its search; a browser
+ * that cannot open `package.json` is not a browser. Second, a flat row list
+ * with depth, because the tree renders as rows and the component should not
+ * be walking a recursive structure while it also handles clicks.
+ *
+ * Search results are FILE rows only. The picker lists directories too, since
+ * a directory is a tickable pathspec there; here a row is something to open,
+ * and a directory does not open.
+ *
+ * Pure: no React, no DOM, no git. `tests/file-rows.test.ts` loads it directly.
+ *
+ * @module @young1lin/dsh-ui-gitworkbench/client/file-rows
+ */
+
+import type { DirEntry } from './dir-tree.ts'
+
+/** One rendered row of the browser's tree. */
+export interface FileRow {
+  readonly kind: 'dir' | 'file'
+  /** Repo-relative path — for a file row, what gets opened. */
+  readonly path: string
+  /** What the row shows: the last segment, or the whole path in a search. */
+  readonly name: string
+  /** Indent level; 0 at the top. */
+  readonly depth: number
+  /** Whether this directory is expanded. Always false on a file row. */
+  readonly open: boolean
+}
+
+/**
+ * The files that live directly in the repository root, sorted by name.
+ * @param paths - repo-relative paths, exactly as `repoTree` returned them.
+ */
+export function rootFiles(paths: readonly string[]): readonly string[] {
+  return paths.filter(path => path.length > 0 && !path.includes('/')).sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * Flatten the tree into the rows to render.
+ *
+ * Directories come before files at every level — the shape every file tree
+ * has — and a directory's contents appear only while it is expanded. An entry
+ * in `expanded` whose parent is closed contributes nothing: expansion is only
+ * meaningful along a path that is itself visible.
+ *
+ * @param tree - top-level directories from {@link buildDirTree}.
+ * @param roots - root-level files from {@link rootFiles}.
+ * @param expanded - paths of the directories the reader has opened.
+ */
+export function treeRows(
+  tree: readonly DirEntry[],
+  roots: readonly string[],
+  expanded: ReadonlySet<string>,
+): readonly FileRow[] {
+  const out: FileRow[] = []
+  const walk = (dirs: readonly DirEntry[], depth: number): void => {
+    for (const dir of dirs) {
+      const open = expanded.has(dir.path)
+      out.push({ kind: 'dir', path: dir.path, name: dir.name, depth, open })
+      if (!open) continue
+      walk(dir.children, depth + 1)
+      for (const file of dir.files) {
+        out.push({ kind: 'file', path: `${dir.path}/${file}`, name: file, depth: depth + 1, open: false })
+      }
+    }
+  }
+  walk(tree, 0)
+  for (const file of roots) {
+    out.push({ kind: 'file', path: file, name: file, depth: 0, open: false })
+  }
+  return out
+}
+
+/**
+ * Every directory above a path, outermost first — what to expand so that
+ * opening a file reveals it in the tree.
+ */
+export function ancestorsOf(path: string): readonly string[] {
+  const parts = path.split('/')
+  const out: string[] = []
+  for (let i = 1; i < parts.length; i += 1) out.push(parts.slice(0, i).join('/'))
+  return out
+}
+
+/**
+ * Search the repository's files, case-insensitively over the whole path.
+ *
+ * Each hit carries its full path as its name: a flat list of bare filenames
+ * cannot be told apart, and a repository usually holds several `index.ts`.
+ *
+ * @param paths - repo-relative paths as `repoTree` returned them.
+ * @param needle - raw search text; blank matches nothing.
+ * @param cap - most rows to return, so a one-letter search cannot render the
+ *              whole repository.
+ */
+export function searchRows(paths: readonly string[], needle: string, cap: number): readonly FileRow[] {
+  const n = needle.trim().toLowerCase()
+  if (n.length === 0) return []
+  const out: FileRow[] = []
+  for (const path of paths) {
+    if (out.length >= cap) break
+    if (path.toLowerCase().includes(n)) {
+      out.push({ kind: 'file', path, name: path, depth: 0, open: false })
+    }
+  }
+  return out
+}
+
+/**
+ * The browsable path list: everything git tracks, plus files that exist on
+ * disk but not in HEAD.
+ *
+ * `repoTree` is `git ls-tree HEAD`, so a file created five minutes ago is not
+ * in it — and a browser that cannot open the file you just wrote reads as
+ * broken rather than as principled. The drawer already holds the working
+ * tree's own file list, so the union costs one pass.
+ *
+ * @param tracked - paths from `repoTree`.
+ * @param extra - paths from the working-tree status; deleted files must be
+ *                filtered out by the caller, since opening one would fail.
+ */
+export function mergePaths(tracked: readonly string[], extra: readonly string[]): readonly string[] {
+  const all = new Set(tracked)
+  for (const path of extra) {
+    if (path.length > 0) all.add(path)
+  }
+  return [...all].sort((a, b) => a.localeCompare(b))
+}

@@ -63,7 +63,7 @@ import {
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
-import { blameLabel, blameTitle } from './blame-view.ts'
+import { FileBrowser } from './FileBrowser.tsx'
 import { detectIndent } from './indent.ts'
 import { CodeEditor } from './CodeEditor.tsx'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
@@ -315,7 +315,7 @@ export interface BlameAnswer {
 }
 
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
-type Translate = (key: string, params?: Record<string, string | number>) => string
+export type Translate = (key: string, params?: Record<string, string | number>) => string
 
 type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly t: Translate
@@ -352,7 +352,7 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
  * modes with a back action, so returning to the working tree is always one click
  * (the pattern GitHub Desktop, VS Code and the JetBrains git tooling converge on).
  */
-type Tab = 'changes' | 'history' | 'compare'
+type Tab = 'changes' | 'history' | 'compare' | 'files'
 
 /** How many further commits one page request loads. */
 const HISTORY_PAGE = 30
@@ -1657,6 +1657,14 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     () => tab === 'history' ? parseLogQuery(historyQuery).paths : NO_PATHS,
     [tab, historyQuery],
   )
+  /** Working-tree files the browser can open on top of what `repoTree` knows:
+   *  `git ls-tree HEAD` cannot see an untracked file, and a browser that will
+   *  not open the file you just created reads as broken. A deleted file is
+   *  left out — opening it would only fail. */
+  const browsablePaths = useMemo(
+    () => stats.files.filter(file => file.status !== 'deleted').map(file => file.path),
+    [stats.files],
+  )
   // A selection the current source no longer lists (e.g. after a source or tab
   // switch) falls back to the filtered file, else the first — never a dangling
   // highlight. See `active-file.ts` for the order and the reasoning.
@@ -1998,6 +2006,13 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             className={tab === 'compare' ? `${css.tab} ${css.tabActive}` : css.tab}
             onClick={() => leaveTab('compare')}
           >{t('tabCompare')}</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'files'}
+            className={tab === 'files' ? `${css.tab} ${css.tabActive}` : css.tab}
+            onClick={() => leaveTab('files')}
+          >{t('tabFiles')}</button>
         </div>
         {tab === 'compare' ? (
           <CompareBar
@@ -2058,6 +2073,25 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               <PaneDivider label={t('resizeCommits')} onDrag={paneDrag('commits', commitsRef)} />
             </>
           ) : null}
+          {tab === 'files' ? (
+            <FileBrowser
+              t={t}
+              palette={theme}
+              statsPath={statsPath}
+              extraPaths={browsablePaths}
+              gen={gen}
+              treeStyle={paneStyle(panes.tree)}
+              treeRef={treeRef}
+              divider={<PaneDivider label={t('resizeTree')} onDrag={paneDrag('tree', treeRef)} />}
+              fetchRepoTree={fetchRepoTree}
+              fetchFileSides={fetchFileSides}
+              writeChecked={writeChecked}
+              fetchBlame={fetchBlame}
+              onSaved={onRefresh}
+              onDirtyChange={onSideDirty}
+            />
+          ) : (
+            <>
           <div ref={treeRef} className={css.treeCol} style={paneStyle(panes.tree)} data-gs-part="tree">
             <FileTree
               t={t}
@@ -2121,7 +2155,6 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   statsPath={statsPath}
                   fetchSides={fetchFileSides}
                   writeChecked={writeChecked}
-                  fetchBlame={fetchBlame}
                   scopeKey={viewKey}
                   gen={gen}
                   fallbackSegment={segment}
@@ -2138,6 +2171,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 <div className={css.empty}>{t('noTextDiff')}</div>
               )}
           </div>
+            </>
+          )}
         </div>
         {discardPending?.plan != null ? (
           <DiscardConfirm
@@ -4723,7 +4758,7 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, fetchBlame, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
+function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
   t: Translate
   path: string
   palette: string
@@ -4731,7 +4766,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   fetchSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the editor buffer; the host refuses a stale sha and nothing is written. */
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
-  fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   /** Names the view the fetch belongs to, as `viewKey` does for the diff cache. */
   scopeKey: string
   /** Refresh generation: a new one means the tree was re-read, so refetch. */
@@ -4754,34 +4788,8 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // How much of the pane the left column gets. Lives here rather than in the
   // drawer so it is one setting for the pane, and survives a file switch —
   // the reader sized the columns for how they read, not for one file.
-  // Blame is a reading aid on the working-tree side, and it is withheld while
-  // the editor is armed: once the reader is typing, line numbers no longer
-  // match the commits behind them, and an annotation that quietly points at
-  // the wrong line is worse than none.
-  const [blameOn, setBlameOn] = useState(false)
-  const [blame, setBlame] = useState<BlameAnswer | null>(null)
-  // A fetch that came back with nothing — a transport failure, or a host half
-  // older than this client. Tracked separately from `blame` because "not
-  // asked yet" and "asked and got nothing" must not both render as an empty
-  // gutter: a toggle that lights up and then shows nothing reads as broken.
-  const [blameFailed, setBlameFailed] = useState(false)
   const [split, setSplit] = useState(0.5)
   const colsRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!blameOn) { setBlame(null); setBlameFailed(false); return }
-    const ctrl = new AbortController()
-    let alive = true
-    setBlameFailed(false)
-    void fetchBlame(statsPath, path, ctrl.signal)
-      .then(answer => {
-        if (!alive) return
-        setBlame(answer)
-        setBlameFailed(answer === null)
-      })
-      .catch(() => { if (alive) { setBlame(null); setBlameFailed(true) } })
-    return () => { alive = false; ctrl.abort() }
-  }, [blameOn, fetchBlame, statsPath, path, gen])
 
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
@@ -5116,15 +5124,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
   const bodyState = sideBodyState(rows, editable)
-  // Blame shows on the working-tree column only: it annotates the file on
-  // disk, which is the side the reader is looking at and the one git can
-  // blame at all. The staged column is an index blob with no history of its
-  // own, and the armed editor's line numbers have already moved.
-  const showBlame = blameOn && layer === 'unstaged' && bodyState.kind === 'rows'
-  /** This row's blame entry, or undefined when the row has no working-tree
-   *  line (a pure deletion) or the blame did not reach that far. */
-  const blameFor = (row: SideRow): BlameLine | undefined =>
-    row.right === null ? undefined : blame?.lines[row.right.line - 1]
   // The hovered block's first row hosts the action bar; a del-only block has
   // no right cell, so its bar rides the left one instead. In the editor
   // layout the left column is dense, so the bar rides its first left row.
@@ -5211,25 +5210,11 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
             ) : armable ? (
               <button type="button" className={css.blockBtn} onClick={arm}>{t('editFile')}</button>
             ) : null}
-            {/* Blame annotates the working-tree column. It is a toggle rather
-                than always-on because it is a wide gutter beside code the
-                reader came here to read. */}
-            {!edit.armed ? (
-              <button
-                type="button"
-                aria-pressed={blameOn}
-                title={t('blameHint')}
-                className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
-                onClick={() => { setBlameOn(on => !on) }}
-              >{t('blameToggle')}</button>
-            ) : null}
           </span>
         ) : null}
       </div>
       {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
       {layer === 'unstaged' && refusal !== null && !edit.armed ? <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'encodingNotice' : 'crlfNotice')}</div> : null}
-      {showBlame && (blameFailed || (blame !== null && blame.error !== undefined)) ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}
-      {showBlame && blame !== null && blame.truncated ? <div className={css.sideNotice}>{t('blameTruncated')}</div> : null}
       {/* §4's row: the file moved underneath a dirty buffer — by the poll's
           notice or by a refused save — and the reader chooses which version
           survives. Overwrite waits for the refetch the refusal triggered, so
@@ -5325,19 +5310,13 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
             />
           ) : (
-            <div className={showBlame ? `${css.sideColGrid} ${css.sideColGridBlame}` : css.sideColGrid}>
+            <div className={css.sideColGrid}>
               {rows.map((row, i) => {
                 const hot = hotBlock !== null && row.block === hotBlock
                 const hotClass = hot ? ` ${css.sideBlockHot}` : ''
                 const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
-                const provenance = showBlame ? blameFor(row) : undefined
                 return (
                   <Fragment key={i}>
-                    {showBlame ? (
-                      <span className={css.blameCell} title={blameTitle(provenance, t('blameUncommitted'))}>
-                        {blameLabel(provenance, t('blameUncommitted'))}
-                      </span>
-                    ) : null}
                     <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
                     <span
                       className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}

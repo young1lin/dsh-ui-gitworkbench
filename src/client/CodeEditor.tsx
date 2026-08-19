@@ -30,9 +30,11 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { indentUnit } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 
+import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
 import { bufferDiff } from './cm-diff.ts'
 import { tokenRanges } from './cm-tokens.ts'
 import type { HighlightRun } from './highlight.ts'
+import type { BlameLine } from './GitWorkbenchPanel.tsx'
 
 /** Carries a fresh set of shiki-derived decorations into the view. */
 const setPaint = StateEffect.define<DecorationSet>()
@@ -152,9 +154,19 @@ const paneTheme = EditorView.theme({
   '.cm-gwDeleted': { boxShadow: 'inset 0 2px 0 0 var(--gs-del-line)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--gs-fg-dim)' },
   '.cm-cursor': { borderLeftColor: 'var(--gs-accent)' },
+  // The blame gutter. Dim and monospaced-narrow: it sits beside code the
+  // reader came to read, so it must be legible without competing.
+  '.cm-gwBlameGutter': {
+    color: 'var(--gs-fg-faint)',
+    fontSize: 'var(--gs-t-meta)',
+    paddingRight: '10px',
+    borderRight: '1px solid var(--gs-border)',
+    marginRight: '6px',
+  },
+  '.cm-gwBlameCell': { whiteSpace: 'nowrap', cursor: 'default' },
 })
 
-export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave }: {
+export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -170,6 +182,15 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
    *  a save shortcut that works everywhere except inside the editor is worse
    *  than none at all. */
   onSave: () => void
+  /** Per-line provenance for the blame gutter, or null for "not showing".
+   *  The gutter is added and removed with it, because an installed gutter with
+   *  no markers still reserves its column. */
+  blame?: readonly BlameLine[] | null
+  /** The drawer's own wording for a line no commit covers yet. */
+  notCommitted?: string
+  /** A file the editor may show but must not change — a CRLF or non-UTF-8
+   *  file, where any save would rewrite bytes nobody touched. */
+  readOnly?: boolean
 }): ReactNode {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
@@ -187,6 +208,9 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
       search({ top: true }),
       highlightActiveLine(),
       paintField,
+      blameField,
+      blameCompartment.of([]),
+      EditorState.readOnly.of(readOnly === true),
       originalText.init(() => original),
       diffField,
       paneTheme,
@@ -213,6 +237,20 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
     // effects below; rebuilding the view on either would drop the caret, the
     // undo stack and the selection on every keystroke.
   }, [])
+
+  // Blame arriving, changing, or being switched off. The gutter itself goes
+  // in and out through the compartment; the field carries the lines.
+  useEffect(() => {
+    const current = view.current
+    if (current === null) return
+    const lines = blame ?? null
+    current.dispatch({
+      effects: [
+        blameCompartment.reconfigure(lines === null ? [] : blameGutter(notCommitted ?? '')),
+        setBlame.of(lines),
+      ],
+    })
+  }, [blame, notCommitted])
 
   // The other side, when a refresh brings a new one in.
   useEffect(() => {

@@ -42,3 +42,4 @@ scripts/verify_cm_editor.py
 scripts/verify_live_tint.py
 scripts/verify_divider.py
 scripts/verify_blame.py
+scripts/verify_file_browser.py
