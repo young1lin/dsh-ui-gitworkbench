@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { NO_PLACE, openAt, placeAt, reconcilePlace, toggleDir, withPlace, type FilesPlace, type FilesPlaces } from '../src/client/files-place.ts'
+import { NO_PLACE, PLACES_CAP, decodePlaces, encodePlaces, openAt, placeAt, reconcilePlace, toggleDir, withPlace, type FilesPlace, type FilesPlaces } from '../src/client/files-place.ts'
 import { pathKey } from '../src/client/worktree-view.ts'
 
 const place = (over: Partial<FilesPlace> = {}): FilesPlace => ({ ...NO_PLACE, ...over })
@@ -135,5 +135,57 @@ describe('places per worktree', () => {
     // '' names the session's own repository — the source the drawer starts on.
     const places = withPlace(new Map(), pathKey(undefined), place({ open: 'a.ts' }))
     expect(placeAt(places, pathKey(null)).open).toBe('a.ts')
+  })
+})
+
+describe('persisting places', () => {
+  const many = (n: number): FilesPlaces => {
+    let places: FilesPlaces = new Map()
+    for (let i = 0; i < n; i += 1) places = withPlace(places, `wt${i}`, place({ open: `f${i}.ts` }))
+    return places
+  }
+
+  it('round-trips a place through storage', () => {
+    const places = withPlace(new Map(), 'wt', place({ open: 'a.ts', expanded: ['src'], blameOn: true }))
+    const back = decodePlaces(JSON.parse(JSON.stringify(encodePlaces(places))))
+    expect(placeAt(back, 'wt')).toEqual({ open: 'a.ts', expanded: ['src'], query: '', blameOn: true })
+  })
+
+  it('drops the search text', () => {
+    // A restored search filters the tree on a cold start, and a tree showing
+    // two rows of nine hundred reads as broken when you do not remember
+    // typing anything.
+    const places = withPlace(new Map(), 'wt', place({ open: 'a.ts', query: 'que' }))
+    expect(encodePlaces(places)[0]).not.toHaveProperty('query')
+    expect(placeAt(decodePlaces(encodePlaces(places)), 'wt').query).toBe('')
+  })
+
+  it('keeps the most recent worktrees, not the first ones seen', () => {
+    const stored = encodePlaces(many(PLACES_CAP + 5))
+    expect(stored).toHaveLength(PLACES_CAP)
+    expect(stored.map(entry => entry.key)).toContain(`wt${PLACES_CAP + 4}`)
+    expect(stored.map(entry => entry.key)).not.toContain('wt0')
+  })
+
+  it('counts touching a worktree again as recent', () => {
+    // Otherwise the cap means "the first twenty you opened" rather than the
+    // ones you work in.
+    let places = many(PLACES_CAP)
+    places = withPlace(places, 'wt0', place({ open: 'again.ts' }))
+    for (let i = 0; i < 5; i += 1) places = withPlace(places, `new${i}`, place())
+    expect(encodePlaces(places).map(entry => entry.key)).toContain('wt0')
+  })
+
+  it('answers empty for anything that is not a stored list', () => {
+    expect(decodePlaces(undefined).size).toBe(0)
+    expect(decodePlaces('nonsense').size).toBe(0)
+    expect(decodePlaces({ key: 'wt' }).size).toBe(0)
+  })
+
+  it('skips an unusable entry instead of losing every worktree', () => {
+    const good = encodePlaces(withPlace(new Map(), 'wt', place({ open: 'a.ts' })))
+    const back = decodePlaces([{ key: 5 }, ...good, { open: 'x' }])
+    expect(back.size).toBe(1)
+    expect(placeAt(back, 'wt').open).toBe('a.ts')
   })
 })

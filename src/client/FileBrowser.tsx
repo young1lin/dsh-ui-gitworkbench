@@ -125,6 +125,16 @@ export function FileBrowser({
   /** Which file the buffer currently belongs to, so a refetch can be told
    *  apart from a genuine open. */
   const openRef = useRef<string | null>(null)
+  /**
+   * Files this view has actually shown, on disk, since it mounted.
+   *
+   * The vanished notice means "it disappeared while you were here". A place
+   * restored from a previous run carries a path that may have been deleted
+   * days ago, and reporting that on the first open would be an apology for
+   * something the reader does not remember doing — so a path that was never
+   * successfully shown is dropped in silence instead.
+   */
+  const shownRef = useRef<Set<string>>(new Set())
   // A grammar loads asynchronously the first time a language is seen; this
   // counter re-renders the highlight once it lands.
   const [, setGrammarTick] = useState(0)
@@ -169,6 +179,9 @@ export function FileBrowser({
         // it must not hold.
         const fresh = openRef.current !== open
         openRef.current = open
+        // An empty target sha means git has no blob for it: the path is not a
+        // file on disk, so this view never showed it.
+        if (answer.targetSha.length > 0 && open !== null) shownRef.current.add(open)
         setEdit(prev => fresh ? armEdit(DISARMED, answer) : applySides(prev, answer))
       })
       .catch(() => { if (alive) { setSides(null); setEdit(DISARMED) } })
@@ -212,7 +225,7 @@ export function FileBrowser({
     const settled = reconcilePlace(place, all)
     if (settled.vanished === null) return
     onPlace(settled.place)
-    setVanished(settled.vanished)
+    setVanished(shownRef.current.has(settled.vanished) ? settled.vanished : null)
     setSides(null)
     setEdit(DISARMED)
   }, [all, place, dirty, onPlace])

@@ -64,7 +64,7 @@ import {
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
-import { NO_PLACE, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
+import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
 import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { detectIndent } from './indent.ts'
@@ -386,6 +386,10 @@ const CUSTOM_STYLE_ID = 'dsh-ui-gitworkbench-custom-css'
 const STORE_APPEARANCE = 'dsh-ui-gitworkbench:appearance'
 const STORE_WIDTH = 'dsh-ui-gitworkbench:width'
 const STORE_PANES = 'dsh-ui-gitworkbench:panes'
+/** Where the reader was in the Files tab, per worktree. View state, so it
+ *  belongs here beside the layout rather than in the host's per-project store:
+ *  two people on one repository should not share each other's place. */
+const STORE_FILES = 'dsh-ui-gitworkbench:files'
 
 /** Dragged pane widths in px; null on either side keeps that pane's CSS default. */
 interface PaneWidths {
@@ -522,6 +526,9 @@ const EMPTY_STATS: WorkbenchStats = {
   files: [], diff: '', commits: [],
 }
 
+/** How long the Files place must hold still before it is written. */
+const PLACES_WRITE_MS = 500
+
 /** One worktree's last-read file list. */
 interface FilesTree {
   readonly paths: readonly string[]
@@ -596,7 +603,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   // different paths, and the open one may not exist in the next one at all.
   // Keying the cached list too is what stops a switch from rendering the
   // previous worktree's files until the new list arrives.
-  const [filesPlaces, setFilesPlaces] = useState<FilesPlaces>(() => new Map())
+  const [filesPlaces, setFilesPlaces] = useState<FilesPlaces>(
+    () => decodePlaces(readStored<unknown>(STORE_FILES, (value): value is unknown => true, null)),
+  )
   const [filesTrees, setFilesTrees] = useState<ReadonlyMap<string, FilesTree>>(() => new Map())
   const rememberPlace = useCallback((key: string, next: FilesPlace): void => {
     setFilesPlaces(prev => withPlace(prev, key, next))
@@ -608,6 +617,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
       return map
     })
   }, [])
+  // Written on a pause, not on the change: expanding a folder and typing in
+  // the search box both move the place, and localStorage writes synchronously.
+  const settledPlaces = useIdleValue(filesPlaces, PLACES_WRITE_MS)
+  useEffect(() => { writeStored(STORE_FILES, encodePlaces(settledPlaces)) }, [settledPlaces])
   /** Binding + the repository's worktrees, null until the first successful fetch. */
   const [wtStatus, setWtStatus] = useState<WorktreeStatus | null>(null)
   /** Worktree the drawer reads, by absolute path. null = follow the session's own

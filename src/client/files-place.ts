@@ -99,9 +99,80 @@ export function placeAt(places: FilesPlaces, key: string): FilesPlace {
   return places.get(key) ?? NO_PLACE
 }
 
-/** Record this worktree's place, leaving every other worktree's alone. */
+/**
+ * Record this worktree's place, leaving every other worktree's alone.
+ *
+ * The key is re-inserted rather than overwritten, so iteration order is
+ * least-recent first. That is what makes {@link encodePlaces}'s cap mean
+ * "the worktrees you actually work in" instead of "the first twenty you
+ * happened to open".
+ */
 export function withPlace(places: FilesPlaces, key: string, place: FilesPlace): FilesPlaces {
   const next = new Map(places)
+  next.delete(key)
   next.set(key, place)
   return next
+}
+
+/** Worktrees kept across restarts. Enough for the ones anybody actually works
+ *  in; a fixture repository alone can have forty. */
+export const PLACES_CAP = 20
+
+/** One worktree's place as it is stored. */
+interface StoredPlace {
+  readonly key: string
+  readonly open: string | null
+  readonly expanded: readonly string[]
+  readonly blame: boolean
+}
+
+/**
+ * The places, ready for storage: the most recent {@link PLACES_CAP}, without
+ * the search text.
+ *
+ * The search is deliberately dropped. Restoring it would filter the tree on a
+ * cold start, and a tree showing two rows out of nine hundred reads as broken
+ * when you do not remember typing anything — within one session you remember,
+ * a week later you do not.
+ */
+export function encodePlaces(places: FilesPlaces): readonly StoredPlace[] {
+  const all = [...places.entries()]
+  const kept = all.length > PLACES_CAP ? all.slice(all.length - PLACES_CAP) : all
+  return kept.map(([key, place]) => ({
+    key,
+    open: place.open,
+    expanded: [...place.expanded],
+    blame: place.blameOn,
+  }))
+}
+
+/** Whether a parsed value is one stored place this build can use. */
+function isStoredPlace(value: unknown): value is StoredPlace {
+  if (typeof value !== 'object' || value === null) return false
+  const entry = value as Record<string, unknown>
+  return typeof entry.key === 'string'
+    && (entry.open === null || typeof entry.open === 'string')
+    && Array.isArray(entry.expanded)
+    && entry.expanded.every(path => typeof path === 'string')
+    && typeof entry.blame === 'boolean'
+}
+
+/**
+ * Read places back. Anything unrecognisable is skipped rather than failing the
+ * whole list: a build that adds a field should cost the reader one worktree's
+ * memory, not all of them.
+ */
+export function decodePlaces(value: unknown): FilesPlaces {
+  if (!Array.isArray(value)) return new Map()
+  const out = new Map<string, FilesPlace>()
+  for (const entry of value) {
+    if (!isStoredPlace(entry)) continue
+    out.set(entry.key, {
+      open: entry.open,
+      expanded: entry.expanded,
+      query: '',
+      blameOn: entry.blame,
+    })
+  }
+  return out
 }
