@@ -40,7 +40,7 @@ export type WorkbenchKey =
   | 'scopeProject' | 'scopeGlobal' | 'scopeGlobalHint' | 'scopeNoRepo'
   | 'bgNone' | 'bgChoose' | 'bgClear' | 'bgBlur' | 'bgVeil' | 'bgWorking' | 'bgFailed' | 'bgTooBig'
   | 'cssPlaceholder' | 'cssImport' | 'cssApply' | 'cssUnapplied' | 'styleFailed'
-  | 'resizeLabel' | 'resizeCommits' | 'resizeTree'
+  | 'resizeLabel' | 'resizeCommits' | 'resizeTree' | 'resizeSides'
   | 'expandAll' | 'collapseAll' | 'noBranch'
   | 'copyCommit' | 'copiedCommit'
   // write operations
@@ -123,6 +123,7 @@ export const zh: Record<WorkbenchKey, string> = {
   resizeLabel: '拖动调整抽屉宽度',
   resizeCommits: '拖动调整提交列表宽度',
   resizeTree: '拖动调整文件树宽度',
+  resizeSides: '拖动调整左右两栏宽度',
   sourceLabel: '统计来源切换',
   workingTree: '工作区',
   loadingCommit: '加载提交…',
@@ -324,6 +325,7 @@ export const en: Record<WorkbenchKey, string> = {
   resizeLabel: 'Drag to resize the drawer',
   resizeCommits: 'Drag to resize the commit list',
   resizeTree: 'Drag to resize the file tree',
+  resizeSides: 'Drag to resize the two columns',
   sourceLabel: 'Switch stats source',
   workingTree: 'Working tree',
   loadingCommit: 'Loading commit…',

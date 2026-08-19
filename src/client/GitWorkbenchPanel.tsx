@@ -482,6 +482,12 @@ function PaneDivider({ label, onDrag }: {
   )
 }
 
+/** How narrow either side-by-side column may be dragged. A column pulled to
+ *  nothing reads as a broken pane, and nothing on screen offers to pull it
+ *  back out. */
+const SPLIT_MIN = 0.15
+const SPLIT_MAX = 0.85
+
 /** Commit change sets kept in the browser before the least recently used is dropped. */
 const COMMIT_CACHE_CAPACITY = 24
 
@@ -4720,6 +4726,11 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   onDirtyChange: (dirty: boolean) => void
 }): ReactNode {
   const [layer, setLayer] = useState<SideLayer>('unstaged')
+  // How much of the pane the left column gets. Lives here rather than in the
+  // drawer so it is one setting for the pane, and survives a file switch —
+  // the reader sized the columns for how they read, not for one file.
+  const [split, setSplit] = useState(0.5)
+  const colsRef = useRef<HTMLDivElement>(null)
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
   // this client (the two halves reload on different cycles). The unified view
@@ -4978,6 +4989,20 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
    * reads the block off whatever the pointer is over — no handler per cell,
    * and a pointer over context or a gutter simply clears the hot block.
    */
+  /**
+   * The divider: a ratio, not a pixel width, so the columns keep their
+   * proportion when the drawer itself is resized.
+   *
+   * Clamped well short of either edge — a column dragged to nothing looks
+   * like a broken pane, and there is no affordance to drag it back out of.
+   */
+  const onSplitDrag = (clientX: number): void => {
+    const box = colsRef.current?.getBoundingClientRect()
+    if (box === undefined || box.width === 0) return
+    const ratio = (clientX - box.left) / box.width
+    setSplit(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ratio)))
+  }
+
   const onBodyHover = (event: ReactMouseEvent<HTMLDivElement>): void => {
     const hit = (event.target as Element).closest('[data-block]')
     const id = hit === null ? null : Number(hit.getAttribute('data-block'))
@@ -5152,84 +5177,100 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           </span>
         </div>
       ) : null}
-      {/* One grid holds every row's four cells, so the column boundary is the
-          same for all rows — a per-row grid would let the divider drift with
-          each row's content. `data-block` on a row's cells names the change
-          block they belong to; the hover listener below reads it back off
-          whatever cell the pointer is over, and the whole block — outline and
-          action bar — answers to it as one unit. The empty body renders the
-          pane's no-change sentence here under the tabs, not instead of them. */}
+      {/* Two columns that scroll sideways independently, with a divider the
+          reader can drag. One grid spanning both sides could not do this: its
+          tracks are sized by the widest line in the file, so a drag moved
+          nothing on exactly the wide files where the space matters. Vertical
+          alignment survives the split because both columns render one row per
+          aligned row at the same line height — the diff decides the rows, the
+          layout only decides how much width each side gets. */}
       <div className={css.sideScroll}>
       {bodyState.kind === 'empty' ? (
         <div className={css.empty}>{t('noTextDiff')}</div>
       ) : (
-      <div className={css.sideBody} onMouseOver={onBodyHover} onMouseLeave={() => { setHotBlock(null) }}>
-        {bodyState.kind === 'editor' ? (
-          <>
-            {/* The editor layout: the left column renders the index side dense
-                (explicit rows, since the buffer cannot share the diff's
-                hole-aligned grid), the right column is the buffer. */}
-            {leftRows.map((entry, k) => {
-              const { row, i } = entry
-              const hot = hotBlock !== null && row.block === hotBlock
-              const hotClass = hot ? ` ${css.sideBlockHot}` : ''
-              return (
-                <Fragment key={`l${i}`}>
-                  <span className={`${sideNumClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 1 }}>{row.left!.line}</span>
-                  <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 2 }} data-block={row.block >= 0 ? row.block : undefined}>
-                    {renderSideCode(row.left, leftSyntax?.[i])}
-                    {hot && k === hotFirstLeft ? blockBar(row.block) : null}
-                  </span>
-                </Fragment>
-              )
-            })}
-            {/* The editor: ONE CodeMirror view over the right half. It draws
-                its own line numbers, so columns 3 and 4 are handed to it
-                whole — there is no underlay to keep aligned any more, which
-                is the whole reason the transparent-textarea trick existed.
-                It spans every row the taller side has, so a buffer longer
-                than the index side still gets grid rows to occupy. */}
-            <div
-              className={css.sideEditCell}
-              style={{ gridRow: `1 / span ${Math.max(bufferLines.length, leftRows.length, 1)}`, gridColumn: '3 / span 2' }}
-            >
-              <CodeEditor
-                value={edit.buffer}
-                original={indexText}
-                onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
-                syntax={editSyntax}
-                indent={indentOfBuffer}
-                ariaLabel={path}
-                onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
-              />
+      <div
+        ref={colsRef}
+        className={css.sideCols}
+        onMouseOver={onBodyHover}
+        onMouseLeave={() => { setHotBlock(null) }}
+      >
+        <div className={css.sideCol} style={{ flexBasis: `${split * 100}%` }}>
+          <div className={css.sideColGrid}>
+            {bodyState.kind === 'editor' ? (
+              /* While armed the left column renders the index side DENSE —
+                 one row per index line, no diff holes — because the right
+                 column is a buffer whose line count diverges from the diff
+                 the moment a keystroke lands. */
+              leftRows.map((entry, k) => {
+                const { row, i } = entry
+                const hot = hotBlock !== null && row.block === hotBlock
+                const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+                return (
+                  <Fragment key={`l${i}`}>
+                    <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left!.line}</span>
+                    <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
+                      {renderSideCode(row.left, leftSyntax?.[i])}
+                      {hot && k === hotFirstLeft ? blockBar(row.block) : null}
+                    </span>
+                  </Fragment>
+                )
+              })
+            ) : (
+              rows.map((row, i) => {
+                const hot = hotBlock !== null && row.block === hotBlock
+                const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+                // The block's action bar rides in this column only for a row
+                // with no right-hand side — a pure deletion, where the right
+                // column has no cell to hang it on.
+                const bar = hot && i === hotFirst && row.right === null ? blockBar(row.block) : null
+                return (
+                  <Fragment key={i}>
+                    <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
+                    <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
+                      {renderSideCode(row.left, leftSyntax?.[i])}
+                      {bar}
+                    </span>
+                  </Fragment>
+                )
+              })
+            )}
+          </div>
+        </div>
+        <PaneDivider label={t('resizeSides')} onDrag={onSplitDrag} />
+        <div className={`${css.sideCol} ${css.sideColRight}`}>
+          {bodyState.kind === 'editor' ? (
+            <CodeEditor
+              value={edit.buffer}
+              original={indexText}
+              onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
+              syntax={editSyntax}
+              indent={indentOfBuffer}
+              ariaLabel={path}
+              onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
+            />
+          ) : (
+            <div className={css.sideColGrid}>
+              {rows.map((row, i) => {
+                const hot = hotBlock !== null && row.block === hotBlock
+                const hotClass = hot ? ` ${css.sideBlockHot}` : ''
+                const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
+                return (
+                  <Fragment key={i}>
+                    <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
+                    <span
+                      className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}
+                      data-block={row.block >= 0 ? row.block : undefined}
+                      onClick={layer === 'unstaged' && armable ? armFromCell : undefined}
+                    >
+                      {renderSideCode(row.right, rightSyntax?.[i])}
+                      {bar}
+                    </span>
+                  </Fragment>
+                )
+              })}
             </div>
-          </>
-        ) : (
-          rows.map((row, i) => {
-            const hot = hotBlock !== null && row.block === hotBlock
-            const hotClass = hot ? ` ${css.sideBlockHot}` : ''
-            const bar = hot && i === hotFirst ? blockBar(row.block) : null
-            const barInLeft = bar !== null && row.right === null
-            return (
-              <Fragment key={i}>
-                <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
-                <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
-                  {renderSideCode(row.left, leftSyntax?.[i])}
-                  {barInLeft ? bar : null}
-                </span>
-                <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
-                <span
-                  className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}
-                  data-block={row.block >= 0 ? row.block : undefined}
-                  onClick={layer === 'unstaged' && armable ? armFromCell : undefined}
-                >
-                  {renderSideCode(row.right, rightSyntax?.[i])}
-                  {barInLeft ? null : bar}
-                </span>
-              </Fragment>
-            )
-          })
-        )}
+          )}
+        </div>
       </div>
       )}
       </div>

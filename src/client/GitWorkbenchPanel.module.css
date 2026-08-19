@@ -1639,7 +1639,28 @@
    which is not where anyone looks for a toolbar. Only `.sideScroll` scrolls;
    the tabs and the notices above it stay put on both axes. */
 .sidePane { display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100%; }
-.sideScroll { flex: 1 1 0; min-height: 0; overflow: auto; }
+/* Vertical scrolling belongs to the pane; horizontal belongs to each column,
+   which is what lets the divider mean something. A single scroller for both
+   axes would tie the two sides' horizontal position together and size the
+   whole grid to the widest line in the file. */
+.sideScroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.sideCols { display: flex; align-items: stretch; min-height: 100%; }
+/* `min-width: 0` is what lets a flex column be narrower than its content —
+   without it the column refuses to shrink and the divider stops moving. */
+.sideCol { flex: 0 0 auto; min-width: 0; overflow-x: auto; }
+.sideColRight { flex: 1 1 0; }
+.sideColGrid {
+  display: grid;
+  grid-template-columns: 3.2em 1fr;
+  align-content: start;
+  padding: 8px 0 16px;
+  min-width: 100%; width: max-content;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
 .sideTabs {
   z-index: 5;
   display: flex; gap: 16px;
@@ -1672,17 +1693,6 @@
   border-bottom: 1px solid var(--gs-border-soft);
   color: var(--gs-info);
   font-size: var(--gs-t-dense);
-}
-.sideBody {
-  display: grid;
-  grid-template-columns: 3.2em 1fr 3.2em 1fr;
-  margin: 0; padding: 8px 0 16px;
-  min-width: 100%; width: max-content;
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
-  font-variant-ligatures: none;
-  font-feature-settings: 'liga' 0, 'calt' 0;
-  tab-size: 4;
 }
 .sideNum {
   box-sizing: border-box;
