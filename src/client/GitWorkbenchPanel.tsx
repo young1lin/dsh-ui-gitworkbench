@@ -63,6 +63,7 @@ import {
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
+import { blameLabel, blameTitle } from './blame-view.ts'
 import { detectIndent } from './indent.ts'
 import { CodeEditor } from './CodeEditor.tsx'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
@@ -294,6 +295,25 @@ export interface FileSides {
   readonly lossyEncoding?: boolean
 }
 
+/** One line's provenance, as `gitWorkbench/blame` reports it. */
+export interface BlameLine {
+  /** Full commit sha; all zeros for a line not committed yet. */
+  readonly hash: string
+  readonly author: string
+  /** Author time, unix seconds; 0 when git did not say. */
+  readonly time: number
+  readonly summary: string
+  readonly uncommitted: boolean
+}
+
+/** `gitWorkbench/blame`'s answer. `error` is present only on failure. */
+export interface BlameAnswer {
+  readonly lines: readonly BlameLine[]
+  /** Whether the file was longer than the gutter's cap. */
+  readonly truncated: boolean
+  readonly error?: string
+}
+
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
@@ -305,6 +325,7 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the editor buffer, checked against the sha it opened with. */
   readonly writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
+  readonly fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
@@ -533,7 +554,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1405,6 +1426,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           fetchFileDiff={fetchDiffForView}
           fetchFileSides={fetchFileSides}
           writeChecked={writeChecked}
+          fetchBlame={fetchBlame}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1606,6 +1628,7 @@ interface DrawerProps {
   fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the side pane's editor buffer; the drawer binds the source. */
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
+  fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1613,7 +1636,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2098,6 +2121,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   statsPath={statsPath}
                   fetchSides={fetchFileSides}
                   writeChecked={writeChecked}
+                  fetchBlame={fetchBlame}
                   scopeKey={viewKey}
                   gen={gen}
                   fallbackSegment={segment}
@@ -4699,7 +4723,7 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
+function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, fetchBlame, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
   t: Translate
   path: string
   palette: string
@@ -4707,6 +4731,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   fetchSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the editor buffer; the host refuses a stale sha and nothing is written. */
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
+  fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   /** Names the view the fetch belongs to, as `viewKey` does for the diff cache. */
   scopeKey: string
   /** Refresh generation: a new one means the tree was re-read, so refetch. */
@@ -4729,8 +4754,35 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // How much of the pane the left column gets. Lives here rather than in the
   // drawer so it is one setting for the pane, and survives a file switch —
   // the reader sized the columns for how they read, not for one file.
+  // Blame is a reading aid on the working-tree side, and it is withheld while
+  // the editor is armed: once the reader is typing, line numbers no longer
+  // match the commits behind them, and an annotation that quietly points at
+  // the wrong line is worse than none.
+  const [blameOn, setBlameOn] = useState(false)
+  const [blame, setBlame] = useState<BlameAnswer | null>(null)
+  // A fetch that came back with nothing — a transport failure, or a host half
+  // older than this client. Tracked separately from `blame` because "not
+  // asked yet" and "asked and got nothing" must not both render as an empty
+  // gutter: a toggle that lights up and then shows nothing reads as broken.
+  const [blameFailed, setBlameFailed] = useState(false)
   const [split, setSplit] = useState(0.5)
   const colsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!blameOn) { setBlame(null); setBlameFailed(false); return }
+    const ctrl = new AbortController()
+    let alive = true
+    setBlameFailed(false)
+    void fetchBlame(statsPath, path, ctrl.signal)
+      .then(answer => {
+        if (!alive) return
+        setBlame(answer)
+        setBlameFailed(answer === null)
+      })
+      .catch(() => { if (alive) { setBlame(null); setBlameFailed(true) } })
+    return () => { alive = false; ctrl.abort() }
+  }, [blameOn, fetchBlame, statsPath, path, gen])
+
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
   // this client (the two halves reload on different cycles). The unified view
@@ -4844,6 +4896,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // different problems, and one message for both leaves the reader guessing
   // whether converting line endings would help.
   const refusal = sides === null ? null : armRefusal(sides)
+
 
   // The drawer guards every gesture that would drop the buffer — selecting
   // another file, closing, switching the main tab — so it needs the flag as
@@ -5063,6 +5116,15 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
   const bodyState = sideBodyState(rows, editable)
+  // Blame shows on the working-tree column only: it annotates the file on
+  // disk, which is the side the reader is looking at and the one git can
+  // blame at all. The staged column is an index blob with no history of its
+  // own, and the armed editor's line numbers have already moved.
+  const showBlame = blameOn && layer === 'unstaged' && bodyState.kind === 'rows'
+  /** This row's blame entry, or undefined when the row has no working-tree
+   *  line (a pure deletion) or the blame did not reach that far. */
+  const blameFor = (row: SideRow): BlameLine | undefined =>
+    row.right === null ? undefined : blame?.lines[row.right.line - 1]
   // The hovered block's first row hosts the action bar; a del-only block has
   // no right cell, so its bar rides the left one instead. In the editor
   // layout the left column is dense, so the bar rides its first left row.
@@ -5149,11 +5211,24 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
             ) : armable ? (
               <button type="button" className={css.blockBtn} onClick={arm}>{t('editFile')}</button>
             ) : null}
+            {/* Blame annotates the working-tree column. It is a toggle rather
+                than always-on because it is a wide gutter beside code the
+                reader came here to read. */}
+            {!edit.armed ? (
+              <button
+                type="button"
+                aria-pressed={blameOn}
+                className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
+                onClick={() => { setBlameOn(on => !on) }}
+              >{t('blameToggle')}</button>
+            ) : null}
           </span>
         ) : null}
       </div>
       {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
       {layer === 'unstaged' && refusal !== null && !edit.armed ? <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'encodingNotice' : 'crlfNotice')}</div> : null}
+      {showBlame && (blameFailed || (blame !== null && blame.error !== undefined)) ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}
+      {showBlame && blame !== null && blame.truncated ? <div className={css.sideNotice}>{t('blameTruncated')}</div> : null}
       {/* §4's row: the file moved underneath a dirty buffer — by the poll's
           notice or by a refused save — and the reader chooses which version
           survives. Overwrite waits for the refetch the refusal triggered, so
@@ -5249,13 +5324,19 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
             />
           ) : (
-            <div className={css.sideColGrid}>
+            <div className={showBlame ? `${css.sideColGrid} ${css.sideColGridBlame}` : css.sideColGrid}>
               {rows.map((row, i) => {
                 const hot = hotBlock !== null && row.block === hotBlock
                 const hotClass = hot ? ` ${css.sideBlockHot}` : ''
                 const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
+                const provenance = showBlame ? blameFor(row) : undefined
                 return (
                   <Fragment key={i}>
+                    {showBlame ? (
+                      <span className={css.blameCell} title={blameTitle(provenance, t('blameUncommitted'))}>
+                        {blameLabel(provenance, t('blameUncommitted'))}
+                      </span>
+                    ) : null}
                     <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
                     <span
                       className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}

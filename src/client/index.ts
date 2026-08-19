@@ -21,7 +21,7 @@ import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
-  type FileSides, type SideLayer, type WriteResult,
+  type BlameAnswer, type FileSides, type SideLayer, type WriteResult,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
@@ -104,6 +104,19 @@ export function apply(ctx: ClientContext): void {
             { args: { worktreePath: worktreePath ?? '', path, layer } },
             signal,
           ) as { ok: true; value: FileSides } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // One file's blame for the side pane's gutter. Read-only, so a
+        // failure is simply no gutter: null makes the toggle report that
+        // blame is unavailable rather than leaving an empty column that
+        // looks like the file has no history.
+        fetchBlame: async (worktreePath: string | undefined, path: string, signal: AbortSignal): Promise<BlameAnswer | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/blame',
+            { args: { worktreePath: worktreePath ?? '', path } },
+            signal,
+          ) as { ok: true; value: BlameAnswer } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
         // Save the side pane's editor buffer. The buffer travels with the blob

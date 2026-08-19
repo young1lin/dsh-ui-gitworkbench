@@ -1661,6 +1661,20 @@
   font-feature-settings: 'liga' 0, 'calt' 0;
   tab-size: 4;
 }
+/* The blame gutter, on the working-tree column only. Fixed width so the code
+   beside it does not shift line to line, and clipped rather than wrapped: a
+   gutter row that grew to two lines would break the alignment the whole
+   side-by-side view rests on. */
+.sideColGridBlame { grid-template-columns: 13em 3.2em 1fr; }
+.blameCell {
+  box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  border-right: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  user-select: none;
+}
 .sideTabs {
   z-index: 5;
   display: flex; gap: 16px;

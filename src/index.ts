@@ -65,8 +65,9 @@ import {
   planFromStatus,
   type DiscardEffect, type DiscardPlan,
 } from './discard-ops.js'
+import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
-import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP } from './side-guard.js'
+import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -717,6 +718,40 @@ export class GitWorkbenchService extends TypertRemoteService {
       delay: ms => new Promise(resolve => { setTimeout(resolve, ms) }),
     }
     return runWriteChecked(io, cwd, path, typeof text === 'string' ? text : '', typeof expectedSha === 'string' ? expectedSha : '')
+  }
+
+  /**
+   * One file's provenance, line by line — the side pane's blame gutter
+   * (plain-identifier params; signal last).
+   *
+   * Blames the WORKING TREE file, which is what the reader is looking at and
+   * what IDEA annotates: lines the reader has not committed come back flagged
+   * rather than missing. Read-only, no index or worktree is touched, so this
+   * needs none of the confirmation machinery the write paths carry.
+   *
+   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param signal - abort signal.
+   */
+  @Remote('blame')
+  async blame(worktreePath: string, path: string, signal: AbortSignal): Promise<{ lines: BlameLine[]; truncated: boolean; error?: string }> {
+    if (typeof path !== 'string' || !isSafePathArg(path)) {
+      return { lines: [], truncated: false, error: `unsafe path argument: ${JSON.stringify(path)}` }
+    }
+    const cwd = this.cwdOf(worktreePath)
+    // `--` keeps a path that looks like a revision from being read as one, as
+    // every other pathspec in this plugin does.
+    const run = await this.git(cwd, ['blame', '--line-porcelain', '--', path], signal)
+    if (run.exitCode !== 0) {
+      // An untracked file has no blame, and git says so; that message is the
+      // honest thing to show rather than an empty gutter.
+      return { lines: [], truncated: false, error: (run.stderr || run.stdout).trim().slice(-500) }
+    }
+    const all = parseBlame(run.stdout)
+    // The same line cap the side pane declines a file at: past it the gutter
+    // is a payload nobody reads to the end of.
+    if (all.length > SIDE_LINE_CAP) return { lines: all.slice(0, SIDE_LINE_CAP), truncated: true }
+    return { lines: all, truncated: false }
   }
 
   /**
