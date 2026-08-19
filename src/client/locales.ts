@@ -60,7 +60,7 @@ export type WorkbenchKey =
   // guards every gesture dropping the buffer (tab, file, close)
   | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice' | 'encodingNotice'
   // blame gutter on the working-tree column
-  | 'blameToggle' | 'blameUncommitted' | 'blameFailed' | 'blameTruncated'
+  | 'blameToggle' | 'blameHint' | 'blameUncommitted' | 'blameFailed' | 'blameTruncated'
   | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
   | 'staleTitle' | 'staleBody' | 'staleReload' | 'staleOverwrite'
   | 'unsavedTitle' | 'unsavedBody' | 'unsavedLeave' | 'unsavedStay'
@@ -244,7 +244,8 @@ export const zh: Record<WorkbenchKey, string> = {
   editingNotice: '正在编辑且未保存：保存前区块操作不可用；切走前（换页签、选其他文件、关闭抽屉）会先确认。',
   // Why the edit affordance is withheld on a CRLF file: the editor control
   // itself rewrites \r\n to \n, so any save would change every line ending.
-  blameToggle: '追溯',
+  blameToggle: 'Blame',
+  blameHint: '显示每一行最后是被谁、在哪个提交里改的',
   blameUncommitted: '尚未提交',
   blameFailed: '这个文件没有可追溯的历史（可能是未跟踪的新文件）。',
   blameTruncated: '文件过长，追溯信息只显示了前面一部分。',
@@ -436,6 +437,7 @@ export const en: Record<WorkbenchKey, string> = {
   // Why the edit affordance is withheld on a CRLF file: the editor control
   // itself rewrites \r\n to \n, so any save would change every line ending.
   blameToggle: 'Blame',
+  blameHint: 'Show which commit last changed each line',
   blameUncommitted: 'Not committed yet',
   blameFailed: 'This file has no history to blame (it may be a new, untracked file).',
   blameTruncated: 'The file is long, so blame is shown for the first part only.',

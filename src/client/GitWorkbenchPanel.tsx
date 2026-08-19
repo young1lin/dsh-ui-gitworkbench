@@ -5218,6 +5218,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
               <button
                 type="button"
                 aria-pressed={blameOn}
+                title={t('blameHint')}
                 className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
                 onClick={() => { setBlameOn(on => !on) }}
               >{t('blameToggle')}</button>
