@@ -1,29 +1,20 @@
 /**
- * What the Tab key does inside the side pane's editor: insert this file's own
- * indentation, or take one level back off it.
+ * The indentation unit a file uses, learned from the file itself.
  *
- * A textarea's default Tab moves focus, which is right for a form and wrong
- * for an editor — the reader pressing Tab in code means indentation, and
- * losing the caret instead is the kind of thing that makes a pane feel broken
- * rather than limited. So the editor handles Tab itself, and everything it
- * needs to decide lives here as text-in / text-out.
+ * The editor's Tab key is CodeMirror's `indentWithTab`, which inserts and
+ * removes whatever `indentUnit` is configured with — so the only decision left
+ * is what that unit should be, and it is not a setting. This pane saves WHOLE
+ * files: indenting with two spaces inside a four-space project writes
+ * whitespace the project's own formatter will fight, and shows up in the next
+ * diff as a change to lines nobody edited.
  *
- * The unit is DETECTED, not configured: a file indented with tabs gets a tab
- * and a file indented with four spaces gets four. Guessing wrong here writes
- * whitespace the project's own formatter will fight, and this pane saves whole
- * files — a mixed-indentation save is a diff on lines nobody edited.
+ * So the unit is detected: a tab-indented Go file gets a tab, four-space Java
+ * gets four.
  *
  * Pure: no React, no DOM, no git. `tests/indent.test.ts` loads it directly.
  *
  * @module @young1lin/dsh-ui-gitworkbench/client/indent
  */
-
-/** A Tab edit's result: the new buffer and where the selection ends up. */
-export interface TabEdit {
-  readonly text: string
-  readonly selectionStart: number
-  readonly selectionEnd: number
-}
 
 /** Fallback unit for a file with no indentation to learn from. */
 export const DEFAULT_INDENT = '  '
@@ -38,7 +29,7 @@ export const DEFAULT_INDENT = '  '
  * at four spaces still reports four rather than its total depth.
  *
  * @param text - the whole buffer.
- * @returns the unit to insert: `'\t'`, N spaces, or {@link DEFAULT_INDENT}.
+ * @returns the unit to insert: a tab, N spaces, or {@link DEFAULT_INDENT}.
  */
 export function detectIndent(text: string): string {
   const lines = text.split('\n')
@@ -54,120 +45,30 @@ export function detectIndent(text: string): string {
   }
   if (tabs > spaced) return '\t'
 
-  // Most common positive step between consecutive lines' indents.
-  const steps = new Map<number, number>()
-  for (let i = 1; i < widths.length; i += 1) {
-    const step = Math.abs(widths[i]! - widths[i - 1]!)
-    if (step > 0) steps.set(step, (steps.get(step) ?? 0) + 1)
+  // The unit divides every level the file uses, so it is the GCD of the
+  // indents themselves — not the most common step between consecutive lines.
+  // A Java file with a text block indents its body by two levels at once, and
+  // counting steps makes that 8 the winner in a file indented by 4; 12 is not
+  // a multiple of 8, so a GCD cannot make that mistake.
+  //
+  // Widths seen only ONCE are set aside first: a single continuation line
+  // aligned under an open paren is at an arbitrary column, and one of those
+  // would drag the GCD down to 1. If nothing repeats there is no majority to
+  // protect, so the second pass reads them all.
+  const seen = new Map<number, number>()
+  for (const width of widths) {
+    if (width > 0) seen.set(width, (seen.get(width) ?? 0) + 1)
   }
-  let best = 0
-  let bestCount = 0
-  for (const [step, count] of steps) {
-    // Ties go to the SMALLER step: 4 and 8 both appear in a 4-indented file,
-    // and 8 is two levels of it, never the unit.
-    if (count > bestCount || (count === bestCount && step < best)) { best = step; bestCount = count }
-  }
-  if (best > 0) return ' '.repeat(best)
-  // No steps to learn from: a flat file, or one single indented line.
-  const only = widths.find(width => width > 0)
-  return only === undefined ? DEFAULT_INDENT : ' '.repeat(only)
+  const repeated = [...seen].filter(([, count]) => count > 1).map(([width]) => width)
+  const unit = gcdOf(repeated.length > 0 ? repeated : [...seen.keys()])
+  return unit === 0 ? DEFAULT_INDENT : ' '.repeat(unit)
 }
 
-/** Whether the selection covers more than one line, which makes Tab a block
- *  indent rather than an insertion. A caret sitting anywhere on one line is
- *  the insertion case, as it is in every editor. */
-function spansLines(text: string, start: number, end: number): boolean {
-  return end > start && text.slice(start, end).includes('\n')
+/** GCD of a list, 0 for an empty one. */
+function gcdOf(values: readonly number[]): number {
+  return values.reduce((a, b) => gcd(a, b), 0)
 }
 
-/** Start offset of the line containing `offset`. */
-function lineStart(text: string, offset: number): number {
-  const before = text.lastIndexOf('\n', offset - 1)
-  return before === -1 ? 0 : before + 1
-}
-
-/**
- * Apply a Tab (or Shift+Tab) to a buffer.
- *
- * Four cases, and the caller does not need to know which one applied:
- *
- *   - Tab with a caret or a within-line selection inserts one unit, replacing
- *     the selection as typing would;
- *   - Tab across lines indents every line it touches, keeping the same lines
- *     selected so the next Tab indents again;
- *   - Shift+Tab removes one unit from the front of every line it touches, and
- *     tolerates a partial unit (three spaces under a four-space unit) rather
- *     than refusing;
- *   - Shift+Tab with a caret outdents that one line, whatever the caret's
- *     column — the line is what is being outdented.
- *
- * @param text - the buffer.
- * @param selectionStart - the textarea's selectionStart.
- * @param selectionEnd - the textarea's selectionEnd.
- * @param unit - from {@link detectIndent}.
- * @param outdent - true for Shift+Tab.
- * @returns the new buffer and selection.
- */
-export function tabEdit(
-  text: string,
-  selectionStart: number,
-  selectionEnd: number,
-  unit: string,
-  outdent: boolean,
-): TabEdit {
-  const start = Math.max(0, Math.min(selectionStart, text.length))
-  const end = Math.max(start, Math.min(selectionEnd, text.length))
-
-  if (!outdent && !spansLines(text, start, end)) {
-    const next = `${text.slice(0, start)}${unit}${text.slice(end)}`
-    const caret = start + unit.length
-    return { text: next, selectionStart: caret, selectionEnd: caret }
-  }
-
-  const from = lineStart(text, start)
-  // A selection ending exactly at a line start does not include that line: the
-  // reader dragged to the beginning of it, not into it.
-  // The edit works in WHOLE lines, so the range grows to line boundaries at
-  // both ends. Growing the END matters most for a bare caret: an outdent
-  // with nothing selected still has a line to take a level off, and slicing
-  // at the caret hands the loop an empty body that silently changes nothing.
-  const lastLine = lineStart(text, end > from && text[end - 1] === '\n' ? end - 1 : end)
-  const lineBreak = text.indexOf('\n', lastLine)
-  const to = lineBreak === -1 ? text.length : lineBreak
-  const head = text.slice(0, from)
-  const body = text.slice(from, Math.max(from, to))
-  const tail = text.slice(Math.max(from, to))
-
-  let firstDelta = 0
-  let total = 0
-  const lines = body.split('\n').map((line, index) => {
-    if (outdent) {
-      const removed = outdentWidth(line, unit)
-      if (index === 0) firstDelta = -removed
-      total -= removed
-      return line.slice(removed)
-    }
-    // A blank line gains nothing: trailing whitespace on an empty line is the
-    // diff noise this pane exists to avoid producing.
-    if (line.length === 0) return line
-    if (index === 0) firstDelta = unit.length
-    total += unit.length
-    return `${unit}${line}`
-  })
-
-  const next = `${head}${lines.join('\n')}${tail}`
-  return {
-    text: next,
-    selectionStart: Math.max(from, start + firstDelta),
-    selectionEnd: Math.max(from, end + total),
-  }
-}
-
-/** How many characters one outdent takes off this line: a whole unit, or the
- *  partial indentation it actually has. */
-function outdentWidth(line: string, unit: string): number {
-  if (line.startsWith(unit)) return unit.length
-  if (unit === '\t') return line.startsWith('\t') ? 1 : 0
-  const width = line.length - line.trimStart().length
-  return Math.min(width, unit.length)
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b)
 }

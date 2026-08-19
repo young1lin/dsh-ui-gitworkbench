@@ -63,7 +63,8 @@ import {
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
-import { detectIndent, tabEdit } from './indent.ts'
+import { detectIndent } from './indent.ts'
+import { CodeEditor } from './CodeEditor.tsx'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -4749,7 +4750,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   const adoptRef = useRef<'auto' | 'reload'>('auto')
   const editRef = useRef(edit)
   editRef.current = edit
-  const taRef = useRef<HTMLTextAreaElement>(null)
 
   // Switching tabs refetches: the two layers are different diffs of the same
   // file, and neither is a transform of the other client-side. A change in the
@@ -4847,6 +4847,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // visible text under the transparent textarea, which is what keeps syntax
   // coloring and the caret on the same grid while typing.
   const bufferLines = useMemo(() => edit.buffer.split('\n'), [edit.buffer])
+  // What Tab inserts, learned from the file rather than configured. Keyed on
+  // the BASE text, not the buffer: re-detecting mid-edit would let a couple of
+  // freshly typed lines redefine the unit under the reader's hands.
+  const indentOfBuffer = useMemo(() => detectIndent(edit.baseText), [edit.baseText])
   const editSyntax = useMemo(
     () => edit.armed ? highlightFile(bufferLines, lang, shikiTheme) : [],
     [edit.armed, bufferLines, lang, shikiTheme, grammarGen],
@@ -4859,7 +4863,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
 
   // Arming drops the caret straight into the buffer: the click that armed the
   // editor said "I want to type here", and a second click to focus is a tax.
-  useEffect(() => { if (edit.armed) taRef.current?.focus() }, [edit.armed])
 
   /** Arm the editor from the payload on screen; the unstaged tab, and only
    *  for a payload `editableSides` accepts — armEdit itself refuses the rest,
@@ -4967,36 +4970,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
    * reads the block off whatever the pointer is over — no handler per cell,
    * and a pointer over context or a gutter simply clears the hot block.
    */
-  /**
-   * Keys the editor claims from the browser.
-   *
-   * Tab in a textarea moves focus, which is right for a form and wrong for
-   * code: the reader pressing it means indentation. So Tab indents and
-   * Shift+Tab outdents, in THIS file's own unit — and because taking Tab away
-   * makes the textarea a keyboard trap, Escape steps back out, which is the
-   * escape hatch a keyboard-only reader needs to reach the buttons again.
-   *
-   * The buffer is set through the same setter typing uses, so undo history is
-   * the only thing lost to a Tab; the selection is restored after React has
-   * painted the new value, or the caret would jump to the end.
-   */
-  const onEditorKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === 'Escape') {
-      event.currentTarget.blur()
-      return
-    }
-    if (event.key !== 'Tab') return
-    // A modifier means the reader is driving the browser, not typing.
-    if (event.ctrlKey || event.metaKey || event.altKey) return
-    event.preventDefault()
-    const ta = event.currentTarget
-    const next = tabEdit(ta.value, ta.selectionStart, ta.selectionEnd, detectIndent(ta.value), event.shiftKey)
-    setEdit(prev => ({ ...prev, buffer: next.text }))
-    // React writes `value` on the next paint; setting the range before that
-    // would be overwritten by it.
-    requestAnimationFrame(() => { ta.setSelectionRange(next.selectionStart, next.selectionEnd) })
-  }
-
   const onBodyHover = (event: ReactMouseEvent<HTMLDivElement>): void => {
     const hit = (event.target as Element).closest('[data-block]')
     const id = hit === null ? null : Number(hit.getAttribute('data-block'))
@@ -5202,27 +5175,23 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                 </Fragment>
               )
             })}
-            {bufferLines.map((line, k) => (
-              <Fragment key={`r${k}`}>
-                <span className={css.sideNum} style={{ gridRow: k + 1, gridColumn: 3 }}>{k + 1}</span>
-                <span className={`${css.sideCode} ${css.sideCodeSame}`} style={{ gridRow: k + 1, gridColumn: 4 }}>{renderSideCode({ line: k + 1, text: line }, editSyntax?.[k])}</span>
-              </Fragment>
-            ))}
-            {/* The editor itself: a transparent textarea laid exactly over its
-                own rendered lines — same font, same 20px rhythm, same padding
-                — so the caret and the underlay never drift apart, however the
-                edits reshape the buffer. No editor library, no per-keystroke
-                diff: the buffer is one string until it is saved. */}
-            <div className={css.sideEditCell} style={{ gridRow: `1 / span ${Math.max(bufferLines.length, 1)}`, gridColumn: 4 }}>
-              <textarea
-                ref={taRef}
-                className={css.sideEditTa}
+            {/* The editor: ONE CodeMirror view over the right half. It draws
+                its own line numbers, so columns 3 and 4 are handed to it
+                whole — there is no underlay to keep aligned any more, which
+                is the whole reason the transparent-textarea trick existed.
+                It spans every row the taller side has, so a buffer longer
+                than the index side still gets grid rows to occupy. */}
+            <div
+              className={css.sideEditCell}
+              style={{ gridRow: `1 / span ${Math.max(bufferLines.length, leftRows.length, 1)}`, gridColumn: '3 / span 2' }}
+            >
+              <CodeEditor
                 value={edit.buffer}
-                spellCheck={false}
-                wrap="off"
-                aria-label={path}
-                onChange={event => { setEdit(prev => ({ ...prev, buffer: event.target.value })) }}
-                onKeyDown={onEditorKeyDown}
+                onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
+                syntax={editSyntax}
+                indent={indentOfBuffer}
+                ariaLabel={path}
+                onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
               />
             </div>
           </>
