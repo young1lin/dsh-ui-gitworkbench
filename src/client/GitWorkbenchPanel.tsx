@@ -63,6 +63,7 @@ import {
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
+import { detectIndent, tabEdit } from './indent.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -4950,6 +4951,36 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
    * reads the block off whatever the pointer is over — no handler per cell,
    * and a pointer over context or a gutter simply clears the hot block.
    */
+  /**
+   * Keys the editor claims from the browser.
+   *
+   * Tab in a textarea moves focus, which is right for a form and wrong for
+   * code: the reader pressing it means indentation. So Tab indents and
+   * Shift+Tab outdents, in THIS file's own unit — and because taking Tab away
+   * makes the textarea a keyboard trap, Escape steps back out, which is the
+   * escape hatch a keyboard-only reader needs to reach the buttons again.
+   *
+   * The buffer is set through the same setter typing uses, so undo history is
+   * the only thing lost to a Tab; the selection is restored after React has
+   * painted the new value, or the caret would jump to the end.
+   */
+  const onEditorKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === 'Escape') {
+      event.currentTarget.blur()
+      return
+    }
+    if (event.key !== 'Tab') return
+    // A modifier means the reader is driving the browser, not typing.
+    if (event.ctrlKey || event.metaKey || event.altKey) return
+    event.preventDefault()
+    const ta = event.currentTarget
+    const next = tabEdit(ta.value, ta.selectionStart, ta.selectionEnd, detectIndent(ta.value), event.shiftKey)
+    setEdit(prev => ({ ...prev, buffer: next.text }))
+    // React writes `value` on the next paint; setting the range before that
+    // would be overwritten by it.
+    requestAnimationFrame(() => { ta.setSelectionRange(next.selectionStart, next.selectionEnd) })
+  }
+
   const onBodyHover = (event: ReactMouseEvent<HTMLDivElement>): void => {
     const hit = (event.target as Element).closest('[data-block]')
     const id = hit === null ? null : Number(hit.getAttribute('data-block'))
@@ -5174,6 +5205,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                 wrap="off"
                 aria-label={path}
                 onChange={event => { setEdit(prev => ({ ...prev, buffer: event.target.value })) }}
+                onKeyDown={onEditorKeyDown}
               />
             </div>
           </>
