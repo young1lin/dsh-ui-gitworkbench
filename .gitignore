@@ -35,3 +35,4 @@ scripts/llm_smoke.py
 scripts/verify_turn_refresh.py
 scripts/verify_history_feature.py
 scripts/verify_side_pane.py
+scripts/verify_encoding_probe.py
