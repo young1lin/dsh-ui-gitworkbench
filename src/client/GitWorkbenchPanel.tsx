@@ -4792,6 +4792,13 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   }, [sides])
   // Highlight each column as one file — a row is not a program, and lexing
   // fragments is what made the unified view paint keywords as plain text.
+  //
+  // These are UNDEFINED until a lazy grammar loads, and stay undefined for a
+  // file whose extension has no grammar at all (`go.mod`, `Dockerfile`), so
+  // every read below is optional-chained. `renderSideCode` already takes
+  // `undefined` and renders the plain text for it; what crashes is indexing
+  // the array itself, and `strict` is off in tsconfig, so the compiler will
+  // not say so.
   const leftSyntax = useMemo(
     () => highlightFile(rows.map(row => row.left === null ? '' : row.left.text), lang, shikiTheme),
     [rows, lang, shikiTheme, grammarGen],
@@ -5141,7 +5148,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                 <Fragment key={`l${i}`}>
                   <span className={`${sideNumClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 1 }}>{row.left!.line}</span>
                   <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} style={{ gridRow: k + 1, gridColumn: 2 }} data-block={row.block >= 0 ? row.block : undefined}>
-                    {renderSideCode(row.left, leftSyntax[i])}
+                    {renderSideCode(row.left, leftSyntax?.[i])}
                     {hot && k === hotFirstLeft ? blockBar(row.block) : null}
                   </span>
                 </Fragment>
@@ -5150,7 +5157,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
             {bufferLines.map((line, k) => (
               <Fragment key={`r${k}`}>
                 <span className={css.sideNum} style={{ gridRow: k + 1, gridColumn: 3 }}>{k + 1}</span>
-                <span className={`${css.sideCode} ${css.sideCodeSame}`} style={{ gridRow: k + 1, gridColumn: 4 }}>{renderSideCode({ line: k + 1, text: line }, editSyntax[k])}</span>
+                <span className={`${css.sideCode} ${css.sideCodeSame}`} style={{ gridRow: k + 1, gridColumn: 4 }}>{renderSideCode({ line: k + 1, text: line }, editSyntax?.[k])}</span>
               </Fragment>
             ))}
             {/* The editor itself: a transparent textarea laid exactly over its
@@ -5180,7 +5187,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
               <Fragment key={i}>
                 <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
                 <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.block >= 0 ? row.block : undefined}>
-                  {renderSideCode(row.left, leftSyntax[i])}
+                  {renderSideCode(row.left, leftSyntax?.[i])}
                   {barInLeft ? bar : null}
                 </span>
                 <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
@@ -5189,7 +5196,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                   data-block={row.block >= 0 ? row.block : undefined}
                   onClick={layer === 'unstaged' && armable ? armFromCell : undefined}
                 >
-                  {renderSideCode(row.right, rightSyntax[i])}
+                  {renderSideCode(row.right, rightSyntax?.[i])}
                   {barInLeft ? null : bar}
                 </span>
               </Fragment>
