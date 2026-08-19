@@ -1633,9 +1633,15 @@
    fixed split would clip long lines. Equal 1fr code tracks keep the two
    columns identically wide however wide the widest line is, and the whole pane
    (this view's single shared vertical scroll) carries the horizontal one. */
-.sidePane { display: flex; flex-direction: column; min-width: 100%; width: max-content; }
+/* The pane is a HEADER plus a scroller, not one wide column: the tab row
+   carries Save/Revert, and a row sized to the widest line of code pushes them
+   off the right edge of a long file — reachable only by scrolling sideways,
+   which is not where anyone looks for a toolbar. Only `.sideScroll` scrolls;
+   the tabs and the notices above it stay put on both axes. */
+.sidePane { display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100%; }
+.sideScroll { flex: 1 1 0; min-height: 0; overflow: auto; }
 .sideTabs {
-  position: sticky; top: 0; z-index: 5;
+  z-index: 5;
   display: flex; gap: 16px;
   flex: none;
   padding: 6px 16px 0;

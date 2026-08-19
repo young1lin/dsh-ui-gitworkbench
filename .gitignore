@@ -37,3 +37,4 @@ scripts/verify_history_feature.py
 scripts/verify_side_pane.py
 scripts/verify_encoding_probe.py
 scripts/verify_tab_key.py
+scripts/verify_pane_header.py

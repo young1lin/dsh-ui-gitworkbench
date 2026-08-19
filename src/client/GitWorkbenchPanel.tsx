@@ -5162,6 +5162,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           whatever cell the pointer is over, and the whole block — outline and
           action bar — answers to it as one unit. The empty body renders the
           pane's no-change sentence here under the tabs, not instead of them. */}
+      <div className={css.sideScroll}>
       {bodyState.kind === 'empty' ? (
         <div className={css.empty}>{t('noTextDiff')}</div>
       ) : (
@@ -5237,6 +5238,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
         )}
       </div>
       )}
+      </div>
       {pendingLayer !== null ? (
         <LeaveEditsConfirm t={t} path={path} onCancel={() => { setPendingLayer(null) }} onConfirm={confirmLeave} />
       ) : null}
