@@ -64,7 +64,7 @@ import {
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
-import { NO_PLACE, type FilesPlace } from './files-place.ts'
+import { NO_PLACE, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
 import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { detectIndent } from './indent.ts'
@@ -85,7 +85,7 @@ import {
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
 import { grammarLoadCount, highlightFile, highlightForRows, highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
 import css from './GitWorkbenchPanel.module.css'
@@ -522,6 +522,16 @@ const EMPTY_STATS: WorkbenchStats = {
   files: [], diff: '', commits: [],
 }
 
+/** One worktree's last-read file list. */
+interface FilesTree {
+  readonly paths: readonly string[]
+  readonly truncated: boolean
+}
+
+/** A worktree nobody has opened the Files tab on yet. One instance, so an
+ *  unvisited worktree does not re-render the browser on every pass. */
+const EMPTY_TREE: FilesTree = { paths: [], truncated: false }
+
 /** The overlay with nothing on it — one instance, so an empty overlay never
  *  re-renders the tree that receives it. */
 const EMPTY_TICKS: ReadonlyMap<string, TickAction> = new Map()
@@ -576,15 +586,28 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const [gen, setGen] = useState(0)
   /** Tree expansion state, session-lifetime: survives polls, source switches and drawer close/reopen. */
   const [collapsed, setCollapsed] = useState<Set<string> | undefined>(undefined)
-  // The Files tab's place and its last file list. Held here rather than in the
-  // browser because the browser unmounts whenever another tab is looked at:
-  // without this, coming back lost the selection and every expanded folder,
-  // which is the difference between a tab you return to and one you start
-  // over in. The cached list is what makes the return render instead of blank.
-  const [filesPlace, setFilesPlace] = useState<FilesPlace>(NO_PLACE)
-  const [filesTree, setFilesTree] = useState<{ paths: readonly string[]; truncated: boolean }>(
-    () => ({ paths: [], truncated: false }),
-  )
+  // The Files tab's place and its last file list, ONE PER WORKTREE. Held here
+  // rather than in the browser because the browser unmounts whenever another
+  // tab is looked at: without this, coming back lost the selection and every
+  // expanded folder, which is the difference between a tab you return to and
+  // one you start over in.
+  //
+  // Per worktree because a worktree is a different place — different files, at
+  // different paths, and the open one may not exist in the next one at all.
+  // Keying the cached list too is what stops a switch from rendering the
+  // previous worktree's files until the new list arrives.
+  const [filesPlaces, setFilesPlaces] = useState<FilesPlaces>(() => new Map())
+  const [filesTrees, setFilesTrees] = useState<ReadonlyMap<string, FilesTree>>(() => new Map())
+  const rememberPlace = useCallback((key: string, next: FilesPlace): void => {
+    setFilesPlaces(prev => withPlace(prev, key, next))
+  }, [])
+  const rememberTree = useCallback((key: string, next: FilesTree): void => {
+    setFilesTrees(prev => {
+      const map = new Map(prev)
+      map.set(key, next)
+      return map
+    })
+  }, [])
   /** Binding + the repository's worktrees, null until the first successful fetch. */
   const [wtStatus, setWtStatus] = useState<WorktreeStatus | null>(null)
   /** Worktree the drawer reads, by absolute path. null = follow the session's own
@@ -1442,10 +1465,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
-          filesPlace={filesPlace}
-          onFilesPlace={setFilesPlace}
-          filesTree={filesTree}
-          onFilesTree={setFilesTree}
+          filesPlaces={filesPlaces}
+          onFilesPlace={rememberPlace}
+          filesTrees={filesTrees}
+          onFilesTree={rememberTree}
           onCollapsedChange={setCollapsed}
         />
       ) : null}
@@ -1649,14 +1672,14 @@ interface DrawerProps {
   viewKey: string
   gen: number
   collapsed: Set<string> | undefined
-  filesPlace: FilesPlace
-  onFilesPlace: (next: FilesPlace) => void
-  filesTree: { paths: readonly string[]; truncated: boolean }
-  onFilesTree: (next: { readonly paths: readonly string[]; readonly truncated: boolean }) => void
+  filesPlaces: FilesPlaces
+  onFilesPlace: (key: string, next: FilesPlace) => void
+  filesTrees: ReadonlyMap<string, FilesTree>
+  onFilesTree: (key: string, next: FilesTree) => void
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, viewKey, gen, collapsed, onCollapsedChange, filesPlace, onFilesPlace, filesTree, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1681,6 +1704,12 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    *  `git ls-tree HEAD` cannot see an untracked file, and a browser that will
    *  not open the file you just created reads as broken. A deleted file is
    *  left out — opening it would only fail. */
+  /** Which worktree the Files tab is remembering for. */
+  const filesKey = pathKey(statsPath)
+  const rememberPlaceHere = useCallback(
+    (next: FilesPlace) => { onFilesPlace(filesKey, next) }, [onFilesPlace, filesKey])
+  const rememberTreeHere = useCallback(
+    (next: FilesTree) => { onFilesTree(filesKey, next) }, [onFilesTree, filesKey])
   const browsablePaths = useMemo(
     () => stats.files.filter(file => file.status !== 'deleted').map(file => file.path),
     [stats.files],
@@ -2103,10 +2132,10 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               treeStyle={paneStyle(panes.tree)}
               treeRef={treeRef}
               divider={<PaneDivider label={t('resizeTree')} onDrag={paneDrag('tree', treeRef)} />}
-              place={filesPlace}
-              onPlace={onFilesPlace}
-              cached={filesTree}
-              onTree={onFilesTree}
+              place={placeAt(filesPlaces, filesKey)}
+              onPlace={rememberPlaceHere}
+              cached={filesTrees.get(filesKey) ?? EMPTY_TREE}
+              onTree={rememberTreeHere}
               fetchRepoTree={fetchRepoTree}
               fetchFileSides={fetchFileSides}
               writeChecked={writeChecked}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { NO_PLACE, openAt, reconcilePlace, toggleDir, type FilesPlace } from '../src/client/files-place.ts'
+import { NO_PLACE, openAt, placeAt, reconcilePlace, toggleDir, withPlace, type FilesPlace, type FilesPlaces } from '../src/client/files-place.ts'
+import { pathKey } from '../src/client/worktree-view.ts'
 
 const place = (over: Partial<FilesPlace> = {}): FilesPlace => ({ ...NO_PLACE, ...over })
 
@@ -95,5 +96,44 @@ describe('reconcilePlace', () => {
     expect(first.vanished).toBe('new.ts')
     // With the selection now cleared, a second pass has nothing to report.
     expect(reconcilePlace(first.place, paths).vanished).toBeNull()
+  })
+})
+
+describe('places per worktree', () => {
+  it('keeps each worktree place apart', () => {
+    // A worktree IS a different place: different files, at different paths,
+    // and the open one may not exist in the other at all.
+    let places: FilesPlaces = new Map()
+    places = withPlace(places, 'C:/repo/a', place({ open: 'src/a.ts', expanded: ['src'] }))
+    places = withPlace(places, 'C:/repo/b', place({ open: 'lib/b.ts' }))
+    expect(placeAt(places, 'C:/repo/a').open).toBe('src/a.ts')
+    expect(placeAt(places, 'C:/repo/b').open).toBe('lib/b.ts')
+    expect(placeAt(places, 'C:/repo/a').expanded).toEqual(['src'])
+  })
+
+  it('hands a worktree nobody has visited an empty place', () => {
+    expect(placeAt(new Map(), 'C:/repo/fresh')).toEqual(NO_PLACE)
+  })
+
+  it('does not mutate the map it was given', () => {
+    const before: FilesPlaces = new Map([['k', place({ open: 'a.ts' })]])
+    const after = withPlace(before, 'k', place({ open: 'b.ts' }))
+    expect(placeAt(before, 'k').open).toBe('a.ts')
+    expect(placeAt(after, 'k').open).toBe('b.ts')
+  })
+
+  it('keys the same worktree once however its path was spelled', () => {
+    // git reports forward slashes; a session cwd arrives with the platform's.
+    // The separator is built rather than written: a backslash in a literal
+    // here is an escape sequence, which is how this test first went red.
+    let places: FilesPlaces = new Map()
+    places = withPlace(places, pathKey(['C:', 'repo', 'a'].join(String.fromCharCode(92))), place({ open: 'src/a.ts' }))
+    expect(placeAt(places, pathKey('C:/repo/a/')).open).toBe('src/a.ts')
+  })
+
+  it('treats an absent path as a real key, not as no key', () => {
+    // '' names the session's own repository — the source the drawer starts on.
+    const places = withPlace(new Map(), pathKey(undefined), place({ open: 'a.ts' }))
+    expect(placeAt(places, pathKey(null)).open).toBe('a.ts')
   })
 })

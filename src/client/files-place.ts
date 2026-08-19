@@ -80,3 +80,28 @@ export function reconcilePlace(place: FilesPlace, paths: readonly string[]): Rec
   if (paths.includes(place.open)) return { place, vanished: null }
   return { place: { ...place, open: null }, vanished: place.open }
 }
+
+/**
+ * One place per worktree, because a worktree IS a different place: it holds
+ * different files, at different paths, and the file the reader had open may
+ * simply not exist in the one they switched to. Sharing a single place across
+ * sources also meant the tree kept rendering the PREVIOUS worktree's files
+ * until the new list arrived.
+ *
+ * Keyed by {@link pathKey}, so the same worktree is one entry however the path
+ * reached the drawer — `git worktree list` reports forward slashes and a
+ * session cwd arrives with the platform's own.
+ */
+export type FilesPlaces = ReadonlyMap<string, FilesPlace>
+
+/** This worktree's place, or a fresh one for a worktree not visited yet. */
+export function placeAt(places: FilesPlaces, key: string): FilesPlace {
+  return places.get(key) ?? NO_PLACE
+}
+
+/** Record this worktree's place, leaving every other worktree's alone. */
+export function withPlace(places: FilesPlaces, key: string, place: FilesPlace): FilesPlaces {
+  const next = new Map(places)
+  next.set(key, place)
+  return next
+}

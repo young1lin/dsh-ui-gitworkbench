@@ -13,6 +13,16 @@ function normalize(path: string): string {
 }
 
 /**
+ * A path in the one form everything compares by — the same normalisation
+ * {@link samePath} uses, exposed so state can be KEYED by a worktree rather
+ * than only tested against one. An absent path keys as '', which is a real
+ * key: it names the session's own repository, the source the drawer starts on.
+ */
+export function pathKey(path: string | null | undefined): string {
+  return path === null || path === undefined ? '' : normalize(path)
+}
+
+/**
  * Whether two paths name the same place.
  *
  * `git worktree list` reports forward slashes while the session cwd arrives
@@ -23,7 +33,7 @@ function normalize(path: string): string {
  */
 export function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
   if (a === null || a === undefined || b === null || b === undefined) return false
-  return normalize(a) === normalize(b)
+  return pathKey(a) === pathKey(b)
 }
 
 /**
