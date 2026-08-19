@@ -500,6 +500,31 @@ export function isBinaryPrefix(bytes: Buffer, windowBytes: number): boolean {
 }
 
 /**
+ * Whether a buffer is valid UTF-8, and so survives a decode/encode round trip.
+ *
+ * The editable pane hands the browser a decoded string and writes back what
+ * comes home encoded as UTF-8. For a file in any other encoding — GBK, Shift
+ * JIS, Latin-1 — that trip is LOSSY: every byte the decoder cannot read
+ * becomes U+FFFD, and writing the result replaces every non-ASCII byte in the
+ * file, including the lines nobody edited. Such a file carries no NUL byte,
+ * so the binary sniff above waves it through; only decoding it says so.
+ *
+ * `fatal` makes the decoder throw on the first invalid sequence rather than
+ * substituting, which is the whole question asked in one call and without
+ * allocating the string twice to compare it.
+ *
+ * @param bytes - the file's contents.
+ */
+export function decodesAsUtf8(bytes: Buffer): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Clip a diff to a character cap, and SAY so when the clip happened — a
  * silently shortened diff reads as a complete one (TESTS.md H1).
  * @param text - the diff.

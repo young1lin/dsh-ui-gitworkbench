@@ -33,6 +33,10 @@ export interface WriteResult {
 export interface EditSides {
   readonly targetText: string
   readonly targetSha: string
+  /** Host's word that the working-tree file is not valid UTF-8. Optional so a
+   *  payload from a host half older than this client reads as "fine" rather
+   *  than as a refusal it cannot explain. */
+  readonly lossyEncoding?: boolean
 }
 
 /** The editable right column's whole state, minus transient banners. */
@@ -76,8 +80,37 @@ export function isDirty(edit: EditState): boolean {
  * and the block actions keep working (they act on git's diff, not on the
  * buffer); only the editor is withheld, with a notice saying why.
  */
+export type ArmRefusal = 'encoding' | 'crlf'
+
+/**
+ * Why the editor is withheld for this payload, or null when it may arm.
+ *
+ * Two reasons, and the pane says WHICH: a reader shown one sentence for two
+ * different causes cannot tell whether converting line endings would help.
+ *
+ *   - `encoding` — the file is not UTF-8 (GBK, Shift JIS, Latin-1). The text
+ *     on screen is a lossy decode of it, so saving it back would replace every
+ *     non-ASCII byte in the file, including lines nobody touched. The host
+ *     refuses such a save too; this is what keeps the reader from reaching it.
+ *   - `crlf` — the text carries carriage returns. The textarea normalises
+ *     `{CR}{LF}` to `{LF}` the moment the text lands in it, so the next save
+ *     would rewrite every line ending in the file.
+ *
+ * Encoding is reported first: it is the more fundamental of the two, and its
+ * sentence is the one that tells the reader nothing here will help.
+ *
+ * Either way only the EDITOR is withheld — the diff still renders and the
+ * block actions still work, because those act on git's own diff rather than
+ * on the buffer.
+ */
+export function armRefusal(sides: EditSides): ArmRefusal | null {
+  if (sides.lossyEncoding === true) return 'encoding'
+  if (sides.targetText.includes('\r')) return 'crlf'
+  return null
+}
+
 export function editableSides(sides: EditSides): boolean {
-  return !sides.targetText.includes('\r')
+  return armRefusal(sides) === null
 }
 
 /** The adopt core: buffer and basis become the payload, conflict cleared. */

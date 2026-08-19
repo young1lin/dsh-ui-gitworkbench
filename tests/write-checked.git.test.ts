@@ -80,6 +80,7 @@ function repoIo(overrides: Partial<WriteCheckedIo> = {}): { io: WriteCheckedIo; 
         return false
       }
     },
+    readBytes: p => readFile(p),
     writeBytes: async (p, bytes) => {
       await mkdir(join(p, '..'), { recursive: true })
       await writeFile(p, bytes)
@@ -239,5 +240,44 @@ describe('writeChecked against a real git', () => {
     const result = await runWriteChecked(io, repo, 'f.ts', 'x\n', diskSha('f.ts'))
     expect(result).toMatchObject({ ok: false, failure: 'unknown', error: 'disk went away' })
     expect(await readFile(join(repo, 'f.ts'), 'utf8')).toBe(V1)
+  })
+})
+
+describe('writeChecked refuses a file it cannot round-trip', () => {
+  it('refuses a save over a non-UTF-8 file, and leaves its bytes alone', async () => {
+    // GBK "中文注释": no NUL byte, so the binary sniff waves it through, and
+    // the text the editor was handed is a lossy decode of it. Saving that back
+    // would replace every non-ASCII byte in the file.
+    const gbk = Buffer.concat([
+      Buffer.from('package main\n// ', 'ascii'),
+      Buffer.from([0xD6, 0xD0, 0xCE, 0xC4, 0xD7, 0xA2, 0xCA, 0xCD]),
+      Buffer.from('\nfunc main() {}\n', 'ascii'),
+    ])
+    await writeFile(join(repo, 'gbk.go'), gbk)
+    const { io } = repoIo()
+    // The buffer as the pane would have handed it over: the lossy decode.
+    const result = await runWriteChecked(io, repo, 'gbk.go', gbk.toString('utf8'), diskSha('gbk.go'))
+    expect(result).toMatchObject({ ok: false, failure: 'invalid' })
+    expect(result.error).toContain('not UTF-8')
+    // The bytes on disk are untouched — not "mostly", exactly.
+    expect(Buffer.compare(await readFile(join(repo, 'gbk.go')), gbk)).toBe(0)
+  })
+
+  it('refuses before the sha check, so the message names the real problem', async () => {
+    // A stale sha AND a bad encoding: the encoding sentence is the useful one,
+    // because retrying with a fresh sha would fail exactly the same way.
+    await writeFile(join(repo, 'latin.txt'), Buffer.from([0x63, 0x61, 0x66, 0xE9, 0x0A]))
+    const { io } = repoIo()
+    const result = await runWriteChecked(io, repo, 'latin.txt', 'caf�\n', 'not-the-sha')
+    expect(result).toMatchObject({ ok: false, failure: 'invalid' })
+    expect(result.error).toContain('not UTF-8')
+  })
+
+  it('still writes a plain UTF-8 file, including non-ASCII it can round-trip', async () => {
+    await writeFile(join(repo, 'utf8.txt'), '中文注释\n', 'utf8')
+    const { io } = repoIo()
+    const result = await runWriteChecked(io, repo, 'utf8.txt', '中文注释 changed\n', diskSha('utf8.txt'))
+    expect(result.ok).toBe(true)
+    expect(await readFile(join(repo, 'utf8.txt'), 'utf8')).toBe('中文注释 changed\n')
   })
 })

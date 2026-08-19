@@ -9,6 +9,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   NON_INTERACTIVE_ENV,
+  decodesAsUtf8,
+  isBinaryPrefix,
   classifyFailure,
   commitArgv,
   fetchArgv,
@@ -242,5 +244,34 @@ describe('tracking header corners', () => {
     expect(parseTracking('## No commits yet on main\n?? first.txt\n')).toEqual({
       branch: 'main', upstream: null, ahead: 0, behind: 0, detached: false,
     })
+  })
+})
+
+describe('decodesAsUtf8', () => {
+  it('accepts ASCII and real UTF-8', () => {
+    expect(decodesAsUtf8(Buffer.from('plain ascii\n'))).toBe(true)
+    expect(decodesAsUtf8(Buffer.from('中文注释 — em dash\n', 'utf8'))).toBe(true)
+    expect(decodesAsUtf8(Buffer.from(''))).toBe(true)
+  })
+
+  it('rejects GBK, which carries no NUL byte and so passes the binary sniff', () => {
+    // "中文注释" as GBK. This is the corruption case: the editor would decode
+    // it to U+FFFD and write those back over every non-ASCII byte.
+    const gbk = Buffer.from([0xD6, 0xD0, 0xCE, 0xC4, 0xD7, 0xA2, 0xCA, 0xCD, 0x0A])
+    expect(isBinaryPrefix(gbk, 8000)).toBe(false)
+    expect(decodesAsUtf8(gbk)).toBe(false)
+  })
+
+  it('rejects Latin-1 and Shift JIS text too', () => {
+    expect(decodesAsUtf8(Buffer.from([0x63, 0x61, 0x66, 0xE9, 0x0A]))).toBe(false) // café
+    expect(decodesAsUtf8(Buffer.from([0x93, 0xFA, 0x96, 0x7B, 0x0A]))).toBe(false) // 日本
+  })
+
+  it('rejects a truncated multi-byte sequence', () => {
+    expect(decodesAsUtf8(Buffer.from([0xE4, 0xB8]))).toBe(false)
+  })
+
+  it('accepts a UTF-8 BOM, which is valid UTF-8', () => {
+    expect(decodesAsUtf8(Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from('x\n')]))).toBe(true)
   })
 })

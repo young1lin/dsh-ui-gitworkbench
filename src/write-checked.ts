@@ -34,7 +34,7 @@ import { randomBytes } from 'node:crypto'
 
 import { renameWithRetry } from './atomic-json.js'
 import { resolveInside } from './fs-remove.js'
-import { isSafePathArg, type OpFailure } from './git-ops.js'
+import { decodesAsUtf8, isSafePathArg, type OpFailure } from './git-ops.js'
 import type { GitRun } from './apply-blocks.js'
 
 /**
@@ -65,6 +65,8 @@ export interface WriteCheckedIo {
   readonly git: (cwd: string, argv: readonly string[]) => Promise<GitRun>
   /** Whether the path exists on disk (the explicit not-exist check). */
   readonly exists: (path: string) => Promise<boolean>
+  /** The file's raw bytes, for the encoding check. Throws if unreadable. */
+  readonly readBytes: (path: string) => Promise<Buffer>
   /** Write whole bytes to a path — the buffer as-is, LF, no translation. */
   readonly writeBytes: (path: string, bytes: Uint8Array) => Promise<void>
   /** Renames a path over another; retried by {@link renameWithRetry}. */
@@ -122,11 +124,33 @@ async function writeChecked(
     return { ok: false, failure: 'invalid', error: error instanceof Error ? error.message : String(error) }
   }
 
+  // Encoding before anything else, because it is a permanent property of the
+  // file rather than a race. The buffer reached the browser as a UTF-8 decode
+  // of these bytes; for a file in any other encoding that decode was LOSSY,
+  // and writing the result back replaces every non-ASCII byte in the file —
+  // including the lines nobody edited. The client withholds the editor for
+  // such a file, and this refuses the write regardless, because a client's
+  // word is not what this RPC trusts.
+  let current: string
+  const present = await io.exists(target)
+  if (present) {
+    let bytes: Buffer
+    try {
+      bytes = await io.readBytes(target)
+    } catch (error) {
+      return {
+        ok: false, failure: 'unknown',
+        error: `could not read ${path} to check its encoding: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+    if (!decodesAsUtf8(bytes)) {
+      return { ok: false, failure: 'invalid', error: notUtf8Message(path) }
+    }
+  }
+
   // The sha as git reads it now. Absent is '', by stat rather than by reading
   // a spawn failure into it; a file that IS there but will not hash is a
   // failed save, never a stale one.
-  let current: string
-  const present = await io.exists(target)
   if (!present) {
     current = ''
   } else {
@@ -172,6 +196,15 @@ async function writeChecked(
     }
   }
   return { ok: true, sha: after.stdout.trim() }
+}
+
+/**
+ * Why an encoding refusal happened, in the reader's terms. It names the path
+ * for the same reason the stale message does — the banner sits under a file
+ * tab the reader may already have switched away from.
+ */
+function notUtf8Message(path: string): string {
+  return `${path} is not UTF-8, so editing it here would rewrite every non-ASCII byte; nothing was written`
 }
 
 /**

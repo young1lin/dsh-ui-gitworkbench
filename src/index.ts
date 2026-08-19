@@ -55,7 +55,7 @@ import { runWriteChecked, type WriteCheckedIo, type WriteResult } from './write-
 import { CommitPayloadCache, cacheKey } from './commit-cache.js'
 import {
   NETWORK_GRACE_MS, NON_INTERACTIVE_ENV, capBranches, classifyFailure, clipDiff,
-  commitArgv, countBufferLines, fetchArgv, isBinaryPrefix, isNoMergeBaseError,
+  commitArgv, countBufferLines, decodesAsUtf8, fetchArgv, isBinaryPrefix, isNoMergeBaseError,
   isSafePathArg, parseNameStatus, parseNumstat, parseStatus, parseTracking,
   pullArgv, pushArgv, stageArgv, stageStateOf, unstageArgv,
   type GitFile, type GitFileStatus, type MutableGitFile,
@@ -179,6 +179,11 @@ export interface FileSides {
   readonly binary: boolean
   /** True when the file is past the size guard; the client shows the old view. */
   readonly tooLarge: boolean
+  /** True when the working-tree file is NOT valid UTF-8 — GBK, Shift JIS,
+   *  Latin-1. `targetText` is then a lossy decode of it, so the pane shows the
+   *  diff but withholds the editor: saving that text back would replace every
+   *  non-ASCII byte in the file. `writeChecked` refuses such a save anyway. */
+  readonly lossyEncoding: boolean
 }
 
 /** What every write operation reports back. */
@@ -556,6 +561,9 @@ export class GitWorkbenchService extends TypertRemoteService {
       targetSha: bytes === null ? '' : await this.worktreeBlobSha(cwd, path, signal),
       binary: false,
       tooLarge: false,
+      // Only the unstaged layer can report this, and only it needs to: the
+      // editor edits the working tree, and the staged layer is read-only.
+      lossyEncoding: bytes !== null && !decodesAsUtf8(bytes),
     }
   }
 
@@ -590,6 +598,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       targetSha: sha,
       binary: false,
       tooLarge: false,
+      lossyEncoding: false,
     }
   }
 
@@ -701,6 +710,7 @@ export class GitWorkbenchService extends TypertRemoteService {
           return false
         }
       },
+      readBytes: p => readFile(p),
       writeBytes: async (p, bytes) => { await writeFile(p, bytes) },
       rename: async (from, to) => { await rename(from, to) },
       remove: async p => { await rm(p, { force: true }) },
@@ -1649,7 +1659,7 @@ async function dropTmpPatch(file: string): Promise<void> {
 
 /** The `fileSides` payload for a file with nothing to show: no diff, no target. */
 function emptySides(): FileSides {
-  return { diff: '', diffSha: sha1Hex(''), targetText: '', targetSha: '', binary: false, tooLarge: false }
+  return { diff: '', diffSha: sha1Hex(''), targetText: '', targetSha: '', binary: false, tooLarge: false, lossyEncoding: false }
 }
 
 /**

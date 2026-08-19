@@ -59,7 +59,7 @@ import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import {
-  applySaveOk, applySides, armEdit, DISARMED, editableSides, gateLeave, isDirty,
+  applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, gateLeave, isDirty,
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
@@ -287,6 +287,10 @@ export interface FileSides {
   readonly binary: boolean
   /** True when the file is past the size guard; the client shows the old view. */
   readonly tooLarge: boolean
+  /** True when the working-tree file is not valid UTF-8; the pane shows the
+   *  diff but withholds the editor. Optional so an older host half reads as
+   *  "fine" rather than as a refusal this client cannot explain. */
+  readonly lossyEncoding?: boolean
 }
 
 /** Translate a key of this plugin's namespace, with optional `{name}` params. */
@@ -4825,6 +4829,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // save would rewrite every line ending in the file. The gate lives in
   // `side-edit.ts` with the rest of the buffer's rules.
   const armable = sides !== null && editableSides(sides)
+  // Which sentence the withheld editor gets: CRLF and a non-UTF-8 encoding are
+  // different problems, and one message for both leaves the reader guessing
+  // whether converting line endings would help.
+  const refusal = sides === null ? null : armRefusal(sides)
 
   // The drawer guards every gesture that would drop the buffer — selecting
   // another file, closing, switching the main tab — so it needs the flag as
@@ -5139,7 +5147,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
         ) : null}
       </div>
       {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
-      {layer === 'unstaged' && !armable && !edit.armed ? <div className={css.sideNotice}>{t('crlfNotice')}</div> : null}
+      {layer === 'unstaged' && refusal !== null && !edit.armed ? <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'encodingNotice' : 'crlfNotice')}</div> : null}
       {/* §4's row: the file moved underneath a dirty buffer — by the poll's
           notice or by a refused save — and the reader chooses which version
           survives. Overwrite waits for the refetch the refusal triggered, so

@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import {
+import { armRefusal,
   DISARMED, LEAVE_GUARD_CLEAR, applySaveOk, applySides, armEdit, editableSides, gateLeave,
   isDirty, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
 } from '../src/client/side-edit.ts'
@@ -222,5 +222,35 @@ describe('leaveAnswered — the dialog answered, Leave or Stay', () => {
   it('leaveAsked opens the ask; paneDirtyReport reports without closing one', () => {
     expect(leaveAsked({ dirty: true, askOpen: false })).toEqual({ dirty: true, askOpen: true })
     expect(paneDirtyReport({ dirty: true, askOpen: true }, true)).toEqual({ dirty: true, askOpen: true })
+  })
+})
+
+describe('armRefusal — why the editor is withheld', () => {
+  it('lets a plain UTF-8, LF payload arm', () => {
+    expect(armRefusal({ targetText: 'a\nb\n', targetSha: 'x' })).toBeNull()
+    expect(editableSides({ targetText: 'a\nb\n', targetSha: 'x' })).toBe(true)
+  })
+
+  it('names the encoding when the host says the file is not UTF-8', () => {
+    // The corruption case: the text on screen is a lossy decode, so saving it
+    // back would replace every non-ASCII byte in the file.
+    const sides = { targetText: 'package main\n// ��\n', targetSha: 'x', lossyEncoding: true }
+    expect(armRefusal(sides)).toBe('encoding')
+    expect(editableSides(sides)).toBe(false)
+  })
+
+  it('names CRLF when the text carries carriage returns', () => {
+    expect(armRefusal({ targetText: 'a\r\nb\r\n', targetSha: 'x' })).toBe('crlf')
+  })
+
+  it('reports the encoding first when a file is both', () => {
+    // One sentence for two causes leaves the reader wondering whether
+    // converting line endings would help; for this file nothing would.
+    expect(armRefusal({ targetText: 'a\r\n', targetSha: 'x', lossyEncoding: true })).toBe('encoding')
+  })
+
+  it('treats a payload without the flag as fine, for an older host half', () => {
+    expect(armRefusal({ targetText: 'a\n', targetSha: 'x' })).toBeNull()
+    expect(armRefusal({ targetText: 'a\n', targetSha: 'x', lossyEncoding: false })).toBeNull()
   })
 })

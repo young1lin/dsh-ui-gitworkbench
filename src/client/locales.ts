@@ -58,7 +58,7 @@ export type WorkbenchKey =
   // side-by-side editing: arm the editor, save, revert, the stale/conflict
   // banner, the CRLF refusal notice, and the unsaved-changes prompt that
   // guards every gesture dropping the buffer (tab, file, close)
-  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice'
+  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice' | 'encodingNotice'
   | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
   | 'staleTitle' | 'staleBody' | 'staleReload' | 'staleOverwrite'
   | 'unsavedTitle' | 'unsavedBody' | 'unsavedLeave' | 'unsavedStay'
@@ -242,6 +242,7 @@ export const zh: Record<WorkbenchKey, string> = {
   // Why the edit affordance is withheld on a CRLF file: the editor control
   // itself rewrites \r\n to \n, so any save would change every line ending.
   crlfNotice: '这个文件的行尾是 CRLF，暂不支持在线编辑（编辑框会把行尾统一成 LF，保存时整份文件都会被改写）；查看和按块暂存/撤回不受影响。',
+  encodingNotice: '这个文件不是 UTF-8 编码（可能是 GBK、Shift JIS 之类），暂不支持在线编辑：页面上看到的文字是一次有损解码，保存回去会把文件里每一个非 ASCII 字节都改写掉，包括你没动过的行。查看和按块暂存/撤回不受影响。',
   saveFailed: '保存失败',
   saveUnavailable: '当前宿主还不支持保存（需要重启 dsh web 加载新版宿主端）。',
   saveRetry: '重试保存',
@@ -427,6 +428,7 @@ export const en: Record<WorkbenchKey, string> = {
   // Why the edit affordance is withheld on a CRLF file: the editor control
   // itself rewrites \r\n to \n, so any save would change every line ending.
   crlfNotice: 'This file has CRLF line endings, which the editor does not support yet (the edit box would turn every ending into LF, so a save rewrites the whole file); viewing and block staging/rolling back still work.',
+  encodingNotice: 'This file is not UTF-8 (GBK, Shift JIS or similar), so the editor is unavailable: the text shown is a lossy decode of it, and saving that back would rewrite every non-ASCII byte in the file, including lines you never touched. Viewing and block staging/rolling back still work.',
   saveFailed: 'Save failed',
   saveUnavailable: 'This host does not support saving yet — restart dsh web to load the new host half.',
   saveRetry: 'Retry save',
