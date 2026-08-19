@@ -57,7 +57,8 @@ import {
 } from './themes.ts'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
-import { alignRows, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
+import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
+import { anchorFrom, scrollTopFor, stepToBlock, type BlockTop, type NavMemory } from './diff-nav.ts'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, gateLeave, isDirty,
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
@@ -80,6 +81,7 @@ import { inCalRange, localTodayIso, monthGrid, weekdayLabels } from './calendar.
 import { NO_PATHS, preferredFile } from './active-file.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
+import type { JumpTarget } from '../lsp-jump.ts'
 import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
@@ -353,6 +355,8 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   /** One file's bytes, when they are an image. Null when the host half is
    *  older than this client: the view then falls back to the text answer. */
   readonly fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
+  /** Where the symbol at a zero-based protocol position is defined. */
+  readonly fetchGoToDefinition: (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal) => Promise<JumpTarget | null>
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
@@ -598,7 +602,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1500,6 +1504,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           writeChecked={writeChecked}
           fetchBlame={fetchBlame}
           fetchFileImage={fetchFileImage}
+          fetchGoToDefinition={fetchGoToDefinition}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1538,6 +1543,26 @@ function ChromeGlyph({ of }: { of: keyof typeof CHROME_GLYPH }): ReactNode {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d={CHROME_GLYPH[of]} />
+    </svg>
+  )
+}
+
+/**
+ * Change-to-change navigation, as two chevrons.
+ *
+ * Bootstrap Icons again, at the same 16 viewBox — a pair of arrows is what
+ * every editor spells this with, and the words would be longer than the
+ * controls beside them.
+ */
+const NAV_GLYPH = {
+  prev: 'M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z',
+  next: 'M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z',
+} as const
+
+function NavGlyph({ of }: { of: keyof typeof NAV_GLYPH }): ReactNode {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d={NAV_GLYPH[of]} />
     </svg>
   )
 }
@@ -1707,6 +1732,7 @@ interface DrawerProps {
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
+  fetchGoToDefinition: (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal) => Promise<JumpTarget | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1718,7 +1744,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2180,6 +2206,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               writeChecked={writeChecked}
               fetchBlame={fetchBlame}
               fetchFileImage={fetchFileImage}
+              fetchGoToDefinition={fetchGoToDefinition}
               onSaved={onRefresh}
               onDirtyChange={onSideDirty}
               onShowHistory={query => { onHistoryQuery(query); leaveTab('history') }}
@@ -4832,6 +4859,11 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // the reader sized the columns for how they read, not for one file.
   const [split, setSplit] = useState(0.5)
   const colsRef = useRef<HTMLDivElement>(null)
+  /** The pane's one vertical scroller — what "next change" moves. */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  /** What the last change-nav press landed on. A ref, not state: it exists to
+   *  make the NEXT press correct, and nothing on screen reads it. */
+  const navMemory = useRef<NavMemory | null>(null)
 
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
@@ -5085,10 +5117,63 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   }
 
   /** Ctrl/Cmd+S inside the pane: the editor's other save affordance. */
+  /**
+   * Every change block's position inside the scrolled content.
+   *
+   * Measured off the DOM rather than derived from the row model: the model
+   * knows which rows changed, not how many pixels down the page they sit, and
+   * the pane's rows are not the only thing in that scroller — the grid's own
+   * padding and, while armed, a CodeMirror view of a different height all move
+   * the answer. One layout read per button press is cheap because it happens
+   * per PRESS; nothing here runs on scroll.
+   *
+   * `offsetTop` is deliberately not used: it is relative to whichever ancestor
+   * happens to be positioned, which no rule in this stylesheet guarantees.
+   * Measuring both boxes and subtracting is independent of that.
+   */
+  const blockTops = (): readonly BlockTop[] => {
+    const scroller = scrollRef.current
+    if (scroller === null) return []
+    // First cell carrying each id, in document order. The left column renders
+    // before the right one and holds a cell for every row, so the first hit
+    // for a block is its first row.
+    const first = new Map<number, HTMLElement>()
+    for (const cell of scroller.querySelectorAll<HTMLElement>('[data-block]')) {
+      const block = Number(cell.dataset.block)
+      if (!Number.isInteger(block) || block < 0 || first.has(block)) continue
+      first.set(block, cell)
+    }
+    const base = scroller.getBoundingClientRect().top - scroller.scrollTop
+    const tops: BlockTop[] = []
+    for (const [block, cell] of first) tops.push({ block, top: cell.getBoundingClientRect().top - base })
+    return tops
+  }
+
+  /** Move the pane to the next or previous change. */
+  const goToChange = (direction: 1 | -1): void => {
+    const scroller = scrollRef.current
+    if (scroller === null) return
+    const tops = blockTops()
+    const target = stepToBlock(tops, anchorFrom(tops, scroller.scrollTop, navMemory.current), direction)
+    if (target === null) return
+    scroller.scrollTop = scrollTopFor(target.top)
+    // Read back rather than storing what was asked for: the browser clamps at
+    // the end of the content, and the clamped value is what the next press
+    // compares against to tell "still here" from "the reader scrolled".
+    navMemory.current = { block: target.block, scrollTop: scroller.scrollTop }
+  }
+
   const onPaneKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault()
       if (dirty && !saving) void runSave(edit.baseSha)
+    }
+    // F7 and Shift+F7, the spelling IDEA's diff viewer taught. Chosen over
+    // Alt+Arrow because CodeMirror's default keymap binds those to moving a
+    // line, and the armed editor lives inside this same pane.
+    if (event.key === 'F7') {
+      event.preventDefault()
+      goToChange(event.shiftKey ? -1 : 1)
     }
   }
 
@@ -5172,6 +5257,15 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
   const bodyState = sideBodyState(rows, editable)
+  /**
+   * How many separate places this file changed — the count the nav walks.
+   *
+   * Offered only for the read view. While armed, the left column is the index
+   * side rendered DENSE and the right one is a buffer whose line count has
+   * already diverged from it, so scrolling to a block would put the change at
+   * the top of one column and unrelated code at the top of the other.
+   */
+  const changes = bodyState.kind === 'rows' ? blockCount(rows) : 0
   // The hovered block's first row hosts the action bar; a del-only block has
   // no right cell, so its bar rides the left one instead. In the editor
   // layout the left column is dense, so the bar rides its first left row.
@@ -5218,7 +5312,12 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
     arm()
   }
   return (
-    <div className={css.sidePane} onKeyDown={onPaneKeyDown}>
+    /* `tabIndex={-1}` is what makes F7 reachable. The handler below is on
+       this element, so it only sees keys whose target is inside it — and
+       clicking diff text, which is not focusable, otherwise leaves focus on
+       the document body and the key never arrives. A negative index keeps the
+       pane out of the tab order while letting a click land focus here. */
+    <div className={css.sidePane} tabIndex={-1} onKeyDown={onPaneKeyDown}>
       <div className={css.sideTabs}>
         <button
           type="button"
@@ -5232,6 +5331,30 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           className={layer === 'staged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
           onClick={() => switchLayer('staged')}
         >{t('tabStaged')}</button>
+        {/* A file whose whole delta is one line is unfindable by scrolling:
+            the tint only shows once you are already looking at it. The row
+            model knows where every change is, so these two say so. The count
+            is the other half of the answer — "there is one place to look" is
+            what stops the hunt. */}
+        {changes > 0 ? (
+          <span className={css.sideNav}>
+            <button
+              type="button"
+              className={css.blockBtn}
+              title={t('prevChangeHint')}
+              aria-label={t('prevChange')}
+              onClick={() => { goToChange(-1) }}
+            ><NavGlyph of="prev" /></button>
+            <button
+              type="button"
+              className={css.blockBtn}
+              title={t('nextChangeHint')}
+              aria-label={t('nextChange')}
+              onClick={() => { goToChange(1) }}
+            ><NavGlyph of="next" /></button>
+            <span className={css.sideNavCount}>{t('changeCount', { n: changes })}</span>
+          </span>
+        ) : null}
         {/* Editing arms explicitly and saves explicitly — the two halves of
             "never per keystroke". Save enables only while dirty; Revert drops
             the buffer back onto its basis without touching the file. A
@@ -5293,7 +5416,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
           alignment survives the split because both columns render one row per
           aligned row at the same line height — the diff decides the rows, the
           layout only decides how much width each side gets. */}
-      <div className={css.sideScroll}>
+      <div ref={scrollRef} className={css.sideScroll}>
       {bodyState.kind === 'empty' ? (
         <div className={css.empty}>{t('noTextDiff')}</div>
       ) : (

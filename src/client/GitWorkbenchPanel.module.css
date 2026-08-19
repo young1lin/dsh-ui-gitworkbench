@@ -1763,6 +1763,13 @@
    a text surface before editing is armed; the tab row carries the arm/save
    cluster at its right end. */
 .sideArmable { cursor: text; }
+/* The change nav takes the free space, so it and `.sideActions` after it sit
+   together at the right end. Only the FIRST auto margin absorbs anything —
+   the one on `.sideActions` then has nothing left to take, which is what
+   keeps the two groups adjacent rather than pushed to opposite ends. */
+.sideNav { margin-left: auto; display: flex; gap: 4px; align-items: center; padding: 2px 0 5px; }
+.sideNav .blockBtn { padding-inline: 6px; line-height: 0; }
+.sideNavCount { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); white-space: nowrap; }
 .sideActions { margin-left: auto; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
 /* Save gains the accent only once there is something to save: the button's
    whole enabled state is the dirty flag, and colour says it sooner than the
@@ -1825,7 +1832,7 @@
    strength. Every tick stages through git, and fading the whole sync row for
    the ~150ms that takes was a blink, not feedback — nobody can act inside it.
    The click is still refused from the first frame; see `op-feedback.ts`. */
-.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled { opacity: 1; }
+.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled, .blockBtn[data-quiet]:disabled { opacity: 1; }
 
 /* Outcome of the last operation. Pre-wrap because git's own message rides along
    under the explanation, and it arrives with its newlines. */

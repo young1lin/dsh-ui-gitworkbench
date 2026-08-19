@@ -23,10 +23,10 @@
  * @module @young1lin/dsh-ui-gitworkbench/client/FileBrowser
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import css from './GitWorkbenchPanel.module.css'
-import { CodeEditor } from './CodeEditor.tsx'
+import { CodeEditor, type JumpRequest } from './CodeEditor.tsx'
 import { buildDirTree } from './dir-tree.ts'
 import { mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
 import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
@@ -35,7 +35,12 @@ import { ImageView, type Picture } from './ImageView.tsx'
 import { decodeBase64, formatBytes, looksLikeImagePath, shouldAskForImage } from './image-view.ts'
 import { IMAGE_BYTE_CAP, sniffImage } from '../image-sniff.ts'
 import { blameWhen, shortHash } from './blame-view.ts'
+import {
+  canJump, describeOutside, jumpNoticeKey, popJumpOrigin, pushJumpOrigin,
+  toEditorLine, toProtocolPosition, type JumpMark,
+} from './jump-view.ts'
 import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
+import { BUSY_DELAY_MS, quietlyDisabled } from './op-feedback.ts'
 import { highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { detectIndent } from './indent.ts'
@@ -44,6 +49,7 @@ import {
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import type { BlameAnswer, BlameLine, FileImage, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
+import type { JumpTarget } from '../lsp-jump.ts'
 
 /** Count lines without allocating the split — the buffer can be megabytes and
  *  this runs on a timer while somebody is typing. */
@@ -69,7 +75,8 @@ const FILES_PER_DIR = 100
 
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree,
-  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
+  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition,
+  onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
   palette: string
@@ -91,6 +98,9 @@ export function FileBrowser({
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   /** One file's bytes, when the host confirms they are an image. */
   fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
+  /** Where the symbol at a zero-based protocol position is defined. Null when
+   *  the call itself failed, which the pane reports as a jump error. */
+  fetchGoToDefinition: (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal) => Promise<JumpTarget | null>
   /** After a successful save: the drawer re-reads, since the file moved. */
   onSaved: () => void
   /** The unsaved-edits flag the drawer guards its own gestures on. */
@@ -114,6 +124,17 @@ export function FileBrowser({
    *  explanation reads as a bug. */
   const [vanished, setVanished] = useState<string | null>(null)
   const [sides, setSides] = useState<FileSides | null>(null)
+  /**
+   * Which file `sides` describes.
+   *
+   * The payload for a newly opened file arrives a round trip after the click,
+   * and until it does this component still holds the PREVIOUS file's sides.
+   * A jump landing must not be applied in that window: the caret would be put
+   * at the target's line number inside the file the reader just left.
+   * `loading` cannot stand in for this — it is set from inside the effect, one
+   * render after `open` has already changed.
+   */
+  const [sidesPath, setSidesPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [edit, setEdit] = useState<EditState>(DISARMED)
   const [saving, setSaving] = useState(false)
@@ -135,6 +156,29 @@ export function FileBrowser({
   const [pending, setPending] = useState<string | null>(null)
   /** The line whose commit the reader asked to see, 1-based. */
   const [picked, setPicked] = useState<number | null>(null)
+  /** Where the reader stood before each jump, deepest last. */
+  const [jumps, setJumps] = useState<readonly JumpMark[]>([])
+  /** A jump whose file may still be loading; applied once `sidesPath` agrees. */
+  const [landing, setLanding] = useState<{ readonly path: string; readonly line: number; readonly token: number } | null>(null)
+  /** What the last jump had to say, when it was not "here it is". */
+  const [jumpNote, setJumpNote] = useState<{ readonly key: string; readonly detail: string } | null>(null)
+  /** A query in flight. The first jump of a session starts a language server
+   *  and can take seconds — long enough that a second press would otherwise
+   *  look like the way to make it work. */
+  const [jumping, setJumping] = useState(false)
+  /** …and has run long enough to be worth saying so. A warm server answers in
+   *  well under the drawer's reporting threshold, so the ordinary jump shows
+   *  no waiting state at all; a cold one takes tens of seconds, where silence
+   *  would read as a dead key. Same pacing the sync row uses. */
+  const [jumpSustained, setJumpSustained] = useState(false)
+  /** The caret, mirrored out of CodeMirror so the toolbar button can act on
+   *  it. A ref rather than state: it moves on every arrow key, and none of
+   *  those keystrokes should re-render the pane. */
+  const caretRef = useRef<JumpRequest>({ line: 1, column: 0 })
+  /** Tells two jumps to the same line apart from a re-render. */
+  const landingToken = useRef(0)
+  /** The query in flight, so a second jump cancels the first. */
+  const jumpAbort = useRef<AbortController | null>(null)
   const [refetch, setRefetch] = useState(0)
   /** Which file the buffer currently belongs to, so a refetch can be told
    *  apart from a genuine open. */
@@ -174,7 +218,7 @@ export function FileBrowser({
   // The open file's text. `unstaged` is the layer whose target is the file on
   // disk — the only one this view is about.
   useEffect(() => {
-    if (open === null) { setSides(null); setEdit(DISARMED); return }
+    if (open === null) { setSides(null); setSidesPath(null); setEdit(DISARMED); return }
     const ctrl = new AbortController()
     let alive = true
     setLoading(true)
@@ -182,6 +226,7 @@ export function FileBrowser({
       .then(answer => {
         if (!alive) return
         setSides(answer)
+        setSidesPath(answer === null ? null : open)
         if (answer === null) { setEdit(DISARMED); return }
         // A NEW file adopts the payload outright; a refetch of the SAME file
         // — the drawer's poll, a worktree switch, the refetch a refused save
@@ -198,7 +243,7 @@ export function FileBrowser({
         if (answer.targetSha.length > 0 && open !== null) shownRef.current.add(open)
         setEdit(prev => fresh ? armEdit(DISARMED, answer) : applySides(prev, answer))
       })
-      .catch(() => { if (alive) { setSides(null); setEdit(DISARMED) } })
+      .catch(() => { if (alive) { setSides(null); setSidesPath(null); setEdit(DISARMED) } })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false; ctrl.abort() }
   }, [open, fetchFileSides, statsPath, gen, refetch])
@@ -348,8 +393,113 @@ export function FileBrowser({
 
   const foldDir = (path: string): void => { onPlace(toggleDir(place, path)) }
 
+  /**
+   * Whether this pane may ask where a symbol is defined.
+   *
+   * A picture has no symbols, and a dirty buffer has moved out from under the
+   * file the seam would read. Being read-only does NOT disqualify a file — a
+   * CRLF or non-UTF-8 file is still the file on disk, and looking up a
+   * definition changes nothing.
+   */
+  const jumpable = open !== null && sides !== null && !showingImage && canJump('unstaged', dirty)
+
+  /** Put the caret on a mark, opening its file first when it is another one. */
+  const goToMark = (mark: JumpMark): void => {
+    landingToken.current += 1
+    setLanding({ path: mark.path, line: mark.line, token: landingToken.current })
+    if (mark.path !== open) {
+      setSaveFailed(null)
+      setVanished(null)
+      onPlace(openAt(place, mark.path))
+    }
+  }
+
+  /**
+   * Ask where the symbol at this position is defined, and go there.
+   *
+   * The origin is recorded only on a jump that actually moves, so the back
+   * button never accumulates entries that do nothing. Everything else the
+   * host can answer — no server, no provider for this language, no definition,
+   * a definition outside the repository — becomes one line of text rather than
+   * a silent no-op, because the reader pressed a key on purpose.
+   */
+  const askJump = async (request: JumpRequest): Promise<void> => {
+    if (open === null || !jumpable || jumping) return
+    const from: JumpMark = { path: open, line: request.line }
+    const position = toProtocolPosition(request.line, request.column)
+    // A jump the reader has given up on must not land later, on top of
+    // wherever they went instead.
+    jumpAbort.current?.abort()
+    const ctrl = new AbortController()
+    jumpAbort.current = ctrl
+    setJumpNote(null)
+    setJumping(true)
+    try {
+      const target = await fetchGoToDefinition(statsPath, open, position.line, position.character, ctrl.signal)
+      if (ctrl.signal.aborted) return
+      if (target === null) { setJumpNote({ key: 'jumpFailed', detail: '' }); return }
+      const key = jumpNoticeKey(target)
+      if (key !== '') {
+        setJumpNote({
+          key,
+          detail: target.outcome === 'outside' ? describeOutside(target.uri) : target.message,
+        })
+        return
+      }
+      const to: JumpMark = { path: target.path, line: toEditorLine(target.line) }
+      setJumps(stack => pushJumpOrigin(stack, from, to))
+      goToMark(to)
+    } catch {
+      if (!ctrl.signal.aborted) setJumpNote({ key: 'jumpFailed', detail: '' })
+    } finally {
+      if (!ctrl.signal.aborted) setJumping(false)
+    }
+  }
+
+  /** Walk back to where the last jump started. */
+  const jumpBack = (): void => {
+    const { mark, rest } = popJumpOrigin(jumps)
+    if (mark === null) return
+    setJumps(rest)
+    setJumpNote(null)
+    goToMark(mark)
+  }
+
   const idRef = useRef(0)
   useEffect(() => { idRef.current += 1 }, [open])
+
+  // A notice is about the jump the reader just tried, not about whatever file
+  // they open next.
+  useEffect(() => { setJumpNote(null) }, [open])
+
+  // Drop a landing once it has been applied. React runs the editor's effects
+  // before this one, so the caret has already moved by the time this clears —
+  // and without the clear, coming back to this file later would scroll to
+  // wherever a jump landed the last time.
+  useEffect(() => {
+    if (landing !== null && landing.path === open && sidesPath === open) setLanding(null)
+  }, [landing, open, sidesPath])
+
+  useEffect(() => () => { jumpAbort.current?.abort() }, [])
+
+  useEffect(() => {
+    if (!jumping) { setJumpSustained(false); return }
+    const timer = setTimeout(() => { setJumpSustained(true) }, BUSY_DELAY_MS)
+    return () => { clearTimeout(timer) }
+  }, [jumping])
+
+  /**
+   * The line to put the caret on, once the pane is really showing the file
+   * the jump named. Memoised so its identity is stable: the editor applies a
+   * reveal per object, and a fresh one each render would re-seek the line on
+   * every keystroke.
+   */
+  const reveal = useMemo(
+    () => landing !== null && landing.path === open && sidesPath === open
+      ? { line: landing.line, token: landing.token }
+      : null,
+    [landing, open, sidesPath],
+  )
 
   const save = async (): Promise<void> => {
     if (sides === null || !dirty || saving || readOnly) return
@@ -473,6 +623,24 @@ export function FileBrowser({
                     onClick={() => { setAsSource(on => !on) }}
                   >{t(asSource ? 'imagePreview' : 'imageSource')}</button>
                 )}
+                {jumpable ? (
+                  <button
+                    type="button"
+                    className={css.blockBtn}
+                    disabled={jumping}
+                    data-quiet={quietlyDisabled(jumping, jumpSustained, false) ? '' : undefined}
+                    title={t('jumpHint')}
+                    onClick={() => { void askJump(caretRef.current) }}
+                  >{t('jumpToDef')}</button>
+                ) : null}
+                {jumps.length > 0 ? (
+                  <button
+                    type="button"
+                    className={css.blockBtn}
+                    title={t('jumpBackHint')}
+                    onClick={jumpBack}
+                  >{t('jumpBack')}</button>
+                ) : null}
                 {showingImage ? null : (
                 <button
                   type="button"
@@ -513,6 +681,10 @@ export function FileBrowser({
             ) : null}
             {saveFailed !== null ? <div className={css.sideNotice}>{saveFailed}</div> : null}
             {tooBigToPaint ? <div className={css.sideNotice}>{t('paintTooLarge')}</div> : null}
+            {jumpSustained ? <div className={css.sideNotice}>{t('jumpSearching')}</div> : null}
+            {jumpNote !== null
+              ? <div className={css.sideNotice}>{t(jumpNote.key, { where: jumpNote.detail })}</div>
+              : null}
             {blameOn && dirty ? <div className={css.sideNotice}>{t('blameWhileEditing')}</div> : null}
             {showBlame && (blameFailed || (blame !== null && blame.error !== undefined))
               ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}
@@ -593,6 +765,10 @@ export function FileBrowser({
                     onBlameClick={line => { setPicked(line) }}
                     notCommitted={t('blameUncommitted')}
                     readOnly={readOnly}
+                    onCaret={request => { caretRef.current = request }}
+                    onJump={jumpable ? request => { void askJump(request) } : undefined}
+                    onJumpBack={jumps.length > 0 ? jumpBack : undefined}
+                    reveal={reveal}
                   />
                 )}
             </div>

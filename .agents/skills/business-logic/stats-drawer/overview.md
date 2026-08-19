@@ -23,6 +23,7 @@
 | `gitWorkbench/fileDiff` | 单文件按需 diff（tracked: `git diff HEAD --`；untracked: 宿主 readFile 合成） |
 | `gitWorkbench/commits` / `commitStats` / `compareRefs` | 历史翻页（--topo-order，LOG_FORMAT 带 `%an`/`%cn`/`%cI`：行内作者、悬浮卡精确日期（浏览器本地时区））；IDEA 式过滤**下推 git log**（`src/log-filter.ts` 编译 `--author/-i/-E/--grep/--since/--until/pathspec`；**裸 yyyy-mm-dd 展开成 T00:00:00/T23:59:59**——git 对裸日期的时区解析在 Windows 会掉当天提交；语法解析在 `src/client/log-filter-query.ts`，漏斗弹层=**分区页签**（用户 N/日期/路径 N，恒定高度）：作者多选（`authors` RPC，shortlog **跟当前 ref**）+日期预设+**自绘日历**（`calendar.ts` 纯函数网格）+路径目录树**含文件叶子**与扁平搜索（`repoTree` RPC、`searchPaths` 纯函数））——过滤后的页仍是单次连续游走，车道图常驻；ref 选择器支持 `--all` 全部分支（哨兵，宿主/客户端各一份字面量）；git 失败透 `error` 字段（§6.13）；单提交视图 / 两分支对比 |
 | `gitWorkbench/fileImage` | 文件页里的图片预览：stat 卡 4MB（`IMAGE_BYTE_CAP`）→ readFile → `sniffImage` 按**格式规范的魔数**判定 → base64。扩展名从不做判据，只做"值不值得问一次"的提示（`shouldAskForImage`：binary 无条件问；tooLarge 才看名字，因为文本护栏 2MB 比图片上限小）。表里只收**浏览器能在 `<img>` 里画出来的** 8 种（PNG/JPEG/GIF/WebP/BMP/ICO/AVIF/SVG）——TIFF、HEIC 故意不收：认出来也只会承诺一张画不出的图 |
+| `gitWorkbench/goToDefinition` | Files 页签的跳转：`ctx.lsp.query({operation:'goToDefinition'})`。**seam 只有四个操作**（goToDefinition/findReferences/goToImplementation/hover），是 closed union 且「no generic JSON-RPC escape hatch」——**没有诊断**，类型检查这条路在宿主侧就是关的。`ctx.lsp` 通过 `ctx.inject(['lsp'], …)` **可选**挂载（三个 bundle 一个都不加载它，所以缺席是常态而非故障）；返回 `JumpTarget`，`outcome` 五分：ok / none / outside / unavailable / unclaimed / error |
 | `gitWorkbench/styleGet` / `styleSet` | 背景/CSS 两作用域读写 |
 
 ## Core Flow
@@ -50,6 +51,8 @@ flowchart LR
 
 ## Code Location
 `GitWorkbenchPanel`（面板）、`parseRows/gutterSides`（diff-model）、`samePath/viewedPath/showsPending/badgeRepeatsBranch/splitPath/branchOfWorktree`（worktree-view，纯函数、不 import React/CSS 才可测）、`resolveTheme/effectiveBackground/effectiveCss`（themes）、`sanitizeEntry/IMAGE_PATTERN`（style-store，image 只收 base64 data: URL）、`CommitPayloadCache`（commit-hash 内容寻址 LRU）、`parseLog`（git-log，`--pretty=format:` 解析）
+逐处变更：`client/diff-nav.ts`（`stepToBlock` 环形前后跳 + `anchorFor`/`anchorFrom`/`scrollTopFor`）+ pane 头部两个人字形按钮与计数（F7 / Shift+F7）;块位置**从 DOM 量**（每个代码格已带 `data-block`）而非从行模型算——模型知道哪些行变了，不知道它们在页面上第几像素。仅读视图开放：armed 时左列是 index 侧 dense、右列是行数已经发散的 buffer,滚到某块只会让两列各自显示不相干的代码
+跳转：`lsp-jump.ts`（宿主纯函数：`fileUriToPath`/`repoRelative`/`pickLocation`/`toJumpTarget`/`classifyJumpError`）、`client/jump-view.ts`（`canJump`/行号双向换算/返回栈/`describeOutside`/`jumpNoticeKey`）、`CodeEditor.tsx` 的 `jumpKeys`（Ctrl/Cmd+点击、F12、Ctrl/Cmd+B、Alt+←；**必须排在 `defaultKeymap` 之前**，facet 按序解析）
 结构不变量守卫：`tests/drawer-chrome.test.ts`（按钮词汇表/修饰类序/省略规则/quiet 标记/showsPending 单点）、`tests/diff-regression.test.ts`（栈序/设置浮层/图标按钮/diff 行高）
 
 ## Database（状态文件）
@@ -57,6 +60,11 @@ flowchart LR
 
 ## Potential Pitfalls
 - **CSS 栈序是序关系不是数字表**：`.drawer > .header > .tabs > .compareBar > .syncBar` 的 z-index 必须沿 DOM 序**严格递减**，最低一条 bar 仍 > `.body`（z-index 1）。popover 只向下弹，上方 bar 的菜单必须压过下方一切 bar。曾三次踩坑：bar 与 `.body` 同层菜单被吃；全部 bar 同为 20 时上层菜单被下层吸掉；header 与 tabs 打平 23 时后者（源码序靠后的兄弟）吞掉 worktree 菜单——**同值即输**，测试因此断言严格递减而非硬编码数字
+- **逐处变更导航的两条不变式**（`client/diff-nav.ts`）：①**留出的上文必须加回去**——落点停在变更上方 3 行（`NAV_PEEK_PX=60`）好让上一行可见，但下一次算「下一处」时若不把这 60px 加回锚点，刚落到的那块仍然算「在视口顶之下」,每次按都停在同一块（`anchorFor`/`scrollTopFor` 成对存在就是为这个；变异测试会得到 `[0,0,0]`）。②**文件末尾的块滚不到 peek 线**——滚动条先到底，`scrollTop` 不再变化，视口就无法表达「我在哪」,于是永远绕不回第一块。解法是 `anchorFrom`:视口没动过就改用「上次落到的块」当锚点，手滚一下立即交还给视口。**这条纯测试预测不到**（纯模型没有地板），是 live 探针 `verify_diff_nav.py` 抓出来的
+- **`.sidePane` 必须 `tabIndex={-1}`**,否则 F7 收不到：处理器挂在 pane 上，而 diff 文本不可聚焦，点它焦点留在 body,React 的 onKeyDown 路径里根本没有 pane
+- **跳转只能在「编辑器里的文本 == 磁盘上的文件」时开放**：`LspQueryRequest` 只有 `filePath` + `position`，**没有文本字段**——provider 自己用 `ctx.fs` 读磁盘。所以 staged 层（index 内容）、History/Compare（历史版本）、以及**任何脏 buffer** 都必须关掉（`canJump(layer, dirty)`）。脏 buffer 这条比 blame 那条更硬：blame 是把名字标错，跳转是**悄悄打开另一个文件**，没有任何迹象表明出了错
+- **`unavailable` 和 `unclaimed` 必须分开**：前者是「宿主根本没有 `ctx.lsp`」（关于**安装**，对所有文件为真，UI 可以据此永久收起入口）；后者是 seam 抛的 `LSP_UNAVAILABLE`＝「没有 provider 认领这个扩展名」（关于**这个文件**）。合并两者会导致：只配了 TS 的人在 README 里按一次跳转，入口就在 `.ts` 文件里也消失了
+- **URI 相对化必须用返回里的 `resolvedWorkspaceUri`**，不能拿请求时的路径去 startsWith：请求 root 可能是 symlink，且服务器可能跑在另一个平台。还有两层坑——**编码**（`file:///c%3A/` 和 `file:///c:/` 是同一个目录，不同服务器两种拼法都发；裸前缀比较会把整门语言的跳转判成「仓库外」）和**大小写**（Windows 上 `C:\` 与 `c:\` 同路径）。大小写放宽必须**只对盘符路径**生效，否则 POSIX 上 `/home/Src` 和 `/home/src` 会被合并成同一个，打开的是**错的文件**而不是打不开
 - **图片渲染必须走 `<img src="blob:">`，绝不内联 SVG**：HTML 规范定义 `<img>` 内的文档是 *non-scripted context*——`<script>` 不执行、事件属性不触发、外部引用不加载。这条规范保证（而非某个消毒库）才是 SVG 能安全显示的原因；内联同一段 markup 会把三条保证全部交出去。blob 而非 `data:` URI：DOM 里只留一个短串，且**可以 revoke**——不 revoke 的 blob URL 会把字节钉死到文档生命周期，翻五十张截图就留五十份
 - **魔数只是第一道闸，浏览器解码器才是终审**：宿主说"这些字节自称是 PNG"，只有解码器能说"它真的是"。所以 `onError` 必须有话说（`imageBroken`），空框比错话更像 bug
 - **SVG 判定必须结构化跳过 prologue，不能 `indexOf('<svg')`**：扫 12.5 万个真实文件发现两类反例——(1) DOCTYPE 带**内部子集** `[ <!ATTLIST …> ]`，子集里的声明自带 `>`，扫到第一个 `>` 会停在子集中间（matplotlib `hand.svg` 就是，曾是唯一漏网）；(2) **148 个 `.svelte`** 文件正文第一个元素就是 `<svg>`——它们是"关于图标的代码"，作者打开是要读代码的。签名分不出这两者，**文件名可以**，所以 SVG 预览同时要求名字是 `.svg`

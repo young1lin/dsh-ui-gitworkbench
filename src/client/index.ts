@@ -26,6 +26,7 @@ import {
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
+import type { JumpTarget } from '../lsp-jump.ts'
 import { en, zh } from './locales.ts'
 
 /**
@@ -131,6 +132,24 @@ export function apply(ctx: ClientContext): void {
             signal,
           ) as { ok: true; value: FileImage } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
+        },
+        // Where the symbol under the cursor is defined. The host answers with
+        // an outcome rather than throwing for the ordinary refusals (no seam,
+        // no provider for this extension, no definition), so null here means
+        // only a transport failure or a host half predating this method — both
+        // of which the pane reports as a failed jump.
+        fetchGoToDefinition: async (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal): Promise<JumpTarget | null> => {
+          try {
+            const result = await connection.rpc.call(
+              '/api',
+              'gitWorkbench/goToDefinition',
+              { args: { worktreePath: worktreePath ?? '', path, line, character } },
+              signal,
+            ) as { ok: true; value: JumpTarget } | { ok: false; error: { message?: string } }
+            return result.ok ? result.value : null
+          } catch {
+            return null
+          }
         },
         // Save the side pane's editor buffer. The buffer travels with the blob
         // sha it was opened with and the host re-derives that sha at the moment
