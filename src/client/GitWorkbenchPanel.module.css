@@ -2293,3 +2293,10 @@
   color: var(--gs-fg);
 }
 .fbCommitHint { color: var(--gs-fg-faint); }
+.fbMore {
+  display: block;
+  padding: 2px 6px 4px 4px;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-faint);
+  font-style: italic;
+}

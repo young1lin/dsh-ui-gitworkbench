@@ -43,3 +43,6 @@ scripts/verify_live_tint.py
 scripts/verify_divider.py
 scripts/verify_blame.py
 scripts/verify_file_browser.py
+scripts/verify_file_perf.py
+scripts/verify_file_scale.py
+scripts/verify_file_worktree.py

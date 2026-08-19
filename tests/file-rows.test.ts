@@ -167,3 +167,49 @@ describe('mergePaths', () => {
     expect(mergePaths(['a.ts', 'b.ts'], [])).toEqual(['a.ts', 'b.ts'])
   })
 })
+
+describe('treeRows file cap', () => {
+  const wide = Array.from({ length: 250 }, (_, i) => `gen/f${String(i).padStart(3, '0')}.ts`)
+  const capped = (cap: number) =>
+    treeRows(buildDirTree(wide), rootFiles(wide), new Set(['gen']), cap)
+
+  it('stops after the cap and says how many it held back', () => {
+    // 1500 files in one directory is 7500 DOM nodes with the icons on them.
+    // The history filter's picker has capped this since it shipped.
+    const rows = capped(100)
+    expect(rows.filter(row => row.kind === 'file')).toHaveLength(100)
+    const more = rows.find(row => row.kind === 'more')
+    expect(more?.hidden).toBe(150)
+  })
+
+  it('puts the marker at the files own depth, under the last of them', () => {
+    const rows = capped(100)
+    const more = rows.find(row => row.kind === 'more')
+    expect(more?.depth).toBe(1)
+    expect(rows[rows.length - 1]).toBe(more)
+  })
+
+  it('adds no marker when everything fits', () => {
+    expect(capped(250).some(row => row.kind === 'more')).toBe(false)
+    expect(capped(999).filter(row => row.kind === 'file')).toHaveLength(250)
+  })
+
+  it('caps each directory on its own, not the whole tree', () => {
+    const two = [...wide, ...wide.map(p => p.replace('gen/', 'other/'))]
+    const rows = treeRows(buildDirTree(two), rootFiles(two), new Set(['gen', 'other']), 10)
+    expect(rows.filter(row => row.kind === 'file')).toHaveLength(20)
+    expect(rows.filter(row => row.kind === 'more')).toHaveLength(2)
+  })
+
+  it('caps root-level files too', () => {
+    const roots = Array.from({ length: 30 }, (_, i) => `r${i}.md`)
+    const rows = treeRows([], rootFiles(roots), new Set(), 10)
+    expect(rows.filter(row => row.kind === 'file')).toHaveLength(10)
+    expect(rows.find(row => row.kind === 'more')?.hidden).toBe(20)
+  })
+
+  it('is uncapped when no cap is given, so existing callers are unchanged', () => {
+    expect(treeRows(buildDirTree(wide), rootFiles(wide), new Set(['gen']))
+      .filter(row => row.kind === 'file')).toHaveLength(250)
+  })
+})

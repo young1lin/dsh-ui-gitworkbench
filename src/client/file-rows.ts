@@ -24,7 +24,8 @@ import type { DirEntry } from './dir-tree.ts'
 
 /** One rendered row of the browser's tree. */
 export interface FileRow {
-  readonly kind: 'dir' | 'file'
+  /** `more` is the "and N others" marker a capped directory ends with. */
+  readonly kind: 'dir' | 'file' | 'more'
   /** Repo-relative path — for a file row, what gets opened. */
   readonly path: string
   /** What the row shows: the last segment, or the whole path in a search. */
@@ -33,6 +34,8 @@ export interface FileRow {
   readonly depth: number
   /** Whether this directory is expanded. Always false on a file row. */
   readonly open: boolean
+  /** On a `more` row: how many files the cap held back. */
+  readonly hidden?: number
 }
 
 /**
@@ -54,28 +57,46 @@ export function rootFiles(paths: readonly string[]): readonly string[] {
  * @param tree - top-level directories from {@link buildDirTree}.
  * @param roots - root-level files from {@link rootFiles}.
  * @param expanded - paths of the directories the reader has opened.
+ * @param cap - most files rendered per directory; the rest become one `more`
+ *              row. A generated directory can hold thousands of files, and
+ *              each row is a button and two icons — the cost is the DOM, not
+ *              this walk. Omit for no cap.
  */
 export function treeRows(
   tree: readonly DirEntry[],
   roots: readonly string[],
   expanded: ReadonlySet<string>,
+  cap = Number.POSITIVE_INFINITY,
 ): readonly FileRow[] {
   const out: FileRow[] = []
+  /** Emit a directory's files, then the marker if the cap bit. */
+  const files = (names: readonly string[], prefix: string, depth: number): void => {
+    const shown = names.length > cap ? names.slice(0, cap) : names
+    for (const name of shown) {
+      out.push({ kind: 'file', path: `${prefix}${name}`, name, depth, open: false })
+    }
+    if (names.length > shown.length) {
+      out.push({
+        kind: 'more',
+        path: prefix,
+        name: '',
+        depth,
+        open: false,
+        hidden: names.length - shown.length,
+      })
+    }
+  }
   const walk = (dirs: readonly DirEntry[], depth: number): void => {
     for (const dir of dirs) {
       const open = expanded.has(dir.path)
       out.push({ kind: 'dir', path: dir.path, name: dir.name, depth, open })
       if (!open) continue
       walk(dir.children, depth + 1)
-      for (const file of dir.files) {
-        out.push({ kind: 'file', path: `${dir.path}/${file}`, name: file, depth: depth + 1, open: false })
-      }
+      files(dir.files, `${dir.path}/`, depth + 1)
     }
   }
   walk(tree, 0)
-  for (const file of roots) {
-    out.push({ kind: 'file', path: file, name: file, depth: 0, open: false })
-  }
+  files(roots, '', 0)
   return out
 }
 

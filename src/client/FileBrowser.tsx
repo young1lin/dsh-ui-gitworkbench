@@ -32,13 +32,22 @@ import { ancestorsOf, mergePaths, rootFiles, searchRows, treeRows, type FileRow 
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { blameWhen, shortHash } from './blame-view.ts'
 import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
-import { highlightFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
+import { highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
+import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { detectIndent } from './indent.ts'
 import {
-  DISARMED, applySaveOk, armEdit, armRefusal, isDirty, markConflict,
+  DISARMED, applySaveOk, applySides, armEdit, armRefusal, isDirty, markConflict,
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import type { BlameAnswer, BlameLine, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
+
+/** Count lines without allocating the split — the buffer can be megabytes and
+ *  this runs on a timer while somebody is typing. */
+function countLines(text: string): number {
+  let n = 1
+  for (let i = text.indexOf(String.fromCharCode(10)); i !== -1; i = text.indexOf(String.fromCharCode(10), i + 1)) n += 1
+  return n
+}
 
 /** Most search hits rendered at once — a one-letter query must not paint a
  *  whole repository into the DOM. */
@@ -46,6 +55,13 @@ const SEARCH_CAP = 300
 
 /** Indent per tree level, in em. Matches the changes tree's own step. */
 const INDENT_EM = 0.85
+
+/** Files rendered per directory before the rest become one "and N others"
+ *  row. A generated directory can hold thousands, and every row is a button
+ *  and two icons — the cost is DOM nodes, not the walk that produced them.
+ *  The history filter's path picker has capped at this number since it
+ *  shipped; the search box is the way to a file in a crowded directory. */
+const FILES_PER_DIR = 100
 
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider,
@@ -96,6 +112,9 @@ export function FileBrowser({
   /** The line whose commit the reader asked to see, 1-based. */
   const [picked, setPicked] = useState<number | null>(null)
   const [refetch, setRefetch] = useState(0)
+  /** Which file the buffer currently belongs to, so a refetch can be told
+   *  apart from a genuine open. */
+  const openRef = useRef<string | null>(null)
   // A grammar loads asynchronously the first time a language is seen; this
   // counter re-renders the highlight once it lands.
   const [, setGrammarTick] = useState(0)
@@ -130,9 +149,18 @@ export function FileBrowser({
       .then(answer => {
         if (!alive) return
         setSides(answer)
-        // Armed straight away: this view IS an editor, so there is no gesture
-        // to arm with. `armEdit` still refuses a payload it must not hold.
-        setEdit(answer === null ? DISARMED : armEdit(DISARMED, answer))
+        if (answer === null) { setEdit(DISARMED); return }
+        // A NEW file adopts the payload outright; a refetch of the SAME file
+        // — the drawer's poll, a worktree switch, the refetch a refused save
+        // triggers — goes through applySides, which keeps a dirty buffer and
+        // only records that the file moved underneath. Without that split,
+        // every poll silently threw away whatever had been typed since the
+        // last one. Armed straight away because this view IS an editor and
+        // there is no gesture to arm with; armEdit still refuses a payload
+        // it must not hold.
+        const fresh = openRef.current !== open
+        openRef.current = open
+        setEdit(prev => fresh ? armEdit(DISARMED, answer) : applySides(prev, answer))
       })
       .catch(() => { if (alive) { setSides(null); setEdit(DISARMED) } })
       .finally(() => { if (alive) setLoading(false) })
@@ -158,11 +186,24 @@ export function FileBrowser({
   const tree = useMemo(() => buildDirTree(all), [all])
   const roots = useMemo(() => rootFiles(all), [all])
   const rows = useMemo(
-    () => query.trim().length > 0 ? searchRows(all, query, SEARCH_CAP) : treeRows(tree, roots, expanded),
+    () => query.trim().length > 0
+      ? searchRows(all, query, SEARCH_CAP)
+      : treeRows(tree, roots, expanded, FILES_PER_DIR),
     [query, all, tree, roots, expanded],
   )
 
   useEffect(() => { setPicked(null) }, [open, blameOn])
+
+  // Switching worktrees re-reads the tree, and the file that was open may not
+  // exist in the new one — an editor over a file that is not there would show
+  // an empty buffer as if the file were empty. Dropped only once the new list
+  // has actually arrived, and never out from under unsaved edits: those are
+  // guarded one level up, where the source switch is asked about.
+  const known = useMemo(() => new Set(all), [all])
+  useEffect(() => {
+    if (open === null || dirty || known.size === 0) return
+    if (!known.has(open)) { setOpen(null); setSides(null); setEdit(DISARMED) }
+  }, [known, open, dirty])
 
   const refusal = sides === null ? null : armRefusal(sides)
   const readOnly = refusal !== null
@@ -173,9 +214,17 @@ export function FileBrowser({
   const showBlame = blameOn && !dirty
   const buffer = edit.buffer
 
+  // Highlighting lags the buffer: a repaint is a Shiki pass over the whole
+  // file, and paying that per keystroke is what makes a large file unusable.
+  // CodeMirror maps the decorations it already has through each change, so
+  // the colours ride along with the text until this catches up.
+  const painted = useIdleValue(buffer, HIGHLIGHT_IDLE_MS)
+  const tooBigToPaint = useMemo(() => countLines(painted) > HIGHLIGHT_LINE_CAP, [painted])
   const syntax = useMemo(
-    () => highlightFile(buffer.split('\n'), shikiLangOf(open ?? ''), shikiThemeOf(palette)),
-    [buffer, open, palette],
+    () => tooBigToPaint
+      ? undefined
+      : highlightWholeFile(painted.split('\n'), shikiLangOf(open ?? ''), shikiThemeOf(palette)),
+    [tooBigToPaint, painted, open, palette],
   )
   const indent = useMemo(() => detectIndent(edit.baseText), [edit.baseText])
 
@@ -257,6 +306,12 @@ export function FileBrowser({
           <ul className={css.fbList}>
             {rows.map(row => (
               <li key={rowKey(row)}>
+                {row.kind === 'more' ? (
+                  <span
+                    className={css.fbMore}
+                    style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
+                  >{t('filesMore', { count: row.hidden ?? 0 })}</span>
+                ) : (
                 <button
                   type="button"
                   title={row.path}
@@ -280,6 +335,7 @@ export function FileBrowser({
                   )}
                   <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
                 </button>
+                )}
               </li>
             ))}
           </ul>
@@ -351,6 +407,7 @@ export function FileBrowser({
               <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'fileReadOnlyEncoding' : 'fileReadOnlyCrlf')}</div>
             ) : null}
             {saveFailed !== null ? <div className={css.sideNotice}>{saveFailed}</div> : null}
+            {tooBigToPaint ? <div className={css.sideNotice}>{t('paintTooLarge')}</div> : null}
             {blameOn && dirty ? <div className={css.sideNotice}>{t('blameWhileEditing')}</div> : null}
             {showBlame && (blameFailed || (blame !== null && blame.error !== undefined))
               ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}

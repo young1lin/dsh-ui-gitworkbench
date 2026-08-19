@@ -64,6 +64,7 @@ import {
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
+import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { detectIndent } from './indent.ts'
 import { CodeEditor } from './CodeEditor.tsx'
@@ -82,7 +83,7 @@ import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
-import { grammarLoadCount, highlightFile, highlightForRows, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightFile, highlightForRows, highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
@@ -4881,9 +4882,15 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
     const left = rows.filter(row => row.left !== null).map(row => row.left!.text)
     return left.length === 0 ? '' : left.join('\n') + '\n'
   }, [rows])
+  // The editor's buffer is a whole file, so it takes the whole-file pass —
+  // and it lags the typing, for the same reason the browser's does: a Shiki
+  // pass per keystroke is what makes a large file unusable to edit.
+  const paintedLines = useIdleValue(bufferLines, HIGHLIGHT_IDLE_MS)
   const editSyntax = useMemo(
-    () => edit.armed ? highlightFile(bufferLines, lang, shikiTheme) : [],
-    [edit.armed, bufferLines, lang, shikiTheme, grammarGen],
+    () => edit.armed && paintedLines.length <= HIGHLIGHT_LINE_CAP
+      ? highlightWholeFile(paintedLines, lang, shikiTheme)
+      : [],
+    [edit.armed, paintedLines, lang, shikiTheme, grammarGen],
   )
   // The left column while editing renders dense — one row per INDEX line, no
   // holes — because the right column is now the dense buffer; a hole-aligned
