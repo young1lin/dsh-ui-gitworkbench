@@ -911,8 +911,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     setPendingTicks(EMPTY_TICKS)
     setStats({
       ...EMPTY_STATS,
-      worktreePath: statsPath,
-      branch: branchOfWorktree(statsPath, worktreesRef.current),
+      // No source pinned and no session binding yet: the empty path is what
+      // EMPTY_STATS already means by "nowhere", not a missing value.
+      worktreePath: statsPath ?? '',
+      branch: branchOfWorktree(statsPath, worktreesRef.current) ?? '',
     })
   }, [statsPath])
 
@@ -928,8 +930,8 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     const prevBinding = lastBindingRef.current
     lastBindingRef.current = bindingPath
     if (prevBinding === bindingPath) return
-    const prevSource = prevBinding ?? worktreePath
-    if (sourcePath !== null && prevSource.replace(/\\/g, '/') === sourcePath.replace(/\\/g, '/')) {
+    const prevSource = prevBinding ?? worktreePath ?? null
+    if (sourcePath !== null && prevSource !== null && prevSource.replace(/\\/g, '/') === sourcePath.replace(/\\/g, '/')) {
       setSourcePath(null)
     }
   }, [bindingPath, sourcePath, worktreePath])
@@ -3778,6 +3780,12 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
     return () => { ctrl.abort() }
   }, [funnelOpen, statsPath, refName, fetchAuthors, fetchRepoTree])
 
+  // Where the popover mounts: the drawer's overlay layer when there is one,
+  // the body otherwise. Same resolution the commit-row popover does, and the
+  // render below skips the portal when neither exists rather than handing
+  // createPortal a null container.
+  const funnelHost = funnelAnchorRef.current?.closest('[data-gs-part="overlay"]') ?? (typeof document === 'undefined' ? null : document.body)
+
   /** Every funnel interaction writes the filter through the box's grammar, so
    *  the box, the chips and the fetch can never disagree about the query. */
   const applyFilter = (next: LogFilter): void => { onQueryChange(serializeLogQuery(next)) }
@@ -3873,7 +3881,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
           spellCheck={false}
         />
       </div>
-      {funnelOpen && funnelBox !== null ? createPortal(
+      {funnelOpen && funnelBox !== null && funnelHost !== null ? createPortal(
         <div
           ref={funnelPanelRef}
           className={css.funnelPop}
@@ -4078,7 +4086,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
             >{t('filterClearAll')}</button>
           </div>
         </div>,
-        funnelAnchorRef.current?.closest('[data-gs-part="overlay"]') ?? (typeof document === 'undefined' ? null : document.body),
+        funnelHost,
       ) : null}
       {chips.length > 0 ? (
         <div className={css.filterChips}>

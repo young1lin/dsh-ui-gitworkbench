@@ -8,7 +8,13 @@
     "useDefineForClassFields": true,
     "experimentalDecorators": false,
     "skipLibCheck": true,
+    // `strict` stays off (its noImplicitAny half is a separate, larger
+    // change), but strictNullChecks is ON: without it a `T | undefined`
+    // return type is invisible to the compiler, and the side pane shipped
+    // a crash that killed the whole header slot because indexing an
+    // undefined array typechecked clean.
     "strict": false,
+    "strictNullChecks": true,
     "noImplicitAny": false,
     "declaration": false,
     "outDir": "lib",

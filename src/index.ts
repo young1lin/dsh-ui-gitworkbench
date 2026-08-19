@@ -337,7 +337,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       execute: async (args: { name?: string }, exec: ToolRunContext) => {
         const session = exec.agent?.session
         if (session === undefined) return { ok: false, error: 'worktree tools require a calling session' }
-        return this.worktreeEnter(session.id, session.header.cwd, args?.name, exec.signal)
+        return this.worktreeEnter(session.id, session.header.cwd ?? '', args?.name, exec.signal)
       },
       presentCall: () => ({ card: 'generic', title: 'Enter worktree', kind: 'other' }),
     }))
@@ -366,7 +366,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       execute: async (_args: Record<string, never>, exec: ToolRunContext) => {
         const session = exec.agent?.session
         if (session === undefined) return { ok: false, error: 'worktree tools require a calling session' }
-        return this.worktreeStatus(session.id, session.header.cwd, exec.signal)
+        return this.worktreeStatus(session.id, session.header.cwd ?? '', exec.signal)
       },
       presentCall: () => ({ card: 'generic', title: 'Worktree status', kind: 'read' }),
     }))

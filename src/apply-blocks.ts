@@ -207,5 +207,9 @@ async function applyBlocksChecked(
 /** A refused apply: git's own message verbatim, classified for the banner. */
 function refusal(run: GitRun): ApplyBlocksResult {
   const failure = classifyFailure(run.exitCode, run.stderr, run.stdout)
-  return { ok: false, failure, error: (run.stderr || run.stdout).trim().slice(-1000) }
+  const error = (run.stderr || run.stdout).trim().slice(-1000)
+  // `classifyFailure` answers null only for a zero exit, which is not a
+  // refusal and cannot reach here. The key is omitted rather than sent as
+  // null anyway, because the gateway's payloads carry no empty fields.
+  return failure === null ? { ok: false, error } : { ok: false, failure, error }
 }
