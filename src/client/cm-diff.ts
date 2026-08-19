@@ -70,14 +70,28 @@ function lineAt(starts: readonly number[], offset: number): number {
  */
 export function bufferDiff(original: string, doc: string): BufferDiff {
   if (original === doc) return { changed: [], deletedBefore: [] }
+  const lines = doc.split('\n')
   const starts = lineStarts(doc)
   const changed = new Set<number>()
   const deletedBefore = new Set<number>()
 
   for (const change of presentableDiff(original, doc)) {
     if (change.fromB === change.toB) {
-      // Nothing of this change survives in the buffer: text was removed.
-      deletedBefore.add(lineAt(starts, change.fromB))
+      // Nothing was INSERTED — but that does not mean a line disappeared. A
+      // line the reader shortened (`example.com/taskqueue` to `example.com`)
+      // is a pure deletion too, and it is still on screen, changed. Reading
+      // every empty insertion as a vanished line is what left a shortened
+      // line untinted until the next keystroke happened to add a character.
+      const line = lineAt(starts, change.fromB)
+      const removed = original.slice(change.fromA, change.toA)
+      // Whole lines went only if the removed text both starts at a line
+      // boundary and takes its newline with it.
+      const wholeLines = removed.endsWith('\n')
+        && (change.fromA === 0 || original[change.fromA - 1] === '\n')
+      // An emptied line has nothing left to tint either way, so it reads as a
+      // gap rather than as a coloured blank.
+      if (wholeLines || (lines[line - 1] ?? '').length === 0) deletedBefore.add(line)
+      else changed.add(line)
       continue
     }
     const first = lineAt(starts, change.fromB)

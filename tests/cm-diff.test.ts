@@ -28,6 +28,31 @@ describe('bufferDiff', () => {
     expect(out.changed).toEqual([2, 3])
   })
 
+  it('marks a SHORTENED line as changed, not as a vanished one', () => {
+    // The screenshot case: `module example.com` is a prefix of
+    // `module example.com/taskqueue`, so the diff is a pure deletion with
+    // nothing inserted — but the line is still there, changed. Reading every
+    // empty insertion as a vanished line left it untinted until the reader
+    // happened to type a character somewhere.
+    const out = bufferDiff(doc('module example.com/taskqueue', '', 'go 1.22', ''), doc('module example.com', '', 'go 1.22', ''))
+    expect(out.changed).toEqual([1])
+    expect(out.deletedBefore).toEqual([])
+  })
+
+  it('still marks a truly removed line as a gap', () => {
+    // The discriminator is whether the removed text took its newline with it
+    // from a line boundary — this one did, the one above did not.
+    const out = bufferDiff(doc('a', 'b', 'c'), doc('a', 'c'))
+    expect(out.changed).toEqual([])
+    expect(out.deletedBefore).toEqual([2])
+  })
+
+  it('marks a line emptied by a deletion as a gap, not a coloured blank', () => {
+    const out = bufferDiff(doc('text', 'b'), doc('', 'b'))
+    expect(out.changed).toEqual([])
+    expect(out.deletedBefore).toEqual([1])
+  })
+
   it('marks a deletion at the line that closed over the gap', () => {
     // Nothing of the removed text survives in the buffer, so there is no line
     // to tint — the marker goes where the reader looks for what went missing.
