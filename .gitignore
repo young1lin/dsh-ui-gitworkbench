@@ -41,3 +41,4 @@ scripts/verify_pane_header.py
 scripts/verify_cm_editor.py
 scripts/verify_live_tint.py
 scripts/verify_divider.py
+scripts/verify_blame.py
