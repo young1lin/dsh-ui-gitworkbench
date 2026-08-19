@@ -31,6 +31,7 @@ import { buildDirTree } from './dir-tree.ts'
 import { ancestorsOf, mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { blameWhen, shortHash } from './blame-view.ts'
+import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
 import { highlightFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { detectIndent } from './indent.ts'
 import {
@@ -48,7 +49,7 @@ const INDENT_EM = 0.85
 
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider,
-  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, onSaved, onDirtyChange,
+  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
   palette: string
@@ -72,6 +73,8 @@ export function FileBrowser({
   onSaved: () => void
   /** The unsaved-edits flag the drawer guards its own gestures on. */
   onDirtyChange: (dirty: boolean) => void
+  /** Hand a filter query to the History tab and switch to it. */
+  onShowHistory: (query: string) => void
 }): ReactNode {
   const [paths, setPaths] = useState<readonly string[]>([])
   const [truncated, setTruncated] = useState(false)
@@ -272,7 +275,7 @@ export function FileBrowser({
                   ) : (
                     <>
                       <span className={css.chevron} aria-hidden="true" />
-                      <PathFileGlyph />
+                      <PathFileGlyph path={row.path} />
                     </>
                   )}
                   <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
@@ -372,6 +375,23 @@ export function FileBrowser({
                     <span className={css.fbCommitWhen}>{blameWhen(pickedEntry.time)}</span>
                     <code className={css.fbCommitHash}>{shortHash(pickedEntry.hash)}</code>
                     <span className={css.fbCommitWhat} title={pickedEntry.summary}>{pickedEntry.summary}</span>
+                    {/* The question a name in the gutter raises is rarely
+                        about this one line — it is "what else did they do to
+                        this file". The History tab already answers that, with
+                        a filter grammar that takes both halves, so the strip
+                        hands it the query rather than growing a second commit
+                        list of its own. */}
+                    <button
+                      type="button"
+                      className={css.blockBtn}
+                      onClick={() => {
+                        onShowHistory(serializeLogQuery({
+                          ...emptyQueryFilter(),
+                          users: [pickedEntry.author],
+                          paths: [open],
+                        }))
+                      }}
+                    >{t('blameInHistory')}</button>
                   </>
                 )}
                 <button

@@ -22,7 +22,7 @@
 import { Compartment, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { gutter, GutterMarker } from '@codemirror/view'
 
-import { blameLabel, blameTitle } from './blame-view.ts'
+import { blameLabel, blameRunStart, blameTitle } from './blame-view.ts'
 import type { BlameLine } from './GitWorkbenchPanel.tsx'
 
 /** Carries a fetched blame — or null for "not showing" — into the view. */
@@ -95,8 +95,13 @@ export function blameGutter(notCommitted: string, onPick: (line: number) => void
       if (lines === null || lines === undefined) return null
       const number = view.state.doc.lineAt(line.from).number
       const entry = lines[number - 1]
-      const text = blameLabel(entry, notCommitted)
-      return text === '' ? null : new BlameMarker(text, blameTitle(entry, notCommitted))
+      // A marker for EVERY line, even where it shows nothing: CodeMirror does
+      // not create a gutter element for a line with no marker, and a run's
+      // unlabelled lines have to stay clickable and hoverable. The label
+      // appears only at the run's top; the title is on all of them, so
+      // hovering the fortieth line of a run still names its commit.
+      const text = blameRunStart(lines, number) ? blameLabel(entry, notCommitted) : ''
+      return new BlameMarker(text, blameTitle(entry, notCommitted))
     },
     initialSpacer: () => SPACER,
   })

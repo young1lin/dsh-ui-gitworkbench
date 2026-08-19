@@ -2090,6 +2090,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               fetchBlame={fetchBlame}
               onSaved={onRefresh}
               onDirtyChange={onSideDirty}
+              onShowHistory={query => { onHistoryQuery(query); leaveTab('history') }}
             />
           ) : (
             <>
@@ -3645,7 +3646,7 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
                   <label key={file} className={css.funnelRow} style={{ paddingLeft: (depth + 1) * PATH_INDENT + 4 }}>
                     <span className={css.funnelChevron} aria-hidden="true" />
                     <TriStateCheckbox state={stateOf(`${dir.path}/${file}`)} ariaLabel={`${dir.path}/${file}`} onChange={() => onTogglePath(`${dir.path}/${file}`)} />
-                    <PathFileGlyph />
+                    <PathFileGlyph path={`${dir.path}/${file}`} />
                     <span className={css.funnelName} title={`${dir.path}/${file}`}>{file}</span>
                   </label>
                 ))}
@@ -4062,7 +4063,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
                         {hits.map(hit => (
                           <label key={hit.path} className={css.funnelRow}>
                             <TriStateCheckbox state={pathState(hit.path)} ariaLabel={hit.path} onChange={() => togglePath(hit.path)} />
-                            {hit.isFile ? <PathFileGlyph /> : <PathDirGlyph />}
+                            {hit.isFile ? <PathFileGlyph path={hit.path} /> : <PathDirGlyph />}
                             <span className={css.funnelName} title={hit.path}>{hit.path}</span>
                           </label>
                         ))}
@@ -4598,7 +4599,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
                   left-to-right as "what this is, then what happened to it",
                   and the badge still lands in an aligned column — `.filePath`
                   is the only flexible child. */}
-              <PathFileGlyph />
+              <PathFileGlyph path={file.path} />
               <span className={css.filePath}>{basePart(file.path)}</span>
               {file.binary ? <span className={css.fileBinary}>BIN</span> : (
                 <span className={css.fileCounts}>

@@ -26,7 +26,7 @@ export type WorkbenchKey =
   // the Files tab: browse the repository, read a file, blame it, edit it
   | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
-  | 'blameWhileEditing' | 'blameLine' | 'blamePick'
+  | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
@@ -96,6 +96,7 @@ export const zh: Record<WorkbenchKey, string> = {
   fileReadOnlyCrlf: '这个文件的行尾是 CRLF，只能查看不能编辑（编辑器会把行尾统一成 LF，保存时整份文件都会被改写）。',
   fileReadOnlyEncoding: '这个文件不是 UTF-8 编码，只能查看不能编辑：页面上的文字是一次有损解码，保存回去会改写每一个非 ASCII 字节。',
   blameLine: '第 {line} 行',
+  blameInHistory: '他在本文件的提交',
   blamePick: '点左边的名字，看那一行是哪个提交改的',
   blameWhileEditing: '正在编辑，追溯已暂时收起：改过的行号已经对不上它背后的提交。保存或放弃后会重新出现。',
   historyEnd: '已到最早的提交',
@@ -316,6 +317,7 @@ export const en: Record<WorkbenchKey, string> = {
   fileReadOnlyCrlf: 'This file uses CRLF line endings, so it opens read-only (the editor normalises them to LF, and a save would rewrite every line).',
   fileReadOnlyEncoding: 'This file is not UTF-8, so it opens read-only: the text shown is a lossy decode, and saving it back would rewrite every non-ASCII byte.',
   blameLine: 'Line {line}',
+  blameInHistory: 'Their commits on this file',
   blamePick: 'Click a name to see which commit changed that line',
   blameWhileEditing: 'Blame is hidden while you type: edited line numbers no longer match the commits behind them. It returns once you save or revert.',
   historyEnd: 'Start of history',

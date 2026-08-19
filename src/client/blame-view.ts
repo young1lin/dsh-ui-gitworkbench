@@ -70,6 +70,29 @@ export function blameWhen(time: number): string {
 }
 
 /**
+ * Whether this line STARTS a run — the first line of a stretch that one commit
+ * is responsible for.
+ *
+ * A gutter that repeats the same name down forty lines is forty copies of one
+ * fact, and it buries the boundaries, which are the only thing the column is
+ * really reporting: where authorship changes. IDEA labels a run once, at its
+ * top, and leaves the rest blank. Runs are keyed on the COMMIT rather than the
+ * author, so two commits by one person still read as two runs.
+ *
+ * @param lines - the whole file's provenance, indexed from 0.
+ * @param number - 1-based line number.
+ */
+export function blameRunStart(lines: readonly BlameLine[], number: number): boolean {
+  const entry = lines[number - 1]
+  if (entry === undefined) return false
+  const previous = lines[number - 2]
+  // Line 1 always starts a run; so does the first line after a gap the blame
+  // did not cover, which is a boundary whether or not the commits match.
+  if (previous === undefined) return true
+  return previous.hash !== entry.hash
+}
+
+/**
  * The hover text: who, when, and what the commit said it was doing.
  * Empty when there is nothing more than the gutter already shows.
  */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { blameDate, blameLabel, blameTitle, blameWhen, shortHash } from '../src/client/blame-view.ts'
+import { blameDate, blameLabel, blameRunStart, blameTitle, blameWhen, shortHash } from '../src/client/blame-view.ts'
 import type { BlameLine } from '../src/client/GitWorkbenchPanel.tsx'
 
 const line = (over: Partial<BlameLine> = {}): BlameLine => ({
@@ -110,5 +110,46 @@ describe('blameTitle', () => {
 
   it('says the uncommitted wording and nothing else', () => {
     expect(blameTitle(line({ uncommitted: true }), '尚未提交')).toBe('尚未提交')
+  })
+})
+
+describe('blameRunStart', () => {
+  const run = (...hashes: string[]): BlameLine[] =>
+    hashes.map(hash => line({ hash: hash.repeat(40) }))
+
+  it('marks the first line of the file', () => {
+    expect(blameRunStart(run('a', 'a'), 1)).toBe(true)
+  })
+
+  it('leaves the rest of a commit run unmarked', () => {
+    // Forty repeats of one name is forty copies of one fact, and it buries
+    // the boundaries — which are the only thing the column really reports.
+    const lines = run('a', 'a', 'a')
+    expect(blameRunStart(lines, 2)).toBe(false)
+    expect(blameRunStart(lines, 3)).toBe(false)
+  })
+
+  it('marks the line where the commit changes', () => {
+    expect(blameRunStart(run('a', 'b'), 2)).toBe(true)
+  })
+
+  it('keys on the commit, not the author', () => {
+    // Two commits by one person are two runs: the gutter shows a name, but
+    // what it is dividing is history.
+    const lines = [
+      line({ hash: 'a'.repeat(40), author: 'young1lin' }),
+      line({ hash: 'b'.repeat(40), author: 'young1lin' }),
+    ]
+    expect(blameRunStart(lines, 2)).toBe(true)
+  })
+
+  it('marks the line after a gap the blame did not cover', () => {
+    const lines = [line(), line({ hash: '', author: '' }), line()]
+    expect(blameRunStart(lines, 3)).toBe(true)
+  })
+
+  it('answers false for a line past the end', () => {
+    expect(blameRunStart(run('a'), 5)).toBe(false)
+    expect(blameRunStart([], 1)).toBe(false)
   })
 })

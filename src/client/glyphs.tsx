@@ -11,6 +11,7 @@
 import type { ReactNode } from 'react'
 
 import css from './GitWorkbenchPanel.module.css'
+import { fileIcon } from './file-icon.ts'
 
 /**
  * The two node glyphs, in IntelliJ's New UI icon idiom: a 16px grid, 1px
@@ -45,12 +46,19 @@ export function PathDirGlyph(): ReactNode {
   )
 }
 
-export function PathFileGlyph(): ReactNode {
+/**
+ * @param path - the file's path, which decides its tint and monogram. Omitted
+ *               where the caller has no path to give, and the sheet then
+ *               paints in the row's own colour as it always did.
+ */
+export function PathFileGlyph({ path }: { path?: string } = {}): ReactNode {
+  const icon = path === undefined ? null : fileIcon(path)
+  const paint = icon === null || icon.mono === '' ? undefined : icon.color
   return (
     <svg
       className={css.pathFileGlyph}
       width="16" height="16" viewBox="0 0 16 16"
-      fill="none" stroke="currentColor" strokeWidth="1"
+      fill="none" stroke={paint ?? 'currentColor'} strokeWidth="1"
       strokeLinejoin="round" strokeLinecap="round"
       aria-hidden="true"
     >
@@ -60,6 +68,19 @@ export function PathFileGlyph(): ReactNode {
       <path d="M3.5 12.75V3.25A.75.75 0 0 1 4.25 2.5H9l3.5 3.5v6.75a.75.75 0 0 1-.75.75H4.25a.75.75 0 0 1-.75-.75Z" />
       {/* The fold itself — the corner turned back on the sheet. */}
       <path d="M9 2.5v2.75a.75.75 0 0 0 .75.75h2.75" />
+      {/* The language's monogram, sitting on the sheet's lower half. Stroke is
+          off for the text: a 1px stroke on a 6px glyph fills it in solid. */}
+      {paint === undefined ? null : (
+        <text
+          x="8" y={icon !== null && icon.mono.length > 1 ? 11.4 : 11.8}
+          textAnchor="middle"
+          fill={paint} stroke="none"
+          fontSize={icon !== null && icon.mono.length > 1 ? 5.5 : 7.5}
+          fontWeight="700"
+          letterSpacing={icon !== null && icon.mono.length > 1 ? -0.3 : 0}
+          fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        >{icon?.mono}</text>
+      )}
     </svg>
   )
 }
