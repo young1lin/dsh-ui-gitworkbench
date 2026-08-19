@@ -2300,3 +2300,71 @@
   color: var(--gs-fg-faint);
   font-style: italic;
 }
+
+/* ============================ image preview ============================= */
+
+/* A picture fills the pane and its facts sit under it, because the facts are
+   the reason this is a viewer rather than an image tag: a screenshot in a
+   repository is usually opened to check a size or a crop. */
+.imgPane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  gap: 8px;
+}
+
+/* The checkerboard is not decoration. A transparent PNG on a flat background
+   is indistinguishable from an opaque one of that colour, and "is this
+   transparent" is the question the file was opened to answer. Two overlaid
+   gradients rather than an asset: no request, and it takes the theme. */
+.imgStage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 12px;
+  border-radius: var(--gs-r-control);
+  background-color: var(--gs-surface-2);
+  background-image:
+    linear-gradient(45deg, var(--gs-border-soft) 25%, transparent 25%, transparent 75%, var(--gs-border-soft) 75%),
+    linear-gradient(45deg, var(--gs-border-soft) 25%, transparent 25%, transparent 75%, var(--gs-border-soft) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+/* Fit is the default: an 8000px render opened at full size shows its top-left
+   corner, which looks like a broken image rather than a big one. */
+.imgShot {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  /* Nearest-neighbour would be right for icons and wrong for photographs, and
+     the pane cannot tell them apart; smooth is the safe half of that trade. */
+  image-rendering: auto;
+}
+
+/* Actual size: the scaling comes off and the stage scrolls instead. Written
+   as a descendant of the stage's own state so the picture keeps ONE class,
+   and the two views cannot disagree about which is in force. */
+.imgStage[data-actual] {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.imgStage[data-actual] .imgShot {
+  max-width: none;
+  max-height: none;
+  object-fit: none;
+}
+
+.imgCaption {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-dim);
+  font-variant-numeric: tabular-nums;
+}

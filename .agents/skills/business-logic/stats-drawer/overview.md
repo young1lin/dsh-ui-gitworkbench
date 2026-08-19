@@ -22,6 +22,7 @@
 | `gitWorkbench/stats` | 工作区 vs HEAD 全景（`git diff HEAD` + untracked 合成段） |
 | `gitWorkbench/fileDiff` | 单文件按需 diff（tracked: `git diff HEAD --`；untracked: 宿主 readFile 合成） |
 | `gitWorkbench/commits` / `commitStats` / `compareRefs` | 历史翻页（--topo-order，LOG_FORMAT 带 `%an`/`%cn`/`%cI`：行内作者、悬浮卡精确日期（浏览器本地时区））；IDEA 式过滤**下推 git log**（`src/log-filter.ts` 编译 `--author/-i/-E/--grep/--since/--until/pathspec`；**裸 yyyy-mm-dd 展开成 T00:00:00/T23:59:59**——git 对裸日期的时区解析在 Windows 会掉当天提交；语法解析在 `src/client/log-filter-query.ts`，漏斗弹层=**分区页签**（用户 N/日期/路径 N，恒定高度）：作者多选（`authors` RPC，shortlog **跟当前 ref**）+日期预设+**自绘日历**（`calendar.ts` 纯函数网格）+路径目录树**含文件叶子**与扁平搜索（`repoTree` RPC、`searchPaths` 纯函数））——过滤后的页仍是单次连续游走，车道图常驻；ref 选择器支持 `--all` 全部分支（哨兵，宿主/客户端各一份字面量）；git 失败透 `error` 字段（§6.13）；单提交视图 / 两分支对比 |
+| `gitWorkbench/fileImage` | 文件页里的图片预览：stat 卡 4MB（`IMAGE_BYTE_CAP`）→ readFile → `sniffImage` 按**格式规范的魔数**判定 → base64。扩展名从不做判据，只做"值不值得问一次"的提示（`shouldAskForImage`：binary 无条件问；tooLarge 才看名字，因为文本护栏 2MB 比图片上限小）。表里只收**浏览器能在 `<img>` 里画出来的** 8 种（PNG/JPEG/GIF/WebP/BMP/ICO/AVIF/SVG）——TIFF、HEIC 故意不收：认出来也只会承诺一张画不出的图 |
 | `gitWorkbench/styleGet` / `styleSet` | 背景/CSS 两作用域读写 |
 
 ## Core Flow
@@ -56,6 +57,9 @@ flowchart LR
 
 ## Potential Pitfalls
 - **CSS 栈序是序关系不是数字表**：`.drawer > .header > .tabs > .compareBar > .syncBar` 的 z-index 必须沿 DOM 序**严格递减**，最低一条 bar 仍 > `.body`（z-index 1）。popover 只向下弹，上方 bar 的菜单必须压过下方一切 bar。曾三次踩坑：bar 与 `.body` 同层菜单被吃；全部 bar 同为 20 时上层菜单被下层吸掉；header 与 tabs 打平 23 时后者（源码序靠后的兄弟）吞掉 worktree 菜单——**同值即输**，测试因此断言严格递减而非硬编码数字
+- **图片渲染必须走 `<img src="blob:">`，绝不内联 SVG**：HTML 规范定义 `<img>` 内的文档是 *non-scripted context*——`<script>` 不执行、事件属性不触发、外部引用不加载。这条规范保证（而非某个消毒库）才是 SVG 能安全显示的原因；内联同一段 markup 会把三条保证全部交出去。blob 而非 `data:` URI：DOM 里只留一个短串，且**可以 revoke**——不 revoke 的 blob URL 会把字节钉死到文档生命周期，翻五十张截图就留五十份
+- **魔数只是第一道闸，浏览器解码器才是终审**：宿主说"这些字节自称是 PNG"，只有解码器能说"它真的是"。所以 `onError` 必须有话说（`imageBroken`），空框比错话更像 bug
+- **SVG 判定必须结构化跳过 prologue，不能 `indexOf('<svg')`**：扫 12.5 万个真实文件发现两类反例——(1) DOCTYPE 带**内部子集** `[ <!ATTLIST …> ]`，子集里的声明自带 `>`，扫到第一个 `>` 会停在子集中间（matplotlib `hand.svg` 就是，曾是唯一漏网）；(2) **148 个 `.svelte`** 文件正文第一个元素就是 `<svg>`——它们是"关于图标的代码"，作者打开是要读代码的。签名分不出这两者，**文件名可以**，所以 SVG 预览同时要求名字是 `.svg`
 - **同优先级修饰类必须压过基类**：`` `${css.base} ${css.mod}` `` 与基类同 specificity，谁赢由样式表源码序决定——修饰类写在共享词汇表（文件后部）之前就静默失效（规则在、值对、渲染像没写）。修法：限定成 `.refButton.headerPicker` / `.refPop.settingsPop`（更高优先级、位置无关）。`drawer-chrome.test.ts` 从 TSX 读出全部类组合自动覆盖后来者；注意只比"裸选择器"规则（`.btn:disabled`、`.pullGroup > .btn` 本就更高优先级、合法地赢）
 - **对源码文本做断言的三条纪律**（本仓库已两次被注释骗过）：先剥注释（CSS/TSX 注释会被吞进"选择器"或被数成出现次数）；miss 读作 pass，必须 `rules.length > 0` 兜底（曾因正则限定后循环跑零次而"全绿"）；新断言做变异验证（改掉被守代码确认变红）
 - Playwright 对此 UI：禁 `networkidle`（长连 WebSocket）；哈希类名用 `[class*=local]`；无头默认英文词典（zh/en 双匹配）

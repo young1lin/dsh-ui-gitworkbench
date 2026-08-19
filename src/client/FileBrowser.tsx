@@ -31,6 +31,9 @@ import { buildDirTree } from './dir-tree.ts'
 import { mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
 import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
+import { ImageView, type Picture } from './ImageView.tsx'
+import { decodeBase64, formatBytes, looksLikeImagePath, shouldAskForImage } from './image-view.ts'
+import { IMAGE_BYTE_CAP, sniffImage } from '../image-sniff.ts'
 import { blameWhen, shortHash } from './blame-view.ts'
 import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
 import { highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
@@ -40,7 +43,7 @@ import {
   DISARMED, applySaveOk, applySides, armEdit, armRefusal, isDirty, markConflict,
   type EditState, type WriteResult,
 } from './side-edit.ts'
-import type { BlameAnswer, BlameLine, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
+import type { BlameAnswer, BlameLine, FileImage, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
 
 /** Count lines without allocating the split — the buffer can be megabytes and
  *  this runs on a timer while somebody is typing. */
@@ -66,7 +69,7 @@ const FILES_PER_DIR = 100
 
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree,
-  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, onSaved, onDirtyChange, onShowHistory,
+  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
   palette: string
@@ -86,6 +89,8 @@ export function FileBrowser({
   fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
+  /** One file's bytes, when the host confirms they are an image. */
+  fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
   /** After a successful save: the drawer re-reads, since the file moved. */
   onSaved: () => void
   /** The unsaved-edits flag the drawer guards its own gestures on. */
@@ -114,6 +119,15 @@ export function FileBrowser({
   const [saving, setSaving] = useState(false)
   const [saveFailed, setSaveFailed] = useState<string | null>(null)
   const [blame, setBlame] = useState<BlameAnswer | null>(null)
+  /**
+   * The host's answer about this file's bytes, tagged with the path it is
+   * about. The tag is what keeps the PREVIOUS file's picture off the screen
+   * while the next one is being fetched — without it, clicking through a
+   * directory of screenshots shows each one under the following one's name.
+   */
+  const [image, setImage] = useState<{ readonly path: string; readonly answer: FileImage | null } | null>(null)
+  /** Reading an SVG's markup rather than looking at the picture it draws. */
+  const [asSource, setAsSource] = useState(false)
   // "Asked and got nothing" must not render as "not asked": a toggle that
   // lights up and then shows an empty gutter reads as broken.
   const [blameFailed, setBlameFailed] = useState(false)
@@ -204,6 +218,25 @@ export function FileBrowser({
     return () => { alive = false; ctrl.abort() }
   }, [blameOn, open, fetchBlame, statsPath, gen])
 
+  // A file the text side declined may still be worth showing. `sides` is the
+  // trigger rather than the file's name because the name is not evidence:
+  // asking is driven by what the TEXT path concluded, and the host decides
+  // what the bytes actually are. The dependency is safe as an object because
+  // `sides` gets a new identity only on a real refetch — the drawer does not
+  // poll this view.
+  useEffect(() => {
+    if (open === null || sides === null || !shouldAskForImage(open, sides)) { setImage(null); return }
+    const asked = open
+    const ctrl = new AbortController()
+    let alive = true
+    void fetchFileImage(statsPath, asked, ctrl.signal)
+      .then(answer => { if (alive) setImage({ path: asked, answer }) })
+      // A host half older than this client has no such method and the call
+      // throws; the text side's own verdict then stands, unchanged.
+      .catch(() => { if (alive) setImage({ path: asked, answer: null }) })
+    return () => { alive = false; ctrl.abort() }
+  }, [open, sides, fetchFileImage, statsPath])
+
   const all = useMemo(() => mergePaths(paths, extraPaths), [paths, extraPaths])
   const tree = useMemo(() => buildDirTree(all), [all])
   const roots = useMemo(() => rootFiles(all), [all])
@@ -215,6 +248,7 @@ export function FileBrowser({
   )
 
   useEffect(() => { setPicked(null) }, [open, blameOn])
+  useEffect(() => { setAsSource(false) }, [open])
 
   // A re-read — a worktree switch, a refresh, an agent's write — can remove
   // the file that was open. Settled only once the new list has arrived, and
@@ -236,7 +270,56 @@ export function FileBrowser({
    *  when the blame does not reach that far. */
   const pickedEntry: BlameLine | null =
     picked === null || blame === null ? null : blame.lines[picked - 1] ?? null
-  const showBlame = blameOn && !dirty
+  /** The host's verdict on THIS file's bytes; null while it is in flight or
+   *  when the question does not arise. */
+  const shot = image !== null && image.path === open ? image.answer : null
+  /** The question has been asked and not yet answered. Tracked so the pane
+   *  shows a load rather than flashing "binary file" and then a picture. */
+  const askingImage = open !== null && sides !== null && shouldAskForImage(open, sides)
+    && (image === null || image.path !== open)
+
+  /**
+   * An SVG the text path already fetched.
+   *
+   * SVG is markup, so it never reaches the binary branch above — it arrives
+   * as text and would otherwise open as XML, which is not what "click the
+   * picture" means. The bytes are already here, so the preview costs no round
+   * trip at all; it costs re-encoding the string that was decoded from them.
+   *
+   * The NAME is required as well as the signature, and that gate earns its
+   * place: sweeping a hundred and twenty-five thousand real files turned up
+   * a hundred and forty-eight `.svelte` components that begin with a literal
+   * `<svg>` element. They are markup about an icon, not an icon, and their
+   * author opened them to read the code.
+   *
+   * A lossy decode is excluded: re-encoding it would produce different bytes
+   * from the ones on disk, and a picture drawn from those is a picture of
+   * something that is not in the repository.
+   */
+  const svg: Picture | null = useMemo(() => {
+    if (open === null || sides === null) return null
+    if (sides.binary || sides.tooLarge || sides.lossyEncoding === true) return null
+    if (!looksLikeImagePath(open)) return null
+    const bytes = new TextEncoder().encode(sides.targetText)
+    const found = sniffImage(bytes)
+    return found === null ? null : { bytes, mime: found.mime, kind: found.kind }
+  }, [open, sides])
+
+  /** The host's picture, decoded once. Keyed on the ANSWER alone: a decode is
+   *  a pass over four megabytes at the cap, and folding the SVG toggle into
+   *  the same memo would re-run it every time that button is pressed. */
+  const decoded: Picture | null = useMemo(
+    () => shot !== null && shot.ok
+      ? { bytes: decodeBase64(shot.base64), mime: shot.mime, kind: shot.kind }
+      : null,
+    [shot],
+  )
+  /** The bytes on screen as a picture, from whichever half produced them.
+   *  Both operands are memoised, so this keeps a stable identity. */
+  const picture: Picture | null = decoded ?? (asSource ? null : svg)
+
+  const showingImage = picture !== null
+  const showBlame = blameOn && !dirty && !showingImage
   const buffer = edit.buffer
 
   // Highlighting lags the buffer: a repaint is a Shiki pass over the whole
@@ -366,7 +449,7 @@ export function FileBrowser({
             <div className={css.fbHeader}>
               <span className={css.fbPath} title={open}>{open}</span>
               <span className={css.sideActions}>
-                {!readOnly && sides !== null && !sides.binary && !sides.tooLarge ? (
+                {!readOnly && !showingImage && sides !== null && !sides.binary && !sides.tooLarge ? (
                   <>
                     <button
                       type="button"
@@ -382,6 +465,15 @@ export function FileBrowser({
                     >{t('fileRevert')}</button>
                   </>
                 ) : null}
+                {svg === null ? null : (
+                  <button
+                    type="button"
+                    className={css.blockBtn}
+                    aria-pressed={asSource}
+                    onClick={() => { setAsSource(on => !on) }}
+                  >{t(asSource ? 'imagePreview' : 'imageSource')}</button>
+                )}
+                {showingImage ? null : (
                 <button
                   type="button"
                   aria-pressed={blameOn}
@@ -389,6 +481,7 @@ export function FileBrowser({
                   className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
                   onClick={() => { onPlace({ ...place, blameOn: !blameOn }) }}
                 >{t('blameToggle')}</button>
+                )}
               </span>
             </div>
             {pending !== null ? (
@@ -475,8 +568,17 @@ export function FileBrowser({
             <div className={css.fbBody}>
               {loading && sides === null ? <div className={css.empty}>{t('loading')}</div>
                 : sides === null ? <div className={css.empty}>{t('saveUnavailable')}</div>
+                : picture !== null ? <ImageView picture={picture} path={open} t={t} />
+                : askingImage ? <div className={css.empty}>{t('loading')}</div>
                 : sides.binary ? <div className={css.empty}>{t('binaryFile')}</div>
-                : sides.tooLarge ? <div className={css.empty}>{t('diffTooLarge')}</div>
+                : sides.tooLarge ? (
+                  // An image past the preview cap gets its own sentence: the
+                  // diff pane's "too large" is about a patch nobody asked for
+                  // here, and the size is the fact that explains the refusal.
+                  shot !== null && shot.reason === 'tooLarge'
+                    ? <div className={css.empty}>{t('imageTooLarge', { size: formatBytes(shot.bytes), cap: formatBytes(IMAGE_BYTE_CAP) })}</div>
+                    : <div className={css.empty}>{t('diffTooLarge')}</div>
+                )
                 : (
                   <CodeEditor
                     key={open}

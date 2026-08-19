@@ -68,6 +68,7 @@ import {
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
+import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -185,6 +186,35 @@ export interface FileSides {
    *  diff but withholds the editor: saving that text back would replace every
    *  non-ASCII byte in the file. `writeChecked` refuses such a save anyway. */
   readonly lossyEncoding: boolean
+}
+
+/**
+ * `fileImage`: one working-tree file's bytes, when the bytes really are an
+ * image a browser can draw.
+ *
+ * Every field is present in both outcomes rather than optional, because the
+ * gateway's payloads must be JSON-safe and an absent key and a `undefined` one
+ * are not the same thing over the wire. `reason` is '' exactly when `ok`.
+ */
+export interface FileImage {
+  /** Whether `base64` holds a verified image. */
+  readonly ok: boolean
+  /** MIME type to label the blob with; '' when declined. */
+  readonly mime: string
+  /** Short label for the caption — 'PNG', 'WebP', 'SVG'; '' when declined. */
+  readonly kind: string
+  /** The whole file, base64. '' when declined. */
+  readonly base64: string
+  /** The file's size in bytes, reported either way: when the view declines,
+   *  the size is usually the reason and always worth showing. */
+  readonly bytes: number
+  /** Why not: 'notImage', 'tooLarge', 'missing'. '' when ok. */
+  readonly reason: string
+}
+
+/** A `fileImage` answer that carries no picture, only why. */
+function declined(reason: string, bytes: number): FileImage {
+  return { ok: false, mime: '', kind: '', base64: '', bytes, reason }
 }
 
 /** What every write operation reports back. */
@@ -752,6 +782,67 @@ export class GitWorkbenchService extends TypertRemoteService {
     // is a payload nobody reads to the end of.
     if (all.length > SIDE_LINE_CAP) return { lines: all.slice(0, SIDE_LINE_CAP), truncated: true }
     return { lines: all, truncated: false }
+  }
+
+  /**
+   * One working-tree file's bytes, when those bytes really are an image.
+   *
+   * The Files tab's fallback for a picture used to be "binary file — no text
+   * diff", which is true and useless: a repository's icons and screenshots are
+   * content, and a browser is already the best image viewer on the machine.
+   *
+   * The EXTENSION does not decide. It cannot: a `.png` is a filename, and a
+   * view that trusted it would hand the browser whatever bytes happened to be
+   * under that name. {@link sniffImage} reads the signature the format's own
+   * specification mandates, and a file that fails it comes back `notImage` so
+   * the client falls back to the ordinary text path — a mislabelled file still
+   * opens, as itself.
+   *
+   * The size check runs off the stat rather than the read, the same way
+   * `fileSides` does it: declining an oversized file must not mean loading it
+   * whole first. Base64 rather than a binary frame because the RPC channel is
+   * JSON; the third it adds is why {@link IMAGE_BYTE_CAP} sits where it does.
+   *
+   * Read-only — nothing is spawned, nothing is written.
+   *
+   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param signal - abort signal.
+   */
+  @Remote('fileImage')
+  async fileImage(worktreePath: string, path: string, signal: AbortSignal): Promise<FileImage> {
+    if (typeof path !== 'string' || !isSafePathArg(path)) {
+      throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
+    }
+    const full = join(this.cwdOf(worktreePath), path)
+    let size = 0
+    try {
+      const info = await stat(full)
+      if (!info.isFile()) return declined('missing', 0)
+      size = info.size
+    } catch {
+      return declined('missing', 0)
+    }
+    if (size > IMAGE_BYTE_CAP) return declined('tooLarge', size)
+    let bytes: Buffer
+    try {
+      bytes = await readFile(full)
+    } catch {
+      return declined('missing', 0)
+    }
+    // Re-checked against the bytes actually read: the stat above is a separate
+    // syscall, and the file can have grown between the two.
+    if (bytes.length > IMAGE_BYTE_CAP) return declined('tooLarge', bytes.length)
+    const found = sniffImage(bytes)
+    if (found === null) return declined('notImage', bytes.length)
+    return {
+      ok: true,
+      mime: found.mime,
+      kind: found.kind,
+      base64: bytes.toString('base64'),
+      bytes: bytes.length,
+      reason: '',
+    }
   }
 
   /**

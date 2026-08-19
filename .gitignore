@@ -50,3 +50,4 @@ scripts/verify_file_scale_ui.py
 scripts/verify_files_place.py
 scripts/verify_place_scope.py
 scripts/verify_place_persist.py
+scripts/verify_image_view.py

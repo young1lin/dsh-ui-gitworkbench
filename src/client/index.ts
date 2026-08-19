@@ -21,7 +21,7 @@ import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
   type WorkbenchStats, type SyncStatus, type WorktreeStatus,
-  type BlameAnswer, type FileSides, type SideLayer, type WriteResult,
+  type BlameAnswer, type FileImage, type FileSides, type SideLayer, type WriteResult,
 } from './GitWorkbenchPanel.tsx'
 import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
@@ -117,6 +117,19 @@ export function apply(ctx: ClientContext): void {
             { args: { worktreePath: worktreePath ?? '', path } },
             signal,
           ) as { ok: true; value: BlameAnswer } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
+        // One file's bytes, when the host's signature check confirms they are
+        // an image. Asked only for a file the text side has already declined,
+        // so null — an older host half with no such method, a failed call —
+        // simply leaves that decline standing.
+        fetchFileImage: async (worktreePath: string | undefined, path: string, signal: AbortSignal): Promise<FileImage | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/fileImage',
+            { args: { worktreePath: worktreePath ?? '', path } },
+            signal,
+          ) as { ok: true; value: FileImage } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
         // Save the side pane's editor buffer. The buffer travels with the blob

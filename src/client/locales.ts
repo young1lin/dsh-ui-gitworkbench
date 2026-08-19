@@ -27,6 +27,7 @@ export type WorkbenchKey =
   | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory' | 'paintTooLarge'
+  | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
@@ -154,6 +155,12 @@ export const zh: Record<WorkbenchKey, string> = {
   loadingCommit: '加载提交…',
   renamedFrom: '重命名自',
   binaryFile: '二进制文件 —— 不显示文本 diff',
+  imageBroken: '浏览器无法解码这个图片文件（文件头对得上，但内容可能已损坏或被截断）。',
+  imageFit: '适应窗口',
+  imageActual: '实际大小',
+  imageTooLarge: '图片有 {size}，超过 {cap} 的预览上限。',
+  imageSource: '看源码',
+  imagePreview: '看图',
   loadingDiff: '加载 diff…',
   noTextDiff: '无文本差异',
   // The side-by-side pane's layer tabs: unstaged is index→worktree, staged is
@@ -378,6 +385,12 @@ export const en: Record<WorkbenchKey, string> = {
   loadingCommit: 'Loading commit…',
   renamedFrom: 'Renamed from',
   binaryFile: 'Binary file — no text diff',
+  imageBroken: 'The browser could not decode this image (the header checks out, so the file is probably damaged or truncated).',
+  imageFit: 'Fit',
+  imageActual: 'Actual size',
+  imageTooLarge: 'This image is {size}, past the {cap} preview limit.',
+  imageSource: 'Source',
+  imagePreview: 'Preview',
   loadingDiff: 'Loading diff…',
   noTextDiff: 'No text changes',
   tabUnstaged: 'Unstaged',
