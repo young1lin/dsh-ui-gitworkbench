@@ -25,7 +25,7 @@ export type WorkbenchKey =
   | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare' | 'tabFiles'
   // the Files tab: browse the repository, read a file, blame it, edit it
   | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
-  | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
+  | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory' | 'paintTooLarge'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
@@ -90,6 +90,7 @@ export const zh: Record<WorkbenchKey, string> = {
   filesNoMatch: '没有匹配的文件',
   filesMore: '还有 {count} 个，用上面的搜索找',
   filesPick: '从左边选一个文件打开',
+  filesVanished: '{path} 已不在仓库里（被删除、重命名，或者切到了没有它的分支）。',
   filesUnsavedAsk: '有未保存的修改，打开其他文件会丢弃它们。',
   filesDiscardOpen: '丢弃并打开',
   // Read-only rather than withheld: in this view READING the file is the
@@ -315,6 +316,7 @@ export const en: Record<WorkbenchKey, string> = {
   filesNoMatch: 'No matching files',
   filesMore: 'and {count} more — use the search above',
   filesPick: 'Pick a file on the left to open it',
+  filesVanished: '{path} is not in the repository any more — deleted, renamed, or on a branch that no longer has it.',
   filesUnsavedAsk: 'You have unsaved edits; opening another file discards them.',
   filesDiscardOpen: 'Discard and open',
   fileReadOnlyCrlf: 'This file uses CRLF line endings, so it opens read-only (the editor normalises them to LF, and a save would rewrite every line).',

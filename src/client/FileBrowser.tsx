@@ -28,7 +28,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import css from './GitWorkbenchPanel.module.css'
 import { CodeEditor } from './CodeEditor.tsx'
 import { buildDirTree } from './dir-tree.ts'
-import { ancestorsOf, mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
+import { mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
+import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { blameWhen, shortHash } from './blame-view.ts'
 import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
@@ -64,7 +65,7 @@ const INDENT_EM = 0.85
 const FILES_PER_DIR = 100
 
 export function FileBrowser({
-  t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider,
+  t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree,
   fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
@@ -91,18 +92,27 @@ export function FileBrowser({
   onDirtyChange: (dirty: boolean) => void
   /** Hand a filter query to the History tab and switch to it. */
   onShowHistory: (query: string) => void
+  /** Where the reader is — held above this component because this component
+   *  unmounts every time the reader looks at another tab. */
+  place: FilesPlace
+  onPlace: (next: FilesPlace) => void
+  /** The last file list read, kept for the same reason: coming back should
+   *  render the tree, not blank it while the repository is re-read. */
+  cached: { readonly paths: readonly string[]; readonly truncated: boolean }
+  onTree: (next: { readonly paths: readonly string[]; readonly truncated: boolean }) => void
 }): ReactNode {
-  const [paths, setPaths] = useState<readonly string[]>([])
-  const [truncated, setTruncated] = useState(false)
-  const [query, setQuery] = useState('')
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
-  const [open, setOpen] = useState<string | null>(null)
+  const { open, query, blameOn } = place
+  const { paths, truncated } = cached
+  const expanded = useMemo(() => new Set(place.expanded), [place.expanded])
+  /** A file that was open and is not in the repository any more. Reported
+   *  rather than silently applied: a selection that clears itself with no
+   *  explanation reads as a bug. */
+  const [vanished, setVanished] = useState<string | null>(null)
   const [sides, setSides] = useState<FileSides | null>(null)
   const [loading, setLoading] = useState(false)
   const [edit, setEdit] = useState<EditState>(DISARMED)
   const [saving, setSaving] = useState(false)
   const [saveFailed, setSaveFailed] = useState<string | null>(null)
-  const [blameOn, setBlameOn] = useState(false)
   const [blame, setBlame] = useState<BlameAnswer | null>(null)
   // "Asked and got nothing" must not render as "not asked": a toggle that
   // lights up and then shows an empty gutter reads as broken.
@@ -129,14 +139,13 @@ export function FileBrowser({
     const ctrl = new AbortController()
     let alive = true
     void fetchRepoTree(statsPath, ctrl.signal)
-      .then(tree => {
-        if (!alive || tree === null) return
-        setPaths(tree.paths)
-        setTruncated(tree.truncated)
+      .then(answer => {
+        if (!alive || answer === null) return
+        onTree({ paths: answer.paths, truncated: answer.truncated })
       })
       .catch(() => { /* an old host half: the tree stays empty and says so */ })
     return () => { alive = false; ctrl.abort() }
-  }, [fetchRepoTree, statsPath, gen])
+  }, [fetchRepoTree, statsPath, gen, onTree])
 
   // The open file's text. `unstaged` is the layer whose target is the file on
   // disk — the only one this view is about.
@@ -194,16 +203,19 @@ export function FileBrowser({
 
   useEffect(() => { setPicked(null) }, [open, blameOn])
 
-  // Switching worktrees re-reads the tree, and the file that was open may not
-  // exist in the new one — an editor over a file that is not there would show
-  // an empty buffer as if the file were empty. Dropped only once the new list
-  // has actually arrived, and never out from under unsaved edits: those are
-  // guarded one level up, where the source switch is asked about.
-  const known = useMemo(() => new Set(all), [all])
+  // A re-read — a worktree switch, a refresh, an agent's write — can remove
+  // the file that was open. Settled only once the new list has arrived, and
+  // never out from under unsaved edits: those are guarded one level up, where
+  // the tab and source switches are asked about.
   useEffect(() => {
-    if (open === null || dirty || known.size === 0) return
-    if (!known.has(open)) { setOpen(null); setSides(null); setEdit(DISARMED) }
-  }, [known, open, dirty])
+    if (dirty) return
+    const settled = reconcilePlace(place, all)
+    if (settled.vanished === null) return
+    onPlace(settled.place)
+    setVanished(settled.vanished)
+    setSides(null)
+    setEdit(DISARMED)
+  }, [all, place, dirty, onPlace])
 
   const refusal = sides === null ? null : armRefusal(sides)
   const readOnly = refusal !== null
@@ -234,22 +246,11 @@ export function FileBrowser({
     if (path === open) return
     if (dirty) { setPending(path); return }
     setSaveFailed(null)
-    setExpanded(prev => {
-      const next = new Set(prev)
-      for (const dir of ancestorsOf(path)) next.add(dir)
-      return next
-    })
-    setOpen(path)
+    setVanished(null)
+    onPlace(openAt(place, path))
   }
 
-  const toggleDir = (path: string): void => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }
+  const foldDir = (path: string): void => { onPlace(toggleDir(place, path)) }
 
   const idRef = useRef(0)
   useEffect(() => { idRef.current += 1 }, [open])
@@ -297,7 +298,7 @@ export function FileBrowser({
           value={query}
           placeholder={t('fileSearchPlaceholder')}
           aria-label={t('fileSearchPlaceholder')}
-          onChange={event => { setQuery(event.target.value) }}
+          onChange={event => { onPlace({ ...place, query: event.target.value }) }}
         />
         {truncated ? <div className={css.fbNote}>{t('filesTruncated')}</div> : null}
         {rows.length === 0 ? (
@@ -320,7 +321,7 @@ export function FileBrowser({
                     ? `${css.fbRow} ${css.fbRowActive}`
                     : css.fbRow}
                   style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
-                  onClick={() => { row.kind === 'dir' ? toggleDir(row.path) : openFile(row.path) }}
+                  onClick={() => { row.kind === 'dir' ? foldDir(row.path) : openFile(row.path) }}
                 >
                   {row.kind === 'dir' ? (
                     <>
@@ -344,7 +345,9 @@ export function FileBrowser({
       {divider}
       <div className={css.fbMain} data-gs-part="fileView">
         {open === null ? (
-          <div className={css.empty}>{t('filesPick')}</div>
+          <div className={css.empty}>
+            {vanished === null ? t('filesPick') : t('filesVanished', { path: vanished })}
+          </div>
         ) : (
           <>
             <div className={css.fbHeader}>
@@ -371,7 +374,7 @@ export function FileBrowser({
                   aria-pressed={blameOn}
                   title={t('blameHint')}
                   className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
-                  onClick={() => { setBlameOn(on => !on) }}
+                  onClick={() => { onPlace({ ...place, blameOn: !blameOn }) }}
                 >{t('blameToggle')}</button>
               </span>
             </div>
@@ -387,12 +390,8 @@ export function FileBrowser({
                       setPending(null)
                       setEdit(DISARMED)
                       setSaveFailed(null)
-                      setExpanded(prev => {
-                        const set = new Set(prev)
-                        for (const dir of ancestorsOf(next)) set.add(dir)
-                        return set
-                      })
-                      setOpen(next)
+                      setVanished(null)
+                      onPlace(openAt(place, next))
                     }}
                   >{t('filesDiscardOpen')}</button>
                   <button

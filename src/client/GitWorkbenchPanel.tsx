@@ -64,6 +64,7 @@ import {
   type EditState, type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
+import { NO_PLACE, type FilesPlace } from './files-place.ts'
 import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { detectIndent } from './indent.ts'
@@ -575,6 +576,15 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const [gen, setGen] = useState(0)
   /** Tree expansion state, session-lifetime: survives polls, source switches and drawer close/reopen. */
   const [collapsed, setCollapsed] = useState<Set<string> | undefined>(undefined)
+  // The Files tab's place and its last file list. Held here rather than in the
+  // browser because the browser unmounts whenever another tab is looked at:
+  // without this, coming back lost the selection and every expanded folder,
+  // which is the difference between a tab you return to and one you start
+  // over in. The cached list is what makes the return render instead of blank.
+  const [filesPlace, setFilesPlace] = useState<FilesPlace>(NO_PLACE)
+  const [filesTree, setFilesTree] = useState<{ paths: readonly string[]; truncated: boolean }>(
+    () => ({ paths: [], truncated: false }),
+  )
   /** Binding + the repository's worktrees, null until the first successful fetch. */
   const [wtStatus, setWtStatus] = useState<WorktreeStatus | null>(null)
   /** Worktree the drawer reads, by absolute path. null = follow the session's own
@@ -1432,6 +1442,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
+          filesPlace={filesPlace}
+          onFilesPlace={setFilesPlace}
+          filesTree={filesTree}
+          onFilesTree={setFilesTree}
           onCollapsedChange={setCollapsed}
         />
       ) : null}
@@ -1635,10 +1649,14 @@ interface DrawerProps {
   viewKey: string
   gen: number
   collapsed: Set<string> | undefined
+  filesPlace: FilesPlace
+  onFilesPlace: (next: FilesPlace) => void
+  filesTree: { paths: readonly string[]; truncated: boolean }
+  onFilesTree: (next: { readonly paths: readonly string[]; readonly truncated: boolean }) => void
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, viewKey, gen, collapsed, onCollapsedChange }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, viewKey, gen, collapsed, onCollapsedChange, filesPlace, onFilesPlace, filesTree, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2085,6 +2103,10 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               treeStyle={paneStyle(panes.tree)}
               treeRef={treeRef}
               divider={<PaneDivider label={t('resizeTree')} onDrag={paneDrag('tree', treeRef)} />}
+              place={filesPlace}
+              onPlace={onFilesPlace}
+              cached={filesTree}
+              onTree={onFilesTree}
               fetchRepoTree={fetchRepoTree}
               fetchFileSides={fetchFileSides}
               writeChecked={writeChecked}
