@@ -4851,6 +4851,14 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // the BASE text, not the buffer: re-detecting mid-edit would let a couple of
   // freshly typed lines redefine the unit under the reader's hands.
   const indentOfBuffer = useMemo(() => detectIndent(edit.baseText), [edit.baseText])
+  // The index side as one text, which is what the editor tints against while
+  // the reader types. It is the diff's own left column joined back up — every
+  // row of a full-context diff carries a left cell unless the line is an
+  // addition, which by definition is not on that side.
+  const indexText = useMemo(() => {
+    const left = rows.filter(row => row.left !== null).map(row => row.left!.text)
+    return left.length === 0 ? '' : left.join('\n') + '\n'
+  }, [rows])
   const editSyntax = useMemo(
     () => edit.armed ? highlightFile(bufferLines, lang, shikiTheme) : [],
     [edit.armed, bufferLines, lang, shikiTheme, grammarGen],
@@ -5187,6 +5195,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
             >
               <CodeEditor
                 value={edit.buffer}
+                original={indexText}
                 onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
                 syntax={editSyntax}
                 indent={indentOfBuffer}

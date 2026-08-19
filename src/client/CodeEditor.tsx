@@ -30,6 +30,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { indentUnit } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 
+import { bufferDiff } from './cm-diff.ts'
 import { tokenRanges } from './cm-tokens.ts'
 import type { HighlightRun } from './highlight.ts'
 
@@ -69,6 +70,58 @@ function paintFor(text: string, syntax: readonly (readonly HighlightRun[])[] | u
   )
 }
 
+/** The other side's text, kept in state so the diff layer can recompute from
+ *  a transaction alone rather than from a closure over some past render. */
+const setOriginal = StateEffect.define<string>()
+const originalText = StateField.define<string>({
+  create: () => '',
+  update(held, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setOriginal)) return effect.value
+    }
+    return held
+  },
+})
+
+/**
+ * The add/delete tint, recomputed on every keystroke.
+ *
+ * Arming the editor used to take the diff colours away, because the pane's
+ * tints come from git's diff and git has not seen a keystroke. Watching the
+ * change take shape is the reason to edit inside a diff view at all, so the
+ * tint is recomputed here from the text on both sides instead.
+ *
+ * This diff is a READING AID. No git operation uses it: the block actions
+ * still send line indices against the host's own `diffSha`-stamped patch.
+ */
+const diffField = StateField.define<DecorationSet>({
+  create: state => diffDecorations(state),
+  update(deco, tr) {
+    const reset = tr.effects.some(effect => effect.is(setOriginal))
+    return tr.docChanged || reset ? diffDecorations(tr.state) : deco
+  },
+  provide: field => EditorView.decorations.from(field),
+})
+
+function diffDecorations(state: EditorState): DecorationSet {
+  const original = state.field(originalText, false) ?? ''
+  const doc = state.doc.toString()
+  const { changed, deletedBefore } = bufferDiff(original, doc)
+  const marks: { at: number; deco: Decoration }[] = []
+  const lineCount = state.doc.lines
+  for (const line of changed) {
+    if (line <= lineCount) marks.push({ at: state.doc.line(line).from, deco: CHANGED_LINE })
+  }
+  for (const line of deletedBefore) {
+    if (line <= lineCount) marks.push({ at: state.doc.line(line).from, deco: DELETED_AT })
+  }
+  marks.sort((a, b) => a.at - b.at)
+  return Decoration.set(marks.map(mark => mark.deco.range(mark.at)), true)
+}
+
+const CHANGED_LINE = Decoration.line({ class: 'cm-gwChanged' })
+const DELETED_AT = Decoration.line({ class: 'cm-gwDeleted' })
+
 /**
  * Metrics restated to match the diff columns beside this editor exactly: same
  * family, same size, same 20px rhythm, ligatures off. The pane's own CSS
@@ -93,13 +146,20 @@ const paneTheme = EditorView.theme({
     paddingRight: '8px',
   },
   '.cm-activeLine': { backgroundColor: 'var(--gs-hover)' },
+  // Same tints the diff columns use, so a line the reader just typed reads as
+  // the same kind of thing as a line git already knows about.
+  '.cm-gwChanged': { backgroundColor: 'var(--gs-add-line)' },
+  '.cm-gwDeleted': { boxShadow: 'inset 0 2px 0 0 var(--gs-del-line)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--gs-fg-dim)' },
   '.cm-cursor': { borderLeftColor: 'var(--gs-accent)' },
 })
 
-export function CodeEditor({ value, onChange, syntax, indent, ariaLabel, onSave }: {
+export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
+  /** The other side's whole text — the index side, for the unstaged layer this
+   *  editor lives on. What the live tint is computed against. */
+  original: string
   onChange: (next: string) => void
   /** `highlightFile`'s runs for this buffer; undefined while a grammar loads. */
   syntax: readonly (readonly HighlightRun[])[] | undefined
@@ -127,6 +187,8 @@ export function CodeEditor({ value, onChange, syntax, indent, ariaLabel, onSave 
       search({ top: true }),
       highlightActiveLine(),
       paintField,
+      originalText.init(() => original),
+      diffField,
       paneTheme,
       keymap.of([
         { key: 'Mod-s', preventDefault: true, run: () => { latest.current.onSave(); return true } },
@@ -151,6 +213,14 @@ export function CodeEditor({ value, onChange, syntax, indent, ariaLabel, onSave 
     // effects below; rebuilding the view on either would drop the caret, the
     // undo stack and the selection on every keystroke.
   }, [])
+
+  // The other side, when a refresh brings a new one in.
+  useEffect(() => {
+    const current = view.current
+    if (current === null) return
+    if (current.state.field(originalText, false) === original) return
+    current.dispatch({ effects: setOriginal.of(original) })
+  }, [original])
 
   // The indent unit can change when the pane moves to another file.
   useEffect(() => {
