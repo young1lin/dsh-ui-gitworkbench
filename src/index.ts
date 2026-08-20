@@ -496,14 +496,36 @@ export class GitWorkbenchService extends TypertRemoteService {
   }
 
   /**
-   * One file's diff on demand. With `commit` the diff is that commit's change to
-   * the file; without it, the working tree against HEAD (plain-identifier params;
-   * signal last).
+   * One file's diff on demand, for whichever view is asking.
+   *
+   * Three questions, because the drawer's three tabs are asking three different
+   * things about the same path and only the caller knows which:
+   *
+   *   - with `commit`, that commit's change to the file;
+   *   - with `base` and `head`, what differs between two refs — the Compare
+   *     tab, which until now had no way to ask at all and showed a file with no
+   *     detail whenever the bundled payload did not carry it;
+   *   - with neither, the working tree against HEAD.
+   *
+   * The range answer is deliberately NOT cached, for the same reason
+   * `compareRefs` is not: a ref name is a moving pointer, unlike a commit hash.
+   *
+   * Plain-identifier params, signal last.
    */
   @Remote('fileDiff')
-  async fileDiff(worktreePath: string, path: string, commit: string | undefined, signal: AbortSignal): Promise<{ readonly diff: string }> {
+  async fileDiff(worktreePath: string, path: string, commit: string | undefined, base: string | undefined, head: string | undefined, signal: AbortSignal): Promise<{ readonly diff: string }> {
     const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
     if (typeof path !== 'string' || path.length === 0) return { diff: '' }
+    if (typeof base === 'string' && base.length > 0 && typeof head === 'string' && head.length > 0) {
+      if (!isRefName(base) || !isRefName(head)) return { diff: '' }
+      const ranged = await this.git(cwd, ['diff', '--no-renames', `${base}...${head}`, '--', path], signal)
+      if (ranged.exitCode === 0) return { diff: ranged.stdout }
+      // Unrelated histories have no merge base for `A...B` to diff from; the
+      // two-tip diff still answers what differs, exactly as `compareRefs` does.
+      if (!isNoMergeBaseError(ranged.stderr)) return { diff: '' }
+      const tips = await this.git(cwd, ['diff', '--no-renames', base, head, '--', path], signal)
+      return { diff: tips.exitCode === 0 ? tips.stdout : '' }
+    }
     if (typeof commit === 'string' && commit.length > 0) {
       if (!COMMIT_HASH.test(commit)) return { diff: '' }
       const key = cacheKey(cwd, commit, path)

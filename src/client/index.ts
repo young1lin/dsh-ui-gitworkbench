@@ -73,11 +73,19 @@ export function apply(ctx: ClientContext): void {
         },
         // On-demand single-file diff. With `commit` it is that commit's change to the
         // file; without it, the working tree (tracked: git diff HEAD --; untracked: synthesized).
-        fetchFileDiff: async (worktreePath: string | undefined, path: string, commit: string | undefined, signal: AbortSignal): Promise<string> => {
+        fetchFileDiff: async (worktreePath: string | undefined, path: string, commit: string | undefined, range: { base: string; head: string } | undefined, signal: AbortSignal): Promise<string> => {
           const result = await connection.rpc.call(
             '/api',
             'gitWorkbench/fileDiff',
-            { args: { worktreePath: worktreePath ?? '', path, ...commit === undefined ? {} : { commit } } },
+            {
+              args: {
+                worktreePath: worktreePath ?? '', path,
+                // Omitted rather than sent as undefined: a JSON payload with an
+                // undefined value is not what the gateway reads back.
+                ...commit === undefined ? {} : { commit },
+                ...range === undefined ? {} : { base: range.base, head: range.head },
+              },
+            },
             signal,
           ) as { ok: true; value: { diff: string } } | { ok: false; error: { message?: string } }
           return result.ok ? result.value.diff : ''
