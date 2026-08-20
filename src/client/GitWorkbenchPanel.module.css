@@ -1790,6 +1790,37 @@
    a text surface before editing is armed; the tab row carries the arm/save
    cluster at its right end. */
 .sideArmable { cursor: text; }
+
+/* An editable buffer says so — the one thing a rendered code pane cannot say
+   by itself.
+
+   Nothing about monospaced text on a background looks like a field. In the
+   Files tab the editor is live the moment the file opens, so without a mark
+   the reader finds out whether they may type by typing — and finds out they
+   may not the same way, on a pane that silently swallows it. The rule runs
+   the full height of the editor's leading edge: dim while nothing is focused
+   (present, not loud — it sits beside code someone came to read), full accent
+   once the caret is actually inside, which doubles as "this pane has the
+   keyboard".
+
+   Driven by an attribute the component sets from the same boolean that
+   configures `EditorState.readOnly`, so the rule cannot appear on a pane that
+   would refuse the keystroke. `pointer-events: none` because the bar overlays
+   the gutter's first two pixels, and a click there must still reach the
+   view. */
+.cmHost { position: relative; }
+.cmHost[data-editable]::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--gs-accent);
+  opacity: 0.32;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+.cmHost[data-editable]:focus-within::before { opacity: 1; }
 /* The change nav takes the free space, so it and `.sideActions` after it sit
    together at the right end. Only the FIRST auto margin absorbs anything —
    the one on `.sideActions` then has nothing left to take, which is what

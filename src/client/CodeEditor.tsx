@@ -30,6 +30,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { indentUnit } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 
+import css from './GitWorkbenchPanel.module.css'
 import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
 import { bufferDiff } from './cm-diff.ts'
 import { tokenRanges } from './cm-tokens.ts'
@@ -201,6 +202,21 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
   /** A click in the blame gutter, with the 1-based line number. */
   onBlameClick?: (line: number) => void
 }): ReactNode {
+  /**
+   * Editable, and SAID to be editable, from one boolean.
+   *
+   * Nothing about rendered code looks like a field. In the Files tab this
+   * editor is live the moment a file opens — no button in between — so
+   * without a mark the reader learns they may type by typing, and learns
+   * they may NOT by typing into a pane that swallows it. The stylesheet
+   * draws a rule down the leading edge for this attribute and lights it
+   * while the caret is inside.
+   *
+   * Derived here rather than taken as a second prop so the mark and
+   * `EditorState.readOnly` below cannot disagree: a pane that shows the
+   * rule and then refuses the keystroke is worse than one with no rule.
+   */
+  const editable = readOnly !== true
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   // Read inside CodeMirror's own callbacks, which close over the render that
@@ -222,7 +238,7 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
       paintField,
       blameField,
       blameCompartment.of([]),
-      EditorState.readOnly.of(readOnly === true),
+      EditorState.readOnly.of(!editable),
       originalText.init(() => original),
       diffField,
       paneTheme,
@@ -297,5 +313,5 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
     current.dispatch({ effects: setPaint.of(paintFor(current.state.doc.toString(), syntax)) })
   }, [syntax, value])
 
-  return <div ref={host} />
+  return <div ref={host} className={css.cmHost} data-editable={editable ? '' : undefined} />
 }
