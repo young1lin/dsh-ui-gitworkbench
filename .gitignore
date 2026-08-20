@@ -62,3 +62,9 @@ scripts/verify_history_layout.py
 scripts/verify_bigdiff_perf.py
 scripts/verify_click_perf.py
 scripts/verify_unified_perf.py
+scripts/verify_perf_profile.py
+scripts/peek_drawer.py
+scripts/make_realcode_fixture.py
+scripts/mutate_token_cache.py
+scripts/verify_paint_window.py
+scripts/verify_second_open.py

@@ -37,22 +37,14 @@ import { decodeBase64, formatBytes, looksLikeImagePath, shouldAskForImage } from
 import { IMAGE_BYTE_CAP, sniffImage } from '../image-sniff.ts'
 import { blameWhen, shortHash } from './blame-view.ts'
 import { emptyQueryFilter, serializeLogQuery } from './log-filter-query.ts'
-import { highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
-import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
+import { highlightRange, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
+import type { PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
 import {
   DISARMED, applySaveOk, applySides, armEdit, armRefusal, isDirty, markConflict,
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import type { BlameAnswer, BlameLine, FileImage, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
-
-/** Count lines without allocating the split — the buffer can be megabytes and
- *  this runs on a timer while somebody is typing. */
-function countLines(text: string): number {
-  let n = 1
-  for (let i = text.indexOf(String.fromCharCode(10)); i !== -1; i = text.indexOf(String.fromCharCode(10), i + 1)) n += 1
-  return n
-}
 
 /** Most search hits rendered at once — a one-letter query must not paint a
  *  whole repository into the DOM. */
@@ -152,7 +144,7 @@ export function FileBrowser({
   const shownRef = useRef<Set<string>>(new Set())
   // A grammar loads asynchronously the first time a language is seen; this
   // counter re-renders the highlight once it lands.
-  const [, setGrammarTick] = useState(0)
+  const [grammarTick, setGrammarTick] = useState(0)
 
   const dirty = isDirty(edit)
 
@@ -339,18 +331,29 @@ export function FileBrowser({
   const showBlame = blameOn && !dirty && !showingImage
   const buffer = edit.buffer
 
-  // Highlighting lags the buffer: a repaint is a Shiki pass over the whole
-  // file, and paying that per keystroke is what makes a large file unusable.
-  // CodeMirror maps the decorations it already has through each change, so
-  // the colours ride along with the text until this catches up.
-  const painted = useIdleValue(buffer, HIGHLIGHT_IDLE_MS)
-  const tooBigToPaint = useMemo(() => countLines(painted) > HIGHLIGHT_LINE_CAP, [painted])
-  const syntax = useMemo(
-    () => tooBigToPaint
-      ? undefined
-      : highlightWholeFile(painted.split('\n'), shikiLangOf(open ?? ''), shikiThemeOf(palette)),
-    [tooBigToPaint, painted, open, palette],
-  )
+  /**
+   * What the editor paints, asked for a range at a time.
+   *
+   * It used to be a Shiki pass over the WHOLE buffer, debounced so the reader
+   * only felt it when they paused — 1,637ms on 1,837 lines of real TypeScript,
+   * and files past 2,000 lines were given no colour at all rather than made to
+   * wait for it. The editor now asks for the lines it is about to show, and
+   * `token-cache.ts` remembers them, so length stopped being the question and
+   * the cap could go.
+   *
+   * Keyed on the path: an edit inside the file invalidates the chunks it
+   * actually moved, which is what the chunk stamps are for.
+   */
+  const paint = useMemo<PaintFn | null>(() => {
+    const lang = shikiLangOf(open ?? '')
+    if (lang === undefined) return null
+    const theme = shikiThemeOf(palette)
+    const key = 'files:' + (open ?? '')
+    return (lines, from, to) => highlightRange(key, lines, lang, theme, from, to)
+    // `grammarTick` moves when a lazy grammar finishes loading. It changes
+    // nothing this function computes; a NEW identity is the point, because that
+    // is what tells the editor to repaint lines it had to render plain.
+  }, [open, palette, grammarTick])
   const indent = useMemo(() => detectIndent(edit.baseText), [edit.baseText])
 
   /** Open a file, revealing it in the tree — and asking first if the buffer
@@ -565,7 +568,6 @@ export function FileBrowser({
               <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'fileReadOnlyEncoding' : 'fileReadOnlyCrlf')}</div>
             ) : null}
             {saveFailed !== null ? <div className={css.sideNotice}>{saveFailed}</div> : null}
-            {tooBigToPaint ? <div className={css.sideNotice}>{t('paintTooLarge')}</div> : null}
             {blameOn && dirty ? <div className={css.sideNotice}>{t('blameWhileEditing')}</div> : null}
             {showBlame && (blameFailed || (blame !== null && blame.error !== undefined))
               ? <div className={css.sideNotice}>{t('blameFailed')}</div> : null}
@@ -638,7 +640,7 @@ export function FileBrowser({
                     value={edit.buffer}
                     original={edit.baseText}
                     onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
-                    syntax={syntax}
+                    paint={paint}
                     indent={indent}
                     ariaLabel={open}
                     onSave={() => { void save() }}

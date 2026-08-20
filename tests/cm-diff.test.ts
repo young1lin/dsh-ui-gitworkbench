@@ -91,4 +91,22 @@ describe('bufferDiff', () => {
     expect(out.changed).toEqual([...out.changed].sort((x, y) => x - y))
     expect(new Set(out.changed).size).toBe(out.changed.length)
   })
+
+  it('gives up rather than spending seconds on two unrelated files', () => {
+    // The editor is handed such a pair for one render when the reader opens
+    // another file: the new buffer arrives before the side it is compared
+    // against. Unbounded, a real switch between two source files was profiled
+    // at NINE SECONDS inside the diff. The tint is a reading aid and is allowed
+    // to be approximate; it is not allowed to be slow.
+    const one = Array.from({ length: 2500 }, (_, i) => `  const alpha${i} = compute(one, two, ${i})`).join('\n')
+    const other = Array.from({ length: 2500 }, (_, i) => `    return handler${i % 7}.dispatch({ id: ${i}, kind: 'x' })`).join('\n')
+    const started = performance.now()
+    const out = bufferDiff(one, other)
+    const spent = performance.now() - started
+    // Two seconds is not a target - it is far above what the bound produces
+    // and far below what an unbounded diff of this pair costs, so it fails for
+    // one reason only.
+    expect(spent).toBeLessThan(2000)
+    expect(out.changed.length).toBeGreaterThan(0)
+  })
 })

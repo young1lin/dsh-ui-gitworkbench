@@ -52,28 +52,48 @@ function paints(run: HighlightRun): boolean {
  */
 export function tokenRanges(
   lines: readonly string[],
-  runs: readonly (readonly HighlightRun[])[] | undefined,
+  runs: readonly (readonly HighlightRun[] | undefined)[] | undefined,
 ): TokenRange[] {
   if (runs === undefined) return []
   const out: TokenRange[] = []
   let lineStart = 0
   lines.forEach((line, index) => {
-    const lineRuns = runs[index]
-    if (lineRuns !== undefined) {
-      let at = 0
-      for (const run of lineRuns) {
-        const from = lineStart + at
-        at += run.text.length
-        const to = Math.min(lineStart + at, lineStart + line.length)
-        if (to > from && paints(run)) {
-          out.push({ from, to, color: run.color, italic: run.italic })
-        }
-        if (at >= line.length) break
-      }
-    }
+    for (const range of lineTokenRanges(line, lineStart, runs[index])) out.push(range)
     // +1 for the LF that `split('\n')` removed. The last line has none, but
     // nothing reads past it either.
     lineStart += line.length + 1
   })
+  return out
+}
+
+/**
+ * One line's painted ranges, in absolute offsets.
+ *
+ * The unit the viewport painter works in: it knows each visible line's own
+ * offset from CodeMirror and never wants the arithmetic for the lines above it.
+ * {@link tokenRanges} is this function walked down a whole document.
+ *
+ * @param text - the line, as the document holds it.
+ * @param start - the line's absolute offset in the document.
+ * @param runs - that line's highlight runs, or undefined for "not painted",
+ *               which yields no ranges rather than throwing.
+ */
+export function lineTokenRanges(
+  text: string,
+  start: number,
+  runs: readonly HighlightRun[] | undefined,
+): TokenRange[] {
+  if (runs === undefined) return []
+  const out: TokenRange[] = []
+  let at = 0
+  for (const run of runs) {
+    const from = start + at
+    at += run.text.length
+    const to = Math.min(start + at, start + text.length)
+    if (to > from && paints(run)) {
+      out.push({ from, to, color: run.color, italic: run.italic })
+    }
+    if (at >= text.length) break
+  }
   return out
 }

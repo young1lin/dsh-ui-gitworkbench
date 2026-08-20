@@ -26,7 +26,7 @@ export type WorkbenchKey =
   // the Files tab: browse the repository, read a file, blame it, edit it
   | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
-  | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory' | 'paintTooLarge'
+  | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory'
   | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
   | 'prevChange' | 'nextChange' | 'prevChangeHint' | 'nextChangeHint' | 'changeCount'
   | 'sourceLabel' | 'workingTree'
@@ -102,7 +102,6 @@ export const zh: Record<WorkbenchKey, string> = {
   fileReadOnlyCrlf: '这个文件的行尾是 CRLF，只能查看不能编辑（编辑器会把行尾统一成 LF，保存时整份文件都会被改写）。',
   fileReadOnlyEncoding: '这个文件不是 UTF-8 编码，只能查看不能编辑：页面上的文字是一次有损解码，保存回去会改写每一个非 ASCII 字节。',
   blameLine: '第 {line} 行',
-  paintTooLarge: '文件较长，已关闭语法上色（整文件上色每次要一秒以上，每次停手都卡一下比纯文本更难用）。编辑、保存、追溯不受影响。',
   blameInHistory: '他在本文件的提交',
   blamePick: '点左边的名字，看那一行是哪个提交改的',
   blameWhileEditing: '正在编辑，追溯已暂时收起：改过的行号已经对不上它背后的提交。保存或放弃后会重新出现。',
@@ -340,7 +339,6 @@ export const en: Record<WorkbenchKey, string> = {
   fileReadOnlyCrlf: 'This file uses CRLF line endings, so it opens read-only (the editor normalises them to LF, and a save would rewrite every line).',
   fileReadOnlyEncoding: 'This file is not UTF-8, so it opens read-only: the text shown is a lossy decode, and saving it back would rewrite every non-ASCII byte.',
   blameLine: 'Line {line}',
-  paintTooLarge: 'This file is long, so syntax colouring is off (a full repaint costs over a second, and a freeze on every pause is worse than plain text). Editing, saving and blame are unaffected.',
   blameInHistory: 'Their commits on this file',
   blamePick: 'Click a name to see which commit changed that line',
   blameWhileEditing: 'Blame is hidden while you type: edited line numbers no longer match the commits behind them. It returns once you save or revert.',

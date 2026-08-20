@@ -30,24 +30,3 @@ export function useIdleValue<T>(value: T, ms: number): T {
   }, [value, ms, held])
   return held
 }
-
-/** How long typing must pause before the highlight is recomputed. Long enough
- *  that a burst of typing costs one repaint, short enough that the pause after
- *  a word is already over by the time the eye gets back to the line. */
-export const HIGHLIGHT_IDLE_MS = 180
-
-/**
- * Lines past which a file is shown uncoloured.
- *
- * Shiki costs about 0.3ms a line, and that is the whole-file pass alone — the
- * floor, not an implementation detail we can tune away. Measured: 155ms at 500
- * lines, 620ms at 2000, 1537ms at 5000. Debouncing keeps a burst of typing to
- * one repaint, but it cannot make one repaint cheap, and a 1.5-second freeze
- * every time the reader pauses is worse than plain text.
- *
- * So above this the file renders without colour and says so. The honest fix is
- * to highlight only the viewport, which needs the tokens to be computed where
- * the scroll position is known rather than in the pane; this cap is what holds
- * until then.
- */
-export const HIGHLIGHT_LINE_CAP = 2_000

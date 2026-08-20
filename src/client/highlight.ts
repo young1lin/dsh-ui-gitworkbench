@@ -23,6 +23,7 @@ import solarizedDark from 'shiki/themes/solarized-dark.mjs'
 import solarizedLight from 'shiki/themes/solarized-light.mjs'
 import nord from 'shiki/themes/nord.mjs'
 import synthwave84 from 'shiki/themes/synthwave-84.mjs'
+import { ChunkedTokens, LineTokens, docKey, type ChunkTokenizer } from './token-cache.ts'
 import type { HighlighterCore } from 'shiki/core'
 import type { Row } from './diff-model.ts'
 
@@ -116,6 +117,25 @@ function highlighter(): HighlighterCore {
   return singleton
 }
 
+/**
+ * Everything this module has already tokenized.
+ *
+ * Both are bounded (see `token-cache.ts`): the drawer can be left open on a
+ * repository all day, and what these hold is capped in lines, not in files
+ * visited. Keys carry the language and the theme, so a palette change does not
+ * serve the last theme's colours - it just misses.
+ */
+const chunks = new ChunkedTokens()
+const solo = new LineTokens()
+
+/** Drop every cached token. Nothing in the drawer needs this today - the keys
+ *  already separate languages and themes - but a cache with no way to empty it
+ *  is a cache you cannot reason about. */
+export function forgetTokens(): void {
+  chunks.clear()
+  solo.clear()
+}
+
 const requested = new Set<string>()
 const listeners = new Set<() => void>()
 let loadCount = 0
@@ -170,15 +190,17 @@ export function shikiThemeOf(palette: string): string {
 }
 
 /**
- * Tokenize a whole file into per-line runs. Undefined until a lazy grammar
- * finishes loading (caller re-renders via {@link subscribeGrammarLoaded}).
+ * Tokenize a whole file into per-line runs, the way a DIFF needs it.
  *
- * Diff reconstructions are not real files: a hunk often starts inside
- * `export default {` or an unclosed `/*`, and Shiki then paints the following
- * added statements as object keys or comments — keywords go missing. Comment
- * lines keep the file-level pass (JSDoc ` * `); every other line is re-lexed
- * on its own so `async` / `function` / `const` colour as they would at the
- * top level.
+ * A diff reconstruction is not a real file: a hunk often starts inside
+ * `export default {` or an unclosed block comment, and Shiki then paints the
+ * following added statements as object keys or comment text - keywords go
+ * missing. Comment lines keep the file-level pass (JSDoc continuation lines);
+ * every other line is re-lexed on its own so `async` / `function` / `const`
+ * colour as they would at the top level.
+ *
+ * Asks {@link highlightWindow} for the whole range, so the two-pass rule and
+ * the caching have exactly one implementation.
  * @param lines - source lines, no leading +/-.
  * @param lang - from {@link shikiLangOf}.
  * @param theme - from {@link shikiThemeOf}.
@@ -188,64 +210,60 @@ export function highlightFile(
   lang: string | undefined,
   theme = 'github-dark-default',
 ): HighlightRun[][] | undefined {
-  const fileTok = tokenizeLines(lines, lang, theme)
-  if (fileTok === undefined) return undefined
-  return lines.map((line, i) => {
-    const together = fileTok[i] ?? [{ text: line, color: undefined }]
-    if (looksLikeCommentLine(line)) return together
-    const solo = tokenizeLines([line], lang, theme)?.[0]
-    return solo !== undefined && solo.length > 0 ? solo : together
-  })
+  const windowed = highlightWindow(lines, lang, theme, 0, lines.length)
+  if (windowed === undefined) return undefined
+  return lines.map((line, i) => windowed[i] ?? [{ text: line, color: undefined }])
 }
 
 /**
- * Tokenize a file that really is one — the whole of it, in one pass.
+ * File-quality runs for a range of a file that really IS one.
  *
- * {@link highlightFile} re-lexes every non-comment line ON ITS OWN because a
- * diff reconstruction is not a real file. That costs one Shiki call per line:
- * measured on 1000 lines, the whole-file pass is 42ms and the thousand solo
- * passes on top of it are another 644ms. It also throws away the only pass
- * that knows about multi-line strings, block comments and template literals.
+ * The editor's buffer and the file browser's text are whole files, so the
+ * per-line re-lex {@link highlightFile} performs is both wrong for them and
+ * expensive; the file pass is the whole answer, and it is the only pass that
+ * knows about multi-line strings, block comments and template literals.
  *
- * When the lines ARE a complete file — the file browser's buffer, the diff
- * pane's editor buffer — none of that applies: the file pass is both cheaper
- * and more accurate, so it is the whole answer.
+ * Only the range is tokenized, and only once: this is what a viewport asks for
+ * as the reader scrolls. Measured on 1,837 lines of real TypeScript, the whole
+ * file in one pass cost 1,637ms - the freeze the Files tab took on every click,
+ * and the reason files past 2,000 lines were left uncoloured altogether rather
+ * than made to wait for it.
  *
+ * @param key - identity of the document. Must change when the text does; a
+ *   path is usually right, because the chunk stamps catch edits within it.
  * @param lines - the file's lines, complete and in order.
  * @param lang - from {@link shikiLangOf}.
  * @param theme - from {@link shikiThemeOf}.
+ * @param from - first line wanted.
+ * @param to - one past the last line wanted.
+ * @returns an array indexed by line, filled only inside the range, or
+ *   undefined when no grammar applies.
  */
-export function highlightWholeFile(
+export function highlightRange(
+  key: string,
   lines: readonly string[],
   lang: string | undefined,
-  theme = 'github-dark-default',
-): HighlightRun[][] | undefined {
-  return tokenizeLines(lines, lang, theme)
+  theme: string,
+  from: number,
+  to: number,
+): (HighlightRun[] | undefined)[] | undefined {
+  return chunks.runs(key + '|' + (lang ?? '') + '|' + theme, lines, from, to, chunkTokenizer(lang, theme))
 }
-
-/**
- * How many lines above the window are tokenized for context.
- *
- * Shiki lexes a string from its start, so a slice beginning inside a block
- * comment or a template literal would colour as if it were code. Reading a
- * lead-in restores that state for everything but a construct longer than this,
- * at a fraction of the cost of the file: at 4,000 lines the whole-file pass was
- * the entire remaining freeze once the DOM was bounded.
- */
-export const HIGHLIGHT_LEAD_IN = 240
 
 /**
  * Runs for the rows in a window, and nothing outside it.
  *
- * This is the pane's whole highlighting cost now, and it is proportional to the
- * viewport rather than to the file. Measured on a 4,000-line file with a
- * one-line change: whole-file passes plus per-line re-lexing froze the pane for
- * 1.4 seconds; the same file behind an extension no grammar claims cost 22ms of
- * script, which is what proved the entire remainder was Shiki.
+ * This is the pane's whole highlighting cost, and it is proportional to the
+ * viewport rather than to the file - and then only the FIRST time those lines
+ * are read. Both passes go through `token-cache.ts`: the file pass by chunk,
+ * continuing from the grammar state of the chunk before it, and the per-line
+ * re-lex by the line's own text. Scrolling back over a file costs nothing;
+ * measured cold, ten screenfuls of real TypeScript cost 3,021ms before this and
+ * are one tokenizing pass per new line after it.
  *
- * Both passes happen inside the window: the slice pass, which knows about
- * multi-line constructs within its reach, and the per-line re-lex that makes a
- * diff reconstruction colour as top-level code.
+ * Both passes are still here, because a diff reconstruction needs both: the
+ * file pass, which knows about multi-line constructs, and the per-line re-lex
+ * that makes a hunk colour as top-level code.
  *
  * @param lines - source lines, no leading +/-.
  * @param lang - from {@link shikiLangOf}.
@@ -265,18 +283,38 @@ export function highlightWindow(
   const first = Math.max(0, Math.trunc(from))
   const last = Math.min(lines.length, Math.trunc(to))
   if (last <= first) return undefined
-  const lead = Math.max(0, first - HIGHLIGHT_LEAD_IN)
-  const sliceTok = tokenizeLines(lines.slice(lead, last), lang, theme)
-  if (sliceTok === undefined) return undefined
+  // Keyed on the ARRAY, which the panes memoise per file - see `docKey`. A
+  // caller that rebuilds an equal array every render gets no caching from it.
+  const fileTok = highlightRange(docKey(lines), lines, lang, theme, first, last)
+  if (fileTok === undefined) return undefined
   const out: (HighlightRun[] | undefined)[] = new Array<HighlightRun[] | undefined>(lines.length)
   for (let i = first; i < last; i += 1) {
     const line = lines[i]!
-    const together = sliceTok[i - lead] ?? [{ text: line, color: undefined }]
+    const together = fileTok[i] ?? [{ text: line, color: undefined }]
     if (looksLikeCommentLine(line)) { out[i] = together; continue }
-    const solo = tokenizeLines([line], lang, theme)?.[0]
-    out[i] = solo !== undefined && solo.length > 0 ? solo : together
+    const alone = soloRuns(line, lang, theme)
+    out[i] = alone !== undefined && alone.length > 0 ? alone : together
   }
   return out
+}
+
+/** One line lexed on its own, from the cache when it has been seen before -
+ *  which, scrolling back over a file, it usually has. */
+function soloRuns(line: string, lang: string | undefined, theme: string): HighlightRun[] | undefined {
+  if (lang === undefined) return undefined
+  return solo.get(lang + '|' + theme + '|' + line, () => tokenizeLines([line], lang, theme)?.[0])
+}
+
+/** Bind the engine for {@link ChunkedTokens}: tokenize a chunk continuing from
+ *  the grammar state the chunk before it ended in, which Shiki hands back with
+ *  the tokens and which makes the continuation exact rather than guessed. */
+function chunkTokenizer(lang: string | undefined, theme: string): ChunkTokenizer {
+  return (text, state) => {
+    if (lang === undefined) return undefined
+    if (!ensureGrammar(lang)) return undefined
+    const got = highlighter().codeToTokens(text, { lang, theme, grammarState: state as never })
+    return { runs: runsOf(got.tokens, text.split('\n')), state: got.grammarState }
+  }
 }
 
 function looksLikeCommentLine(text: string): boolean {
@@ -292,6 +330,14 @@ function tokenizeLines(
   if (lang === undefined || lines.length === 0) return undefined
   if (!ensureGrammar(lang)) return undefined
   const { tokens } = highlighter().codeToTokens(lines.join('\n'), { lang, theme })
+  return runsOf(tokens, lines)
+}
+
+/** Shiki's tokens as runs, one entry per line of the text that produced them. */
+function runsOf(
+  tokens: ReadonlyArray<ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>>,
+  lines: readonly string[],
+): HighlightRun[][] {
   const last = tokens[tokens.length - 1]
   const rows = tokens.length > 1 && last !== undefined && last.length === 0
     ? tokens.slice(0, -1)

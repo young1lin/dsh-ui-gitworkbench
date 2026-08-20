@@ -9,10 +9,11 @@
  * anyone who has used an editor, and the pane was asking people to edit.
  *
  * CodeMirror is here for the EDITING only. Highlighting still comes from
- * shiki, through {@link tokenRanges}: the diff columns beside this editor are
+ * shiki, through {@link PaintFn}: the diff columns beside this editor are
  * painted by shiki, and a second grammar engine would cost another megabyte of
- * bundle to render the same file in slightly different colours. So the tokens
- * the pane already computed are handed over as decorations.
+ * bundle to render the same file in slightly different colours. The pane hands
+ * over a function rather than a file of tokens, and this view calls it for the
+ * lines it is about to show - see {@link PaintLayer}.
  *
  * The document is CONTROLLED by the pane, not owned here: `value` is the
  * pane's buffer, and every change is reported back through `onChange`. The
@@ -24,8 +25,8 @@
  */
 
 import { useEffect, useRef, type ReactNode } from 'react'
-import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers, highlightActiveLine, Decoration, type DecorationSet } from '@codemirror/view'
+import { Compartment, EditorState, Facet, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
@@ -33,28 +34,46 @@ import { search, searchKeymap } from '@codemirror/search'
 import css from './GitWorkbenchPanel.module.css'
 import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
 import { bufferDiff } from './cm-diff.ts'
-import { tokenRanges } from './cm-tokens.ts'
+import { lineTokenRanges } from './cm-tokens.ts'
 import type { HighlightRun } from './highlight.ts'
 import type { BlameLine } from './GitWorkbenchPanel.tsx'
 
-/** Carries a fresh set of shiki-derived decorations into the view. */
-const setPaint = StateEffect.define<DecorationSet>()
+/**
+ * Tokens for the lines in a range of the buffer.
+ *
+ * The editor asks for what it is about to show, never for the file. Painting a
+ * whole buffer cost 1,637ms on 1,837 lines of real TypeScript — a freeze on
+ * every click, and the reason files past 2,000 lines used to be shown with no
+ * colour at all rather than made to wait for it.
+ *
+ * @param lines - the buffer's lines, complete and in order.
+ * @param from - first line wanted, 0-based.
+ * @param to - one past the last line wanted.
+ * @returns runs indexed by line, filled inside the range; undefined for "no
+ *          grammar", which renders as plain text.
+ */
+export type PaintFn = (
+  lines: readonly string[],
+  from: number,
+  to: number,
+) => readonly (readonly HighlightRun[] | undefined)[] | undefined
+
+/** Where the view reads its painter from. Reconfigured — through
+ *  {@link paintCompartment} — when the file, the language or the theme moves. */
+const paintFacet = Facet.define<PaintFn | null, PaintFn | null>({
+  combine: values => values.length > 0 ? values[0]! : null,
+})
+const paintCompartment = new Compartment()
 
 /**
- * The decoration layer. It maps through document changes so the colours stay
- * on their text between repaints — without that, a keystroke would smear every
- * token after the caret until the next highlight pass landed.
+ * How long after the last keystroke the editor recomputes what it paints.
+ *
+ * Both layers below are proportional to what they are asked for, and typing
+ * asks again on every character. The decorations map through the change in the
+ * meantime, so the colours and the tint ride along with the text and only the
+ * recomputation waits.
  */
-const paintField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(paint, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setPaint)) return effect.value
-    }
-    return tr.docChanged ? paint.map(tr.changes) : paint
-  },
-  provide: field => EditorView.decorations.from(field),
-})
+const REPAINT_IDLE_MS = 180
 
 /** One span's inline style, from the shiki run that produced it. */
 function styleFor(color: string | undefined, italic: boolean | undefined): string {
@@ -62,16 +81,109 @@ function styleFor(color: string | undefined, italic: boolean | undefined): strin
   return italic === true ? paint + 'font-style:italic;' : paint
 }
 
-/** Build the decoration set for one buffer's worth of shiki runs. */
-function paintFor(text: string, syntax: readonly (readonly HighlightRun[])[] | undefined): DecorationSet {
-  const ranges = tokenRanges(text.split('\n'), syntax)
-  return Decoration.set(
-    ranges.map(range => Decoration
-      .mark({ attributes: { style: styleFor(range.color, range.italic) } })
-      .range(range.from, range.to)),
-    true,
-  )
+/**
+ * A decoration layer that is recomputed when the view moves and DEFERRED when
+ * the reader types.
+ *
+ * The two layers below — syntax colour and the live diff tint — differ only in
+ * what they build. Both must be bounded by the viewport, both must survive a
+ * keystroke without being rebuilt, and both must not leave a timer behind when
+ * the view goes away.
+ */
+abstract class IdleLayer implements PluginValue {
+  decorations: DecorationSet = Decoration.none
+  private timer: ReturnType<typeof setTimeout> | undefined
+
+  constructor(protected readonly view: EditorView) {
+    this.decorations = this.build(view)
+  }
+
+  update(update: ViewUpdate): void {
+    // Carry what is already painted across the edit, whatever happens next:
+    // without the map, every token after the caret would smear until the
+    // rebuild landed.
+    if (update.docChanged) this.decorations = this.decorations.map(update.changes)
+    const why = this.reason(update)
+    if (why === 'now') this.decorations = this.build(update.view)
+    else if (why === 'later') this.defer()
+  }
+
+  /** Clears the pending rebuild. A view is destroyed on every file switch, and
+   *  a timer that outlives its view is a leak that also paints a dead editor. */
+  destroy(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer)
+    this.timer = undefined
+  }
+
+  private defer(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer)
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      this.decorations = this.build(this.view)
+      // An empty transaction is how a plugin that computed something outside
+      // an update cycle asks the view to read it.
+      this.view.dispatch({})
+    }, REPAINT_IDLE_MS)
+  }
+
+  /**
+   * Whether this update calls for a rebuild, and how soon.
+   *
+   * `now` is for a change the reader would see as missing paint — scrolling
+   * into lines nothing has coloured yet. `later` is for anything that will
+   * settle: a keystroke, or a file switch, which reaches the view as two
+   * transactions and is INCONSISTENT between them. Rebuilding on the first of
+   * that pair is what made opening a second file cost nine seconds.
+   */
+  protected abstract reason(update: ViewUpdate): 'now' | 'later' | 'no'
+
+  protected abstract build(view: EditorView): DecorationSet
 }
+
+/** The lines the view is about to show, 0-based and half-open. */
+function viewportLines(view: EditorView): { from: number; to: number } {
+  const doc = view.state.doc
+  return {
+    from: doc.lineAt(view.viewport.from).number - 1,
+    to: doc.lineAt(view.viewport.to).number,
+  }
+}
+
+/** Syntax colour for the viewport, from whatever painter the pane configured. */
+class PaintLayer extends IdleLayer {
+  protected build(view: EditorView): DecorationSet {
+    const paint = view.state.facet(paintFacet)
+    if (paint === null) return Decoration.none
+    const doc = view.state.doc
+    const lines = doc.toString().split('\n')
+    const { from, to } = viewportLines(view)
+    const runs = paint(lines, from, to)
+    if (runs === undefined) return Decoration.none
+    const marks: Array<ReturnType<typeof Decoration.mark>> = []
+    const at: number[] = []
+    for (let line = from; line < to && line < lines.length; line += 1) {
+      // `doc.line` is 1-based, and its `from` is the absolute offset the
+      // decorations need.
+      const start = doc.line(line + 1).from
+      for (const range of lineTokenRanges(lines[line] ?? '', start, runs[line])) {
+        marks.push(Decoration.mark({ attributes: { style: styleFor(range.color, range.italic) } }))
+        at.push(range.from, range.to)
+      }
+    }
+    return Decoration.set(marks.map((mark, i) => mark.range(at[i * 2]!, at[i * 2 + 1]!)), true)
+  }
+
+  protected reason(update: ViewUpdate): 'now' | 'later' | 'no' {
+    // Scrolling must paint at once: the lines are already on screen.
+    if (update.viewportChanged) return 'now'
+    // A new painter — another file, another theme, a grammar that finished
+    // loading. The buffer it describes may not have arrived yet, so it waits.
+    if (update.state.facet(paintFacet) !== update.startState.facet(paintFacet)) return 'later'
+    return update.docChanged ? 'later' : 'no'
+  }
+}
+
+const painter = ViewPlugin.fromClass(PaintLayer, { decorations: layer => layer.decorations })
 
 /** The other side's text, kept in state so the diff layer can recompute from
  *  a transaction alone rather than from a closure over some past render. */
@@ -87,24 +199,35 @@ const originalText = StateField.define<string>({
 })
 
 /**
- * The add/delete tint, recomputed on every keystroke.
+ * The add/delete tint, recomputed once the typing stops.
  *
  * Arming the editor used to take the diff colours away, because the pane's
  * tints come from git's diff and git has not seen a keystroke. Watching the
  * change take shape is the reason to edit inside a diff view at all, so the
  * tint is recomputed here from the text on both sides instead.
  *
+ * It is a whole-document diff, and it used to run on every transaction: 55ms
+ * per keystroke at 800 lines, 709ms at 4,000. So it inherits {@link IdleLayer}
+ * — the tint maps through the edit and catches up when the reader pauses.
+ *
  * This diff is a READING AID. No git operation uses it: the block actions
  * still send line indices against the host's own `diffSha`-stamped patch.
  */
-const diffField = StateField.define<DecorationSet>({
-  create: state => diffDecorations(state),
-  update(deco, tr) {
-    const reset = tr.effects.some(effect => effect.is(setOriginal))
-    return tr.docChanged || reset ? diffDecorations(tr.state) : deco
-  },
-  provide: field => EditorView.decorations.from(field),
-})
+class TintLayer extends IdleLayer {
+  protected build(view: EditorView): DecorationSet {
+    return diffDecorations(view.state)
+  }
+
+  protected reason(update: ViewUpdate): 'now' | 'later' | 'no' {
+    // The tint is line decorations over the whole document, so scrolling needs
+    // nothing from it. What it must never do is run between the two
+    // transactions a file switch arrives in.
+    const sideMoved = update.transactions.some(tr => tr.effects.some(effect => effect.is(setOriginal)))
+    return update.docChanged || sideMoved ? 'later' : 'no'
+  }
+}
+
+const tinter = ViewPlugin.fromClass(TintLayer, { decorations: layer => layer.decorations })
 
 function diffDecorations(state: EditorState): DecorationSet {
   const original = state.field(originalText, false) ?? ''
@@ -174,15 +297,16 @@ const paneTheme = EditorView.theme({
   },
 })
 
-export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {
+export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
    *  editor lives on. What the live tint is computed against. */
   original: string
   onChange: (next: string) => void
-  /** `highlightFile`'s runs for this buffer; undefined while a grammar loads. */
-  syntax: readonly (readonly HighlightRun[])[] | undefined
+  /** Tokens for a range of the buffer; see {@link PaintFn}. Null paints
+   *  nothing, which is what a file with no grammar gets. */
+  paint: PaintFn | null
   /** One indent level, from `detectIndent` — what Tab inserts. */
   indent: string
   ariaLabel: string
@@ -235,12 +359,13 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
       history(),
       search({ top: true }),
       highlightActiveLine(),
-      paintField,
+      paintCompartment.of(paintFacet.of(paint)),
+      painter,
       blameField,
       blameCompartment.of([]),
       EditorState.readOnly.of(!editable),
       originalText.init(() => original),
-      diffField,
+      tinter,
       paneTheme,
       keymap.of([
         { key: 'Mod-s', preventDefault: true, run: () => { latest.current.onSave(); return true } },
@@ -305,13 +430,14 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
     current.dispatch({ changes: { from: 0, to: held.length, insert: value } })
   }, [value])
 
-  // Repaint. Depends on `value` as well as `syntax` so it runs after the write
-  // above, against the text the view now actually holds.
+  // A new painter — another file, another theme, a grammar that finished
+  // loading. The plugin repaints itself from the viewport; all this has to do
+  // is put the new function where it reads it from.
   useEffect(() => {
     const current = view.current
     if (current === null) return
-    current.dispatch({ effects: setPaint.of(paintFor(current.state.doc.toString(), syntax)) })
-  }, [syntax, value])
+    current.dispatch({ effects: paintCompartment.reconfigure(paintFacet.of(paint)) })
+  }, [paint])
 
   return <div ref={host} className={css.cmHost} data-editable={editable ? '' : undefined} />
 }

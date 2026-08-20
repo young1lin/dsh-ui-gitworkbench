@@ -70,10 +70,10 @@ import {
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
 import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
-import { HIGHLIGHT_IDLE_MS, HIGHLIGHT_LINE_CAP, useIdleValue } from './idle-value.ts'
+import { useIdleValue } from './idle-value.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { detectIndent } from './indent.ts'
-import { CodeEditor } from './CodeEditor.tsx'
+import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, emptyQueryFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -89,7 +89,7 @@ import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
-import { grammarLoadCount, highlightFile, highlightForRowsWindow, highlightWholeFile, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
@@ -5393,16 +5393,18 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
     const left = rows.filter(row => row.left !== null).map(row => row.left!.text)
     return left.length === 0 ? '' : left.join('\n') + '\n'
   }, [rows])
-  // The editor's buffer is a whole file, so it takes the whole-file pass —
-  // and it lags the typing, for the same reason the browser's does: a Shiki
-  // pass per keystroke is what makes a large file unusable to edit.
-  const paintedLines = useIdleValue(bufferLines, HIGHLIGHT_IDLE_MS)
-  const editSyntax = useMemo(
-    () => edit.armed && paintedLines.length <= HIGHLIGHT_LINE_CAP
-      ? highlightWholeFile(paintedLines, lang, shikiTheme)
-      : [],
-    [edit.armed, paintedLines, lang, shikiTheme, grammarGen],
-  )
+  // The editor's buffer is a whole file, so it takes the file pass rather than
+  // the diff's per-line re-lex — but only over the lines it is showing. The
+  // editor asks for a range as it scrolls, and `token-cache.ts` remembers what
+  // came back; a pass over the whole buffer was 1,637ms at 1,837 lines, paid
+  // again every time the reader stopped typing.
+  const editPaint = useMemo<PaintFn | null>(() => {
+    if (lang === undefined) return null
+    const key = 'buffer:' + statsPath + ':' + path
+    return (lines, from, to) => highlightRange(key, lines, lang, shikiTheme, from, to)
+    // `grammarGen` changes nothing computed here; the new identity is what
+    // makes the editor repaint once a lazy grammar has landed.
+  }, [lang, shikiTheme, statsPath, path, grammarGen])
   // The left column while editing renders dense — one row per INDEX line, no
   // holes — because the right column is now the dense buffer; a hole-aligned
   // left beside a dense right is the alignment the diff view owes, not the
@@ -5835,7 +5837,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
               value={edit.buffer}
               original={indexText}
               onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
-              syntax={editSyntax}
+              paint={editPaint}
               indent={indentOfBuffer}
               ariaLabel={path}
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
