@@ -147,3 +147,52 @@ export function stepToBlock(
   }
   return behind ?? ordered[ordered.length - 1] ?? null
 }
+
+/** One unified-diff row, as far as grouping is concerned. */
+export type RowKind = 'add' | 'del' | 'context' | 'hunk'
+
+/**
+ * Group a unified diff's rows into change blocks.
+ *
+ * A block is a maximal run of added and deleted rows. A replacement arrives
+ * from git as deletions followed by additions with nothing between them, and
+ * that is ONE change to a reader — sending them to the `-` lines and then
+ * again to the `+` lines directly below would be counting the same edit twice.
+ * Context and hunk headers both end a run: a hunk header means git skipped
+ * lines, so what follows is somewhere else in the file.
+ *
+ * The side-by-side pane does not need this — its row model already carries a
+ * block id per row, because the blocks there are also what the stage and
+ * roll-back buttons act on. The unified view has no such model, so the runs
+ * are read off the kinds.
+ *
+ * @param kinds - every row's kind, in document order.
+ * @returns a block id per row, aligned with the input; -1 for a row that is
+ *   not part of any change.
+ */
+export function unifiedBlocks(kinds: readonly RowKind[]): readonly number[] {
+  const ids: number[] = []
+  let block = -1
+  let inRun = false
+  for (const kind of kinds) {
+    const changed = kind === 'add' || kind === 'del'
+    if (!changed) {
+      inRun = false
+      ids.push(-1)
+      continue
+    }
+    if (!inRun) {
+      block += 1
+      inRun = true
+    }
+    ids.push(block)
+  }
+  return ids
+}
+
+/** How many change blocks {@link unifiedBlocks} found. */
+export function countBlocks(ids: readonly number[]): number {
+  let top = -1
+  for (const id of ids) if (id > top) top = id
+  return top + 1
+}

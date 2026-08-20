@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  NAV_PEEK_PX, anchorFor, anchorFrom, scrollTopFor, stepToBlock,
-  type BlockTop, type NavMemory,
+  NAV_PEEK_PX, anchorFor, anchorFrom, countBlocks, scrollTopFor, stepToBlock, unifiedBlocks,
+  type BlockTop, type NavMemory, type RowKind,
 } from '../src/client/diff-nav.ts'
 
 /** Three changes, well apart, the way they sit in a long file. */
@@ -162,5 +162,50 @@ describe('anchorFrom, and the end of the file', () => {
     // the resulting scroll, so the two rules never disagree off the floor.
     const held: NavMemory = { block: 1, scrollTop: scrollTopFor(1848) }
     expect(anchorFrom(LATE, held.scrollTop, held)).toBe(anchorFor(held.scrollTop))
+  })
+})
+
+describe('unifiedBlocks', () => {
+  const ids = (kinds: readonly RowKind[]): readonly number[] => unifiedBlocks(kinds)
+
+  it('counts a replacement as one change, not two', () => {
+    // THE case this function exists for. git writes a replaced line as a
+    // deletion immediately followed by an addition; to a reader that is one
+    // edit, and sending them to the minus lines and then again to the plus
+    // lines directly below would be the button appearing to stutter.
+    expect(ids(['context', 'del', 'add', 'context'])).toEqual([-1, 0, 0, -1])
+  })
+
+  it('separates changes that have context between them', () => {
+    expect(ids(['add', 'context', 'add'])).toEqual([0, -1, 1])
+  })
+
+  it('separates changes across a hunk header', () => {
+    // A hunk header means git skipped lines: whatever follows is somewhere
+    // else in the file, however adjacent the two runs look on screen.
+    expect(ids(['add', 'hunk', 'add'])).toEqual([0, -1, 1])
+  })
+
+  it('marks nothing in a diff that only has context', () => {
+    expect(ids(['hunk', 'context', 'context'])).toEqual([-1, -1, -1])
+  })
+
+  it('handles a run at either end', () => {
+    expect(ids(['del', 'context', 'del'])).toEqual([0, -1, 1])
+  })
+
+  it('is empty for an empty diff', () => {
+    expect(ids([])).toEqual([])
+  })
+})
+
+describe('countBlocks', () => {
+  it('counts the blocks, not the rows', () => {
+    expect(countBlocks([-1, 0, 0, -1, 1, -1])).toBe(2)
+  })
+
+  it('is zero when nothing changed', () => {
+    expect(countBlocks([])).toBe(0)
+    expect(countBlocks([-1, -1])).toBe(0)
   })
 })

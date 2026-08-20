@@ -1392,6 +1392,16 @@
 .body[data-stacked] .commitsPane {
   width: auto; max-width: none; min-width: 0;
   height: 34%; flex: none;
+  /* The drag's clamp, restated where a RESIZE can also reach it. An inline
+     `height` in pixels survives the window getting shorter, and then the list
+     is taller than the body: the lower half goes to zero and the handle ends
+     up below the bottom edge with nothing to grab. Percentages re-resolve on
+     every layout, which is exactly what the stored pixel height cannot do.
+     Both numbers come from the panel's own constants, so there is still one
+     home for them. `max()` keeps the range from inverting in a drawer too
+     short to hold both floors — the list then simply takes its minimum. */
+  min-height: var(--gs-min-commits-tall);
+  max-height: max(var(--gs-min-commits-tall), calc(100% - var(--gs-min-stacked-lower)));
 }
 
 /* File tree column. A peer of the commit pane and the diff, never their parent:
@@ -1580,7 +1590,29 @@
 .fileCountDel { color: var(--gs-del); }
 
 /* diff pane */
-.diffPane { flex: 1 1 0; min-width: var(--gs-min-diff); overflow: auto; background: var(--gs-surface); }
+/* A column, so a header can sit above the scrolled diff instead of inside it.
+   `overflow: auto` stays as the outer guard — the rename line and the
+   side-by-side pane are also children here, and one of them growing must
+   scroll rather than be clipped. */
+.diffPane {
+  flex: 1 1 0; min-width: var(--gs-min-diff);
+  display: flex; flex-direction: column;
+  overflow: auto; background: var(--gs-surface);
+}
+/* The unified view: its own header and its own scroller, filling whatever the
+   pane has left after a rename line. */
+.diffWrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; width: 100%; }
+.diffScroll { flex: 1 1 0; min-height: 0; overflow: auto; outline: none; }
+/* The walk's controls. Right-aligned and quiet: they belong to the diff, and
+   the diff is what the reader came for. Same shape as `.sideNav` in the
+   side-by-side pane, because it is the same control. */
+.diffNav {
+  flex: none;
+  display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+  padding: 3px 12px 3px 0;
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.diffNav .blockBtn { padding-inline: 6px; line-height: 0; }
 /* The pre is as wide as its longest line (`max-content`) and at least the pane
    (`min-width: 100%`). Each row then stretches to that width, so add/delete
    tints survive horizontal scroll instead of stopping at the viewport edge. */
@@ -1597,6 +1629,7 @@
   tab-size: 4;
 }
 .renameLine {
+  flex: none;
   padding: 8px 16px;
   border-bottom: 1px solid var(--gs-border-soft);
   color: var(--gs-info);

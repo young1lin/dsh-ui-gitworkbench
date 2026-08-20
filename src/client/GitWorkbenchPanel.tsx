@@ -58,7 +58,8 @@ import {
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
-import { anchorFrom, scrollTopFor, stepToBlock, type BlockTop, type NavMemory } from './diff-nav.ts'
+import { countBlocks, unifiedBlocks } from './diff-nav.ts'
+import { useChangeNav } from './use-change-nav.ts'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, gateLeave, isDirty,
   LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
@@ -2028,9 +2029,22 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   const paneStyle = (px: number | null): CSSProperties | undefined =>
     px === null ? undefined : { width: `${px}px`, maxWidth: 'none' }
 
-  /** The History tab's commit list, sized by height instead. `flex: none` so
-   *  the height is the height — a flex child in a column would otherwise
-   *  stretch or shrink away from it. */
+  /**
+    * The History tab's commit list, sized by height instead. `flex: none` so
+    * the height is the height — a flex child in a column would otherwise
+    * stretch or shrink away from it.
+    *
+    * The floor and the ceiling are NOT applied here. A stored height is a
+    * number of pixels, and the drag that produced it clamped against the body
+    * as it stood at that moment; the window can be made shorter afterwards,
+    * and then a height that was reasonable becomes taller than everything.
+    * The lower half collapses to nothing and the handle is pushed past the
+    * bottom edge — there is no longer anything on screen to drag back, which
+    * is the one failure mode a resizable split must not have. So the clamp
+    * lives in the stylesheet, against `100%` of whatever the body currently
+    * is, from the same two constants the drag clamp uses. The reader's chosen
+    * height is kept, not rewritten: make the window tall again and it returns.
+    */
   const paneTall = (px: number | null): CSSProperties | undefined =>
     px === null ? undefined : { height: `${px}px`, flex: 'none' }
 
@@ -2054,6 +2068,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
       '--gs-min-commits': `${MIN_COMMITS_WIDTH}px`,
       '--gs-min-tree': `${MIN_TREE_WIDTH}px`,
       '--gs-min-diff': `${MIN_DIFF_WIDTH}px`,
+      '--gs-min-commits-tall': `${MIN_COMMITS_HEIGHT}px`,
+      '--gs-min-stacked-lower': `${MIN_STACKED_LOWER}px`,
     } as CSSProperties,
     ...maximized || width === null ? {} : { width: `${width}px` },
     ...background === null ? {} : {
@@ -2359,7 +2375,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
               ) : segment.length > 0 ? (
-                <DiffView segment={segment} path={active ?? ''} palette={theme} />
+                <DiffView segment={segment} path={active ?? ''} palette={theme} t={t} />
               ) : (
                 <div className={css.empty}>{t('noTextDiff')}</div>
               )}
@@ -4834,8 +4850,27 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
 
 /* ---------- diff rendering: rows, word-level ranges, syntax pass ---------- */
 
-/** Render one file's unified-diff segment with word-level highlights and Shiki. */
-function DiffView({ segment, path, palette }: { segment: string; path: string; palette: string }): ReactNode {
+/**
+ * Render one file's unified-diff segment with word-level highlights and Shiki.
+ *
+ * This is what History and Compare show, and — unlike the side-by-side pane —
+ * it has no row model carrying block ids, because nothing here acts on a block:
+ * a commit's contents were decided long ago, so there is no staging and no
+ * roll-back. The walk still needs them, so the runs are read off the row kinds
+ * by `unifiedBlocks` and marked on the rows that scroll.
+ *
+ * The scroller is this component's own rather than the pane's. A bar that
+ * scrolls away is not a control, and the pane scrolls in BOTH directions —
+ * `sticky` fixes the vertical half and nothing fixes the horizontal one, since
+ * a block child of a scroller is only ever as wide as the scrollport. A header
+ * outside the scrolled box has neither problem.
+ */
+function DiffView({ segment, path, palette, t }: {
+  segment: string
+  path: string
+  palette: string
+  t: Translate
+}): ReactNode {
   const lang = shikiLangOf(path)
   const shikiTheme = shikiThemeOf(palette)
   const grammarGen = useSyncExternalStore(subscribeGrammarLoaded, grammarLoadCount)
@@ -4845,10 +4880,57 @@ function DiffView({ segment, path, palette }: { segment: string; path: string; p
     () => highlightForRows(rowsWithWords, lang, shikiTheme),
     [rowsWithWords, lang, shikiTheme, grammarGen],
   )
+  const blocks = useMemo(() => unifiedBlocks(rowsWithWords.map(row => row.kind)), [rowsWithWords])
+  const changes = useMemo(() => countBlocks(blocks), [blocks])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { goToChange } = useChangeNav(scrollRef)
+  // Read by the key listener below, which is attached once. `goToChange` only
+  // ever touches refs, but pinning it here says so rather than relying on it.
+  const walk = useRef(goToChange)
+  walk.current = goToChange
+
+  // F7 / Shift+F7, the spelling IDEA's diff viewer taught, on the same element
+  // that scrolls — so the key and the buttons cannot disagree about which pane
+  // they move. `tabIndex` is what makes it able to receive the key at all:
+  // diff text is not focusable, and a click on it would otherwise leave focus
+  // on the document body.
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (scroller === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'F7') return
+      event.preventDefault()
+      walk.current(event.shiftKey ? -1 : 1)
+    }
+    scroller.addEventListener('keydown', onKey)
+    return () => { scroller.removeEventListener('keydown', onKey) }
+  }, [])
+
   return (
+    <div className={css.diffWrap}>
+      {changes > 0 ? (
+        <div className={css.diffNav}>
+          <button
+            type="button"
+            className={css.blockBtn}
+            title={t('prevChangeHint')}
+            aria-label={t('prevChange')}
+            onClick={() => { goToChange(-1) }}
+          ><NavGlyph of="prev" /></button>
+          <button
+            type="button"
+            className={css.blockBtn}
+            title={t('nextChangeHint')}
+            aria-label={t('nextChange')}
+            onClick={() => { goToChange(1) }}
+          ><NavGlyph of="next" /></button>
+          <span className={css.sideNavCount}>{t('changeCount', { n: changes })}</span>
+        </div>
+      ) : null}
+      <div ref={scrollRef} className={css.diffScroll} tabIndex={-1}>
     <pre className={css.diffPre}>
       {rowsWithWords.map((row, i) => (
-        <div key={i} className={`${css.line} ${rowClass(row.kind)}`}>
+        <div key={i} className={`${css.line} ${rowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined}>
           {sides.old ? <span className={css.lnOld}>{row.kind === 'add' || row.kind === 'hunk' ? '' : row.oldL}</span> : null}
           {sides.new ? <span className={css.lnNew}>{row.kind === 'del' || row.kind === 'hunk' ? '' : row.newL}</span> : null}
           <span className={`${css.gutter} ${row.kind === 'add' ? css.signAdd : row.kind === 'del' ? css.signDel : ''}`}>
@@ -4858,6 +4940,8 @@ function DiffView({ segment, path, palette }: { segment: string; path: string; p
         </div>
       ))}
     </pre>
+      </div>
+    </div>
   )
 }
 
@@ -4947,9 +5031,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   const colsRef = useRef<HTMLDivElement>(null)
   /** The pane's one vertical scroller — what "next change" moves. */
   const scrollRef = useRef<HTMLDivElement>(null)
-  /** What the last change-nav press landed on. A ref, not state: it exists to
-   *  make the NEXT press correct, and nothing on screen reads it. */
-  const navMemory = useRef<NavMemory | null>(null)
+  const { goToChange } = useChangeNav(scrollRef)
 
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
@@ -5203,52 +5285,6 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   }
 
   /** Ctrl/Cmd+S inside the pane: the editor's other save affordance. */
-  /**
-   * Every change block's position inside the scrolled content.
-   *
-   * Measured off the DOM rather than derived from the row model: the model
-   * knows which rows changed, not how many pixels down the page they sit, and
-   * the pane's rows are not the only thing in that scroller — the grid's own
-   * padding and, while armed, a CodeMirror view of a different height all move
-   * the answer. One layout read per button press is cheap because it happens
-   * per PRESS; nothing here runs on scroll.
-   *
-   * `offsetTop` is deliberately not used: it is relative to whichever ancestor
-   * happens to be positioned, which no rule in this stylesheet guarantees.
-   * Measuring both boxes and subtracting is independent of that.
-   */
-  const blockTops = (): readonly BlockTop[] => {
-    const scroller = scrollRef.current
-    if (scroller === null) return []
-    // First cell carrying each id, in document order. The left column renders
-    // before the right one and holds a cell for every row, so the first hit
-    // for a block is its first row.
-    const first = new Map<number, HTMLElement>()
-    for (const cell of scroller.querySelectorAll<HTMLElement>('[data-block]')) {
-      const block = Number(cell.dataset.block)
-      if (!Number.isInteger(block) || block < 0 || first.has(block)) continue
-      first.set(block, cell)
-    }
-    const base = scroller.getBoundingClientRect().top - scroller.scrollTop
-    const tops: BlockTop[] = []
-    for (const [block, cell] of first) tops.push({ block, top: cell.getBoundingClientRect().top - base })
-    return tops
-  }
-
-  /** Move the pane to the next or previous change. */
-  const goToChange = (direction: 1 | -1): void => {
-    const scroller = scrollRef.current
-    if (scroller === null) return
-    const tops = blockTops()
-    const target = stepToBlock(tops, anchorFrom(tops, scroller.scrollTop, navMemory.current), direction)
-    if (target === null) return
-    scroller.scrollTop = scrollTopFor(target.top)
-    // Read back rather than storing what was asked for: the browser clamps at
-    // the end of the content, and the clamped value is what the next press
-    // compares against to tell "still here" from "the reader scrolled".
-    navMemory.current = { block: target.block, scrollTop: scroller.scrollTop }
-  }
-
   const onPaneKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault()
@@ -5321,7 +5357,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
 
   /** The pane the drawer had before this view existed, notice included. */
   const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
-    ? <DiffView segment={fallbackSegment} path={path} palette={palette} />
+    ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} />
     : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : t('noTextDiff')}</div>
 
   if (failed) return unifiedFallback()
