@@ -34,8 +34,17 @@ export interface FileRow {
   readonly depth: number
   /** Whether this directory is expanded. Always false on a file row. */
   readonly open: boolean
-  /** On a `more` row: how many files the cap held back. */
+  /** On a `more` row: how many entries the cap held back. */
   readonly hidden?: number
+  /**
+   * On a `more` row: what it is holding back.
+   *
+   * A directory can end with both markers — too many subdirectories AND too
+   * many files — and they sit at the same depth under the same prefix, so
+   * without this they are indistinguishable, including to the key the renderer
+   * builds from a row.
+   */
+  readonly more?: 'dirs' | 'files'
 }
 
 /**
@@ -57,10 +66,15 @@ export function rootFiles(paths: readonly string[]): readonly string[] {
  * @param tree - top-level directories from {@link buildDirTree}.
  * @param roots - root-level files from {@link rootFiles}.
  * @param expanded - paths of the directories the reader has opened.
- * @param cap - most files rendered per directory; the rest become one `more`
- *              row. A generated directory can hold thousands of files, and
- *              each row is a button and two icons — the cost is the DOM, not
- *              this walk. Omit for no cap.
+ * @param cap - most SUBDIRECTORIES and most files rendered per directory; the
+ *              rest become one `more` row each. Each row is a button and two
+ *              icons, so the cost is the DOM rather than this walk, and one
+ *              click must not be able to put an unbounded number of them
+ *              there. Capping files alone was not enough: a directory holding
+ *              6,000 subdirectories froze the tab for 628ms on expanding it,
+ *              measured, and that grows with the directory. Both caps have the
+ *              same escape hatch — the search box, which reads the whole path
+ *              list and ignores the tree. Omit for no cap.
  */
 export function treeRows(
   tree: readonly DirEntry[],
@@ -83,19 +97,32 @@ export function treeRows(
         depth,
         open: false,
         hidden: names.length - shown.length,
+        more: 'files',
       })
     }
   }
-  const walk = (dirs: readonly DirEntry[], depth: number): void => {
-    for (const dir of dirs) {
+  const walk = (dirs: readonly DirEntry[], prefix: string, depth: number): void => {
+    const shown = dirs.length > cap ? dirs.slice(0, cap) : dirs
+    for (const dir of shown) {
       const open = expanded.has(dir.path)
       out.push({ kind: 'dir', path: dir.path, name: dir.name, depth, open })
       if (!open) continue
-      walk(dir.children, depth + 1)
+      walk(dir.children, `${dir.path}/`, depth + 1)
       files(dir.files, `${dir.path}/`, depth + 1)
     }
+    if (dirs.length > shown.length) {
+      out.push({
+        kind: 'more',
+        path: prefix,
+        name: '',
+        depth,
+        open: false,
+        hidden: dirs.length - shown.length,
+        more: 'dirs',
+      })
+    }
   }
-  walk(tree, 0)
+  walk(tree, '', 0)
   files(roots, '', 0)
   return out
 }

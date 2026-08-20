@@ -213,3 +213,55 @@ describe('treeRows file cap', () => {
       .filter(row => row.kind === 'file')).toHaveLength(250)
   })
 })
+
+describe('treeRows caps subdirectories too', () => {
+  /** One directory holding `n` subdirectories, each with one file. */
+  const wide = (n: number): readonly string[] =>
+    Array.from({ length: n }, (_, i) => `wide/entry${String(i).padStart(5, '0')}/index.ts`)
+
+  it('renders at most `cap` of them, then says how many are left', () => {
+    // Found live: 6,000 subdirectories under one parent froze the tab for
+    // 628ms on the click that opened it, because only FILES were capped. Each
+    // row is a button and two icons, so one click could put an unbounded
+    // number of them in the DOM.
+    const rows = treeRows(buildDirTree(wide(6000)), [], new Set(['wide']), 100)
+    const dirs = rows.filter(row => row.kind === 'dir' && row.depth === 1)
+    expect(dirs.length).toBe(100)
+    const marker = rows.find(row => row.kind === 'more' && row.more === 'dirs')
+    expect(marker, 'no marker for the held-back subdirectories').toBeDefined()
+    expect(marker!.hidden).toBe(5900)
+    // The whole point: a bounded number of rows, whatever the directory holds.
+    expect(rows.length).toBeLessThan(210)
+  })
+
+  it('marks the two kinds of overflow apart', () => {
+    // A directory can overflow on both counts at once, and the two markers sit
+    // at the same depth under the same prefix — the renderer keys on `more` to
+    // tell them apart, and without it React sees one duplicate key.
+    const paths = [
+      ...Array.from({ length: 120 }, (_, i) => `both/sub${i}/x.ts`),
+      ...Array.from({ length: 130 }, (_, i) => `both/file${i}.ts`),
+    ]
+    const rows = treeRows(buildDirTree(paths), [], new Set(['both']), 100)
+    const markers = rows.filter(row => row.kind === 'more')
+    expect(markers.map(row => row.more)).toEqual(['dirs', 'files'])
+    expect(markers.map(row => row.hidden)).toEqual([20, 30])
+    const keys = new Set(rows.map(row => `${row.kind}:${row.path}:${row.more ?? ''}`))
+    expect(keys.size, 'two rows share a key').toBe(rows.length)
+  })
+
+  it('caps every level, not only the top', () => {
+    const paths = Array.from({ length: 150 }, (_, i) => `top/mid/leaf${i}/x.ts`)
+    const open = new Set(['top', 'top/mid'])
+    const rows = treeRows(buildDirTree(paths), [], open, 100)
+    expect(rows.filter(row => row.kind === 'dir' && row.depth === 2).length).toBe(100)
+    expect(rows.some(row => row.kind === 'more' && row.more === 'dirs' && row.hidden === 50)).toBe(true)
+  })
+
+  it('leaves a directory under the cap untouched', () => {
+    const paths = Array.from({ length: 9 }, (_, i) => `few/sub${i}/x.ts`)
+    const rows = treeRows(buildDirTree(paths), [], new Set(['few']), 100)
+    expect(rows.filter(row => row.kind === 'more').length).toBe(0)
+    expect(rows.filter(row => row.kind === 'dir').length).toBe(10)
+  })
+})

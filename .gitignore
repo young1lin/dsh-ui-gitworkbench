@@ -57,3 +57,4 @@ scripts/verify_editable_cue.py
 scripts/verify_stacked_drag.py
 scripts/verify_history_nav.py
 scripts/verify_tree_divider.py
+scripts/verify_files_perf.py

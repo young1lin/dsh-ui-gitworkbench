@@ -30,6 +30,7 @@ import { CodeEditor } from './CodeEditor.tsx'
 import { buildDirTree } from './dir-tree.ts'
 import { mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
 import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
+import { sameList } from './stable-list.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
 import { ImageView, type Picture } from './ImageView.tsx'
 import { decodeBase64, formatBytes, looksLikeImagePath, shouldAskForImage } from './image-view.ts'
@@ -237,7 +238,23 @@ export function FileBrowser({
     return () => { alive = false; ctrl.abort() }
   }, [open, sides, fetchFileImage, statsPath])
 
-  const all = useMemo(() => mergePaths(paths, extraPaths), [paths, extraPaths])
+  /**
+   * The untracked paths, held at one identity for as long as they say the same
+   * thing.
+   *
+   * They are derived from the drawer's polled `git status`, so a fresh array
+   * arrives every 3-15 seconds whether or not anything changed — and it is the
+   * head of the chain below: merge, then the directory tree, then the rows.
+   * On a 20,000-file repository that chain is ~60ms of sorting and tree
+   * building, spent to produce exactly what was already on screen, on a timer,
+   * forever. Writing a ref during render is safe here because it is a cache:
+   * the value it holds is always equal to the value it replaced.
+   */
+  const extraHeld = useRef<readonly string[]>(extraPaths)
+  if (!sameList(extraHeld.current, extraPaths)) extraHeld.current = extraPaths
+  const steadyExtra = extraHeld.current
+
+  const all = useMemo(() => mergePaths(paths, steadyExtra), [paths, steadyExtra])
   const tree = useMemo(() => buildDirTree(all), [all])
   const roots = useMemo(() => rootFiles(all), [all])
   const rows = useMemo(
@@ -383,7 +400,78 @@ export function FileBrowser({
     }
   }
 
-  const rowKey = (row: FileRow): string => `${row.kind}:${row.path}`
+  // A directory can end with both markers, and they share a path and a
+  // depth; `more` is what separates them.
+  const rowKey = (row: FileRow): string => `${row.kind}:${row.path}:${row.more ?? ''}`
+
+  /**
+   * Click targets for the memoised rows.
+   *
+   * Both close over `place`, `open` and the dirty buffer, so the row elements
+   * must not capture the ones that existed when they were built. A ref read at
+   * click time always has the current pair; the alternative — depending on
+   * their identity — would rebuild every row on every render, which is the
+   * cost this memo exists to remove.
+   */
+  const acts = useRef({ foldDir, openFile })
+  acts.current = { foldDir, openFile }
+
+  /**
+   * `t` arrives in the host's slot props and its identity is not ours to rely
+   * on, so the memo watches the STRING it produces instead: that is what has
+   * to change when the language does, and it costs one lookup per render.
+   */
+  const langKey = t('filesMore', { count: 0 })
+
+  /**
+   * The rendered rows.
+   *
+   * An expanded tree is thousands of `li`s, each with a button and two icons,
+   * and the drawer re-renders on every poll. Handing React the SAME element
+   * array lets it skip the subtree entirely; rebuilding it was measured at
+   * ~180ms per poll with 1,462 rows on screen, growing with every directory
+   * the reader opens — the shape of "it gets laggy once there are a lot of
+   * files".
+   */
+  const list = useMemo(() => rows.map(row => (
+    <li key={rowKey(row)}>
+      {row.kind === 'more' ? (
+        <span
+          className={css.fbMore}
+          style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
+        >{t('filesMore', { count: row.hidden ?? 0 })}</span>
+      ) : (
+      <button
+        type="button"
+        title={row.path}
+        aria-expanded={row.kind === 'dir' ? row.open : undefined}
+        className={row.kind === 'file' && row.path === open
+          ? `${css.fbRow} ${css.fbRowActive}`
+          : css.fbRow}
+        style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
+        onClick={() => {
+          row.kind === 'dir' ? acts.current.foldDir(row.path) : acts.current.openFile(row.path)
+        }}
+      >
+        {row.kind === 'dir' ? (
+          <>
+            <span className={`${css.chevron} ${row.open ? css.chevronOpen : ''}`}>▸</span>
+            <PathDirGlyph />
+          </>
+        ) : (
+          <>
+            <span className={css.chevron} aria-hidden="true" />
+            <PathFileGlyph path={row.path} />
+          </>
+        )}
+        <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
+      </button>
+      )}
+    </li>
+  )),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is read through
+  // `langKey`, and the handlers through `acts`; see both comments above.
+  [rows, open, langKey])
 
   return (
     <>
@@ -400,42 +488,7 @@ export function FileBrowser({
         {rows.length === 0 ? (
           <div className={css.empty}>{all.length === 0 ? t('filesEmpty') : t('filesNoMatch')}</div>
         ) : (
-          <ul className={css.fbList}>
-            {rows.map(row => (
-              <li key={rowKey(row)}>
-                {row.kind === 'more' ? (
-                  <span
-                    className={css.fbMore}
-                    style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
-                  >{t('filesMore', { count: row.hidden ?? 0 })}</span>
-                ) : (
-                <button
-                  type="button"
-                  title={row.path}
-                  aria-expanded={row.kind === 'dir' ? row.open : undefined}
-                  className={row.kind === 'file' && row.path === open
-                    ? `${css.fbRow} ${css.fbRowActive}`
-                    : css.fbRow}
-                  style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
-                  onClick={() => { row.kind === 'dir' ? foldDir(row.path) : openFile(row.path) }}
-                >
-                  {row.kind === 'dir' ? (
-                    <>
-                      <span className={`${css.chevron} ${row.open ? css.chevronOpen : ''}`}>▸</span>
-                      <PathDirGlyph />
-                    </>
-                  ) : (
-                    <>
-                      <span className={css.chevron} aria-hidden="true" />
-                      <PathFileGlyph path={row.path} />
-                    </>
-                  )}
-                  <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
-                </button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <ul className={css.fbList}>{list}</ul>
         )}
       </div>
       {divider}
