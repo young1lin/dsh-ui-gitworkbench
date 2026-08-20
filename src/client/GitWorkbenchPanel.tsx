@@ -89,7 +89,7 @@ import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
-import { grammarLoadCount, highlightFile, highlightForRows, highlightWholeFile, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightFile, highlightForRowsWindow, highlightWholeFile, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
@@ -5059,14 +5059,25 @@ function DiffView({ segment, path, palette, t }: {
   const grammarGen = useSyncExternalStore(subscribeGrammarLoaded, grammarLoadCount)
   const rowsWithWords = useMemo(() => attachWordRanges(parseRows(segment)), [segment])
   const sides = useMemo(() => gutterSides(rowsWithWords), [rowsWithWords])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Windowed for the same reason the side-by-side pane is: a unified diff of a
+  // long file put every row in the DOM and re-lexed every one of them, so
+  // opening one froze the pane in exactly the same way.
+  const win = useRowWindow(scrollRef, rowsWithWords.length)
   const syntax = useMemo(
-    () => highlightForRows(rowsWithWords, lang, shikiTheme),
-    [rowsWithWords, lang, shikiTheme, grammarGen],
+    () => highlightForRowsWindow(rowsWithWords, lang, shikiTheme, win.start, win.end),
+    [rowsWithWords, lang, shikiTheme, win.start, win.end, grammarGen],
   )
   const blocks = useMemo(() => unifiedBlocks(rowsWithWords.map(row => row.kind)), [rowsWithWords])
   const changes = useMemo(() => countBlocks(blocks), [blocks])
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const { goToChange } = useChangeNav(scrollRef)
+  // Derived rather than measured, because a windowed pane has no element for
+  // the block being walked to.
+  const blocksForNav = useRef<readonly number[]>(blocks)
+  blocksForNav.current = blocks
+  const { goToChange } = useChangeNav(
+    scrollRef,
+    useCallback(() => blockTopsFromRows(blocksForNav.current, DIFF_ROW_H, DIFF_GRID_PAD_TOP), []),
+  )
   // Read by the key listener below, which is attached once. `goToChange` only
   // ever touches refs, but pinning it here says so rather than relying on it.
   const walk = useRef(goToChange)
@@ -5112,7 +5123,10 @@ function DiffView({ segment, path, palette, t }: {
       ) : null}
       <div ref={scrollRef} className={css.diffScroll} tabIndex={-1}>
     <pre className={css.diffPre}>
-      {rowsWithWords.map((row, i) => (
+      {win.padTop > 0 ? <div className={css.diffSpacer} style={{ height: `${win.padTop}px` }} aria-hidden="true" /> : null}
+      {rowsWithWords.slice(win.start, win.end).map((row, k) => {
+        const i = win.start + k
+        return (
         <div key={i} className={`${css.line} ${rowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined}>
           {sides.old ? <span className={css.lnOld}>{row.kind === 'add' || row.kind === 'hunk' ? '' : row.oldL}</span> : null}
           {sides.new ? <span className={css.lnNew}>{row.kind === 'del' || row.kind === 'hunk' ? '' : row.newL}</span> : null}
@@ -5121,7 +5135,9 @@ function DiffView({ segment, path, palette, t }: {
           </span>
           <span className={css.code}>{renderCode(row, syntax[i] ?? [])}</span>
         </div>
-      ))}
+        )
+      })}
+      {win.padBottom > 0 ? <div className={css.diffSpacer} style={{ height: `${win.padBottom}px` }} aria-hidden="true" /> : null}
     </pre>
       </div>
     </div>

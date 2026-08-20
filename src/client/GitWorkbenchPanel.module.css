@@ -1810,6 +1810,9 @@
    the FILE rather than of whatever is currently rendered. Spans every column,
    including the blame gutter's. */
 .sideSpacer { grid-column: 1 / -1; }
+/* The same, for the unified view's flex column. `flex: none` so it is exactly
+   the height it claims rather than one stretched by its siblings. */
+.diffSpacer { flex: none; }
 .sideCodeSame { color: var(--gs-fg-muted); }
 .sideCodeAdd { background: var(--gs-add-line); }
 .sideCodeDel { background: var(--gs-del-line); }

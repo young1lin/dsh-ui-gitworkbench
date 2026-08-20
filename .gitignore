@@ -61,3 +61,4 @@ scripts/verify_files_perf.py
 scripts/verify_history_layout.py
 scripts/verify_bigdiff_perf.py
 scripts/verify_click_perf.py
+scripts/verify_unified_perf.py

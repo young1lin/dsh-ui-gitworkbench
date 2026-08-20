@@ -317,6 +317,39 @@ export function highlightForRows(
   lang: string | undefined,
   theme = 'github-dark-default',
 ): HighlightRun[][] {
+  // One implementation, asked for the whole range. The panes all window now;
+  // this shape is what a caller wants when it really does need every row.
+  return highlightForRowsWindow(rows, lang, theme, 0, rows.length)
+    .map((runs, i) => runs ?? [{ text: rows[i]!.text, color: undefined }])
+}
+
+/**
+ * {@link highlightForRows} for the rows in a window, and nothing outside it.
+ *
+ * Same reason as {@link highlightWindow}, in the view History and Compare use:
+ * a unified diff of a long file re-lexed every one of its rows, so opening one
+ * froze the pane exactly as the side-by-side view did.
+ *
+ * The mapping from rows to the two sides' line arrays is built over ALL rows —
+ * it is array bookkeeping with no Shiki in it, and a row's position on its side
+ * depends on every row before it. Only the tokenizing is windowed, and because
+ * a window of rows is contiguous, so is the span of lines it needs from each
+ * side.
+ *
+ * @param rows - parsed unified-diff rows.
+ * @param lang - from {@link shikiLangOf}.
+ * @param theme - from {@link shikiThemeOf}.
+ * @param from - first row in the window.
+ * @param to - one past the last row in the window.
+ * @returns an array indexed by ROW, filled only inside the window.
+ */
+export function highlightForRowsWindow(
+  rows: readonly Row[],
+  lang: string | undefined,
+  theme: string,
+  from: number,
+  to: number,
+): (HighlightRun[] | undefined)[] {
   const oldLines: string[] = []
   const newLines: string[] = []
   const oldAt: number[] = []
@@ -340,11 +373,29 @@ export function highlightForRows(
       newAt.push(-1)
     }
   }
-  const oldTok = highlightFile(oldLines, lang, theme)
-  const newTok = highlightFile(newLines, lang, theme)
-  return rows.map((row, i) => {
-    if (row.kind === 'del') return oldTok?.[oldAt[i]!] ?? [{ text: row.text, color: undefined }]
-    if (row.kind === 'add' || row.kind === 'context') return newTok?.[newAt[i]!] ?? [{ text: row.text, color: undefined }]
-    return [{ text: row.text, color: undefined }]
-  })
+  const first = Math.max(0, Math.trunc(from))
+  const last = Math.min(rows.length, Math.trunc(to))
+  const span = (at: readonly number[]): { from: number; to: number } => {
+    let lo = -1
+    let hi = -1
+    for (let i = first; i < last; i += 1) {
+      const j = at[i]!
+      if (j < 0) continue
+      if (lo < 0) lo = j
+      hi = j
+    }
+    return lo < 0 ? { from: 0, to: 0 } : { from: lo, to: hi + 1 }
+  }
+  const oldSpan = span(oldAt)
+  const newSpan = span(newAt)
+  const oldTok = highlightWindow(oldLines, lang, theme, oldSpan.from, oldSpan.to)
+  const newTok = highlightWindow(newLines, lang, theme, newSpan.from, newSpan.to)
+  const out: (HighlightRun[] | undefined)[] = new Array<HighlightRun[] | undefined>(rows.length)
+  for (let i = first; i < last; i += 1) {
+    const row = rows[i]!
+    if (row.kind === 'del') out[i] = oldTok?.[oldAt[i]!] ?? [{ text: row.text, color: undefined }]
+    else if (row.kind === 'add' || row.kind === 'context') out[i] = newTok?.[newAt[i]!] ?? [{ text: row.text, color: undefined }]
+    else out[i] = [{ text: row.text, color: undefined }]
+  }
+  return out
 }
