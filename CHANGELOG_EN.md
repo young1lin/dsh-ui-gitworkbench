@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.11] - 2026-08-21
+
+### Fixed
+
+- **Installing the plugin no longer prints a screen of `missing peer` warnings.** `dsh plugin --profile web add` reported all six peers as missing while the plugin worked perfectly. None of them should be installed: every one is in `tsdown.config.ts`'s `CLIENT_EXTERNALS`, shared into the dsh shell's frozen module table and provided at runtime by the process that loads the plugin. The directory layout shows it — `~/.dsh/profiles/web/node_modules/` holds only the plugin, while `@deepseek-ai/*` lives one level up in `~/.dsh/profiles/node_modules/`, which Node's upward resolution finds and pnpm's peer check (which only inspects the profile's own tree) does not. This is not specific to this package: DeepSeek's own `dsh-client-ui-file-reference` and `dsh-file-reference` print the identical warnings in the same install. A peer a consumer must not install is, by npm's own definition, optional, and `peerDependenciesMeta` now says so. **The version ranges are unchanged** — they still check compatibility when the peer IS present. Verified by installing the packed tarball into an empty directory with `auto-install-peers=false`, as a dsh profile has: six missing-peer lines before, no warnings and exit 0 after, with all 17 host modules and `client.js` present.
+
 ## [0.1.10] - 2026-08-20
 
 A performance release: what the drawer costs no longer depends on how long the file is.

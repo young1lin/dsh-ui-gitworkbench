@@ -370,6 +370,8 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 ### 6.14 发布的 peer 范围不能写 `*`——`*` 按 `latest` dist-tag 解析
 npm 7+ 自动安装 peer 时，`*` 走 **`latest` dist-tag**，不是「取版本列表最高」。`@deepseek-ai/*` 全系的 `latest` 长期停在 8 月 10 日的 `0.0.1-rc.1` 老线（那条线依赖**从未发布**的 `@deepseek-ai/dsh-compact`，公开安装必 404），能用的 `0.1.0-rc.x` 全挂 `next`。于是 0.1.2 之前任何不在 dsh profile 工作区里的裸 `npm i` 都炸 E404。规则：**peer 写显式区间**（cordis `^4.0.1-rc.1`、dsh 系 `^0.1.0-rc.2`），dsh 发新线时同步抬范围并验证 `npm pack` 出的 tarball 在空目录可装。注意 6.5 的 `auto-install-peers=false` 只管本仓库 pnpm 开发态，管不了用户侧 npm。
 
+**补充（0.1.11）**：范围要留，但这些 peer 同时是 **optional**。它们全在 `tsdown.config.ts` 的 `CLIENT_EXTERNALS` 里——dsh 外壳把它们共享进自己那张冻结模块表，运行时由**加载插件的进程**提供，从来不该落进 profile 自己那层 `node_modules`。实测目录结构可以证明：`~/.dsh/profiles/web/node_modules/` 里只有插件自己，`@deepseek-ai/*` 全在上一层 `~/.dsh/profiles/node_modules/`,Node 逐级向上解析所以能找到；而 pnpm 的 peer 检查只看本层，于是把每一个都报成 missing——**官方自己的 `dsh-client-ui-file-reference` / `dsh-file-reference` 在同一次安装里打印一模一样的告警**，这条才是「这是平台常态，不是本包的缺陷」的证据。「消费者不该安装的 peer」按 npm 自己的定义就是 optional，所以 0.1.11 起 `peerDependenciesMeta` 把六个全标为 optional：告警消失，而**范围一个字没动**，peer 真的在场时仍然照常校验版本。验证方式是空目录装 `npm pack` 出的 tarball（`auto-install-peers=false`,与 dsh profile 一致）：改前 6 行 missing peer，改后零告警、exit 0、17 个 host 模块加 `client.js` 一个不少。
+
 ### 6.15 Windows 上裸 `--since=2026-08-18` 可能吃掉当天的提交
 git 对裸 `yyyy-mm-dd` 的 `--since`/`--until` 解析带时刻语义，Windows 上一整天的提交可能全被排掉，且无任何报错。host 把裸日期展开为 `T00:00:00` / `T23:59:59` 再交给 git（`log-filter.ts`）——选中一天即指一整天，不赌平台行为。
 

@@ -2,6 +2,12 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.11] - 2026-08-21
+
+### 修复
+
+- **安装插件时不再打印一屏 `missing peer` 告警**。`dsh plugin --profile web add` 会对六个 peer 全部报 missing，而插件其实完全正常。原因是这些 peer 一个都不该被安装：它们全在 `tsdown.config.ts` 的 `CLIENT_EXTERNALS` 里，dsh 外壳把它们共享进自己那张冻结模块表，由**加载插件的进程**在运行时提供。目录结构可以直接看出来——`~/.dsh/profiles/web/node_modules/` 里只有插件自己，`@deepseek-ai/*` 全在上一层 `~/.dsh/profiles/node_modules/`,Node 逐级向上解析所以运行时找得到，而 pnpm 的 peer 检查只看本层，于是全报 missing。这不是本包特有的：官方自己的 `dsh-client-ui-file-reference` 与 `dsh-file-reference` 在同一次安装里打印一模一样的告警。既然消费者不该安装它们，那按 npm 自己的定义它们就是 optional，现在 `peerDependenciesMeta` 如实声明了这一点。**版本范围一个字没改**——peer 真的在场时仍然照常校验兼容性。空目录装 `npm pack` 出的 tarball 验证（`auto-install-peers=false`,与 dsh profile 一致）：改前 6 行 missing peer，改后零告警、exit 0，17 个 host 模块加 `client.js` 一个不少。
+
 ## [0.1.10] - 2026-08-20
 
 性能专项：抽屉的开销从此与文件长度无关。
