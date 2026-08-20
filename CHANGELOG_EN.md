@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.9] - 2026-08-20
+
+### Performance
+
+- **Long diffs in History and Compare no longer freeze either.** 0.1.8 fixed the side-by-side view in Changes; History and Compare render a unified view, which was left out of that change deliberately and carried the same two costs — every row in the DOM, and Shiki re-lexing every row. Both are windowed now. Measured: a 5,365-row diff costs **157ms, no dropped frame, and 81 rows in the DOM**, while the scroller still reports the full 107,304px. For comparison, the same pane froze for over four seconds on a diff of about 6,000 rows.
+
 ## [0.1.8] - 2026-08-20
 
 An urgent fix release: one click that froze the page for three and a half
