@@ -1,6 +1,6 @@
 {
   "name": "@young1lin/dsh-ui-gitworkbench",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Out-of-tree dsh web UI plugin: a session-header git workbench chip opening a drawer with the file tree, per-file diff, history, compare, staging, commit, and sync (fetch/pull/push).",
   "type": "module",
   "main": "lib/index.js",
