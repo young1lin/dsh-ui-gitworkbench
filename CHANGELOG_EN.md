@@ -2,6 +2,20 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.8] - 2026-08-20
+
+An urgent fix release: one click that froze the page for three and a half
+seconds, and files that showed nothing on the Compare tab.
+
+### Performance
+
+- **Opening a long file no longer freezes the pane.** The side-by-side diff put every line of the whole file into the DOM in two columns, and Shiki re-lexed every one of those lines individually — a cost proportional to the file's LENGTH, with no relation to how much of it changed. Measured on two files with exactly one changed line each: 22 lines cost 349ms, 4,000 lines cost 3,868ms, including **3,587ms during which nothing on the page moved**, with 8,000 cells and 112,000 `<span>`s in the DOM. The guard admits files up to 20,000 lines, five times that again. Only the rows in view are rendered now (spacers stand in for the rest, so the scrollbar is still the length of the FILE), and both Shiki passes run inside that window, with 240 lines of lead-in so a slice starting inside a block comment still lexes in context. The same 4,000-line file: **235ms, worst frame 89ms, 162 cells.** The number that matters is not the ratio — 15,000 lines now costs 327ms and renders the same 162 cells, so the cost is the viewport's rather than the file's. Files of 400 rows or fewer render whole, exactly as before.
+- **The poll stops shipping a patch nobody asked for.** `stats` runs every 3 seconds while an agent is working, and each time it ran `git diff HEAD` over the whole worktree and clipped the result to 400,000 characters. Measured on a worktree with 90,000 changed lines: `status` ~110ms, `--numstat` ~140ms, and `git diff HEAD` **595ms producing 7.43MB, of which the clip discarded 94.6%**. The tree and the counters need only the first two, and the diff of the file actually on screen was already fetched on demand. The trade is one round trip when a file is selected, on every repository — chosen deliberately, because a bundled patch that is correct only below a size threshold is two behaviours, and the threshold is invisible from outside.
+
+### Fixed
+
+- **Added or modified files showed no content on the Compare tab** (most visibly XML, where the same file read correctly in History and in Files). Compare clips one combined patch at 400,000 characters and splits it per file, so everything past the cut had no content — and the per-file fallback every other tab uses was never taken there: `fileDiff` could not accept a ref range, a limitation the code stated outright. It can now (`base...head`, falling back to the two-tip diff when unrelated histories leave no merge base, exactly as the Compare tab itself does), and deliberately without caching, since a ref name is a moving pointer. On the file in the fixture: asking the working tree returned 0 bytes; asking `base...head` returned 220,877.
+
 ## [0.1.7] - 2026-08-20
 
 ### Added
