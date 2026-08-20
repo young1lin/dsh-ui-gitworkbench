@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  NAV_PEEK_PX, anchorFor, anchorFrom, countBlocks, scrollTopFor, stepToBlock, unifiedBlocks,
+  NAV_PEEK_PX, anchorFor, anchorFrom, blockTopsFromRows, countBlocks, scrollTopFor, stepToBlock, unifiedBlocks,
   type BlockTop, type NavMemory, type RowKind,
 } from '../src/client/diff-nav.ts'
 
@@ -207,5 +207,44 @@ describe('countBlocks', () => {
   it('is zero when nothing changed', () => {
     expect(countBlocks([])).toBe(0)
     expect(countBlocks([-1, -1])).toBe(0)
+  })
+})
+
+describe('blockTopsFromRows', () => {
+  it('places each block at its first row', () => {
+    // Rows 2-3 are one block, rows 6-7 another; -1 is a row in neither.
+    const blocks = [-1, -1, 0, 0, -1, -1, 1, 1, -1]
+    expect(blockTopsFromRows(blocks, 20)).toEqual([
+      { block: 0, top: 40 },
+      { block: 1, top: 120 },
+    ])
+  })
+
+  it('adds the grid own offset', () => {
+    expect(blockTopsFromRows([0], 20, 8)).toEqual([{ block: 0, top: 8 }])
+  })
+
+  it('reports a block once, however many rows it spans', () => {
+    // The side-by-side pane marks every row of a block; the walk wants the
+    // top of the block, not a stop per row.
+    const tops = blockTopsFromRows([0, 0, 0, 0, 0], 20)
+    expect(tops).toHaveLength(1)
+    expect(tops[0]).toEqual({ block: 0, top: 0 })
+  })
+
+  it('ignores rows that belong to no block', () => {
+    expect(blockTopsFromRows([-1, -1, -1], 20)).toEqual([])
+    expect(blockTopsFromRows([], 20)).toEqual([])
+  })
+
+  it('agrees with the DOM measurement it replaces', () => {
+    // The old path measured pixels; this one multiplies. For a pane whose rows
+    // are a fixed height by construction those must be the same answer, which
+    // is the only reason the swap is safe.
+    const rowH = 20
+    const blocks = [-1, 0, 0, -1, 1]
+    for (const { block, top } of blockTopsFromRows(blocks, rowH)) {
+      expect(top).toBe(blocks.indexOf(block) * rowH)
+    }
   })
 })

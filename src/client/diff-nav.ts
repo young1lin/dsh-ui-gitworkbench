@@ -196,3 +196,31 @@ export function countBlocks(ids: readonly number[]): number {
   for (const id of ids) if (id > top) top = id
   return top + 1
 }
+
+/**
+ * Where each change block sits, derived from the rows rather than measured.
+ *
+ * A windowed pane cannot measure: the block being walked to usually has no
+ * element, because the whole point is that it is not on screen. The rows are a
+ * fixed height there by construction, so the position is arithmetic.
+ *
+ * @param blocks - each row's block id, `-1` for a row that is not part of one.
+ * @param rowH - row height in px.
+ * @param offset - px above the first row, e.g. the grid's top padding.
+ * @returns the first row of each block, in the order the blocks appear.
+ */
+export function blockTopsFromRows(
+  blocks: readonly number[],
+  rowH: number,
+  offset = 0,
+): readonly BlockTop[] {
+  const tops: BlockTop[] = []
+  const seen = new Set<number>()
+  for (let i = 0; i < blocks.length; i += 1) {
+    const block = blocks[i]!
+    if (!Number.isInteger(block) || block < 0 || seen.has(block)) continue
+    seen.add(block)
+    tops.push({ block, top: offset + i * rowH })
+  }
+  return tops
+}

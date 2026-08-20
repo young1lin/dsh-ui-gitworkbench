@@ -58,8 +58,9 @@ import {
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
-import { countBlocks, unifiedBlocks } from './diff-nav.ts'
+import { blockTopsFromRows, countBlocks, unifiedBlocks } from './diff-nav.ts'
 import { clampPane, neighbourWidth } from './pane-size.ts'
+import { DIFF_GRID_PAD_TOP, DIFF_ROW_H, rowWindow, type RowWindow } from './row-window.ts'
 import { COMMIT_ROW_H, DEFAULT_HISTORY_LAYOUT, isHistoryLayout, type HistoryLayout } from './history-layout.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import {
@@ -88,7 +89,7 @@ import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
 } from './stage-tree.ts'
-import { grammarLoadCount, highlightFile, highlightForRows, highlightWholeFile, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightFile, highlightForRows, highlightWholeFile, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from './worktree-view.ts'
 import { BUSY_DELAY_MS, BUSY_HOLD_MS, holdRemaining, quietlyDisabled } from './op-feedback.ts'
 import type { WorkbenchKey } from './locales.ts'
@@ -348,7 +349,7 @@ export type Translate = (key: string, params?: Record<string, string | number>) 
 type Props = PropsRuntime<'conversation.session.header.actions'> & {
   readonly t: Translate
   readonly fetchStats: (worktreePath: string | undefined, signal: AbortSignal) => Promise<WorkbenchStats | null>
-  readonly fetchFileDiff: (worktreePath: string | undefined, path: string, commit: string | undefined, signal: AbortSignal) => Promise<string>
+  readonly fetchFileDiff: (worktreePath: string | undefined, path: string, commit: string | undefined, range: { base: string; head: string } | undefined, signal: AbortSignal) => Promise<string>
   /** One layer of one file for the side-by-side diff pane. */
   readonly fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the editor buffer, checked against the sha it opened with. */
@@ -1189,14 +1190,15 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  drawer's on-demand effect stops re-running on every render. */
   const fetchDiffForView = useCallback(
     (path: string, signal: AbortSignal): Promise<string> => {
-      // A comparison's per-file diff would need the ref range, which `fileDiff`
-      // does not take. Answering with the working tree's diff for that path
-      // would be plainly wrong, so a file past the payload cap simply has no
-      // detail on this tab.
-      if (tab === 'compare') return Promise.resolve('')
-      return fetchFileDiff(statsPath, path, tab === 'history' ? commitHash ?? undefined : undefined, signal)
+      // Each tab asks its own question about the path. Compare used to ask
+      // nothing at all — `fileDiff` had no way to take a ref range, so a file
+      // the bundled payload did not carry simply had no detail, which is what
+      // an added XML file past the payload cap looked like.
+      const range = tab === 'compare' ? { base: baseRef, head: headRef } : undefined
+      const commit = tab === 'history' ? commitHash ?? undefined : undefined
+      return fetchFileDiff(statsPath, path, commit, range, signal)
     },
-    [fetchFileDiff, statsPath, tab, commitHash],
+    [fetchFileDiff, statsPath, tab, commitHash, baseRef, headRef],
   )
 
   // First stats fetch still in flight: render nothing. The cheap binding RPC
@@ -5212,7 +5214,16 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   const colsRef = useRef<HTMLDivElement>(null)
   /** The pane's one vertical scroller — what "next change" moves. */
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { goToChange } = useChangeNav(scrollRef)
+  /** Where the rows are, filled in below once they exist. A ref, because the
+   *  walk is set up here and the rows are decided further down; reading it
+   *  only when a key is pressed is what lets the two live apart. */
+  const rowsForNav = useRef<readonly number[]>([])
+  const { goToChange } = useChangeNav(
+    scrollRef,
+    // Derived, not measured: the pane renders only the rows near the viewport
+    // now, so the block being walked to usually has no element at all.
+    useCallback(() => blockTopsFromRows(rowsForNav.current, DIFF_ROW_H, DIFF_GRID_PAD_TOP), []),
+  )
 
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
@@ -5306,13 +5317,25 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // `undefined` and renders the plain text for it; what crashes is indexing
   // the array itself, and `strict` is off in tsconfig, so the compiler will
   // not say so.
+  // Only the rows the reader can see reach the DOM, and only they are re-lexed
+  // line by line. Declared here because both the render and the highlighting
+  // below are bounded by it.
+  const win = useRowWindow(scrollRef, rows.length)
+  //
+  // Two passes with two lifetimes. The whole-file pass runs once per file and
+  // is what knows about block comments and template literals; the per-line
+  // re-lex — one Shiki call each, and the reason a 4,000-line file froze the
+  // pane for 2.8 seconds — runs only over the rows in the window, and so again
+  // whenever the reader scrolls.
+  const leftLines = useMemo(() => rows.map(row => row.left === null ? '' : row.left.text), [rows])
+  const rightLines = useMemo(() => rows.map(row => row.right === null ? '' : row.right.text), [rows])
   const leftSyntax = useMemo(
-    () => highlightFile(rows.map(row => row.left === null ? '' : row.left.text), lang, shikiTheme),
-    [rows, lang, shikiTheme, grammarGen],
+    () => highlightWindow(leftLines, lang, shikiTheme, win.start, win.end),
+    [leftLines, lang, shikiTheme, win.start, win.end, grammarGen],
   )
   const rightSyntax = useMemo(
-    () => highlightFile(rows.map(row => row.right === null ? '' : row.right.text), lang, shikiTheme),
-    [rows, lang, shikiTheme, grammarGen],
+    () => highlightWindow(rightLines, lang, shikiTheme, win.start, win.end),
+    [rightLines, lang, shikiTheme, win.start, win.end, grammarGen],
   )
 
   /** The editor half of the pane, present only on the unstaged layer. */
@@ -5369,6 +5392,14 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
   // left beside a dense right is the alignment the diff view owes, not the
   // editor. Each entry keeps its index into `rows` for its syntax tokens.
   const leftRows = useMemo(() => rows.map((row, i) => ({ row, i })).filter(entry => entry.row.left !== null), [rows])
+
+  // Only the rows the reader can see reach the DOM. Two windows because the
+  // two columns render two different row lists while the editor is armed: the
+  // right side is a buffer, and the left side is then the index side DENSE,
+  // one row per index line rather than one per aligned row.
+  const leftWin = useRowWindow(scrollRef, leftRows.length)
+  // Kept current for the change walk set up at the top of this component.
+  rowsForNav.current = useMemo(() => rows.map(row => row.block), [rows])
 
   // Arming drops the caret straight into the buffer: the click that armed the
   // editor said "I want to type here", and a second click to focus is a tax.
@@ -5736,7 +5767,10 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                  one row per index line, no diff holes — because the right
                  column is a buffer whose line count diverges from the diff
                  the moment a keystroke lands. */
-              leftRows.map((entry, k) => {
+              <>
+              <RowSpacer height={leftWin.padTop} />
+              {leftRows.slice(leftWin.start, leftWin.end).map((entry, kk) => {
+                const k = leftWin.start + kk
                 const { row, i } = entry
                 const hot = hotBlock !== null && row.block === hotBlock
                 const hotClass = hot ? ` ${css.sideBlockHot}` : ''
@@ -5749,9 +5783,14 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                     </span>
                   </Fragment>
                 )
-              })
+              })}
+              <RowSpacer height={leftWin.padBottom} />
+              </>
             ) : (
-              rows.map((row, i) => {
+              <>
+              <RowSpacer height={win.padTop} />
+              {rows.slice(win.start, win.end).map((row, k) => {
+                const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
                 const hotClass = hot ? ` ${css.sideBlockHot}` : ''
                 // The block's action bar rides in this column only for a row
@@ -5767,7 +5806,9 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                     </span>
                   </Fragment>
                 )
-              })
+              })}
+              <RowSpacer height={win.padBottom} />
+              </>
             )}
           </div>
         </div>
@@ -5785,7 +5826,9 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
             />
           ) : (
             <div className={css.sideColGrid}>
-              {rows.map((row, i) => {
+              <RowSpacer height={win.padTop} />
+              {rows.slice(win.start, win.end).map((row, k) => {
+                const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
                 const hotClass = hot ? ` ${css.sideBlockHot}` : ''
                 const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
@@ -5803,6 +5846,7 @@ function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked,
                   </Fragment>
                 )
               })}
+              <RowSpacer height={win.padBottom} />
             </div>
           )}
         </div>
@@ -5895,6 +5939,58 @@ function renderSideCode(cell: SideCell | null, tokens: readonly HighlightRun[] |
 }
 
 /* ---------- shared helpers ---------- */
+
+/**
+ * The rows a diff actually has to put in the DOM, tracked against its scroller.
+ *
+ * Rendering a whole file cost the pane 3.9 seconds of main thread and a
+ * 3.6-second frozen frame at 4,000 lines — for a one-line change, because the
+ * side-by-side view draws every line of the file whether it changed or not.
+ * This is the fix that removes the length from the cost rather than capping it.
+ *
+ * The window is held in state rather than the raw scroll offset so a scroll
+ * that does not move it renders nothing: `start` only changes once a whole row
+ * has passed under the viewport's edge.
+ *
+ * @param scrollRef - the element that scrolls the rows.
+ * @param rowCount - how many rows the diff has.
+ * @returns the rows to render and the spacer heights standing in for the rest.
+ */
+function useRowWindow(scrollRef: { current: HTMLElement | null }, rowCount: number): RowWindow {
+  const [win, setWin] = useState<RowWindow>(() => rowWindow(0, 0, rowCount))
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el === null) return
+    const read = (): void => {
+      const next = rowWindow(el.scrollTop, el.clientHeight, rowCount)
+      setWin(prev => prev.start === next.start && prev.end === next.end ? prev : next)
+    }
+    read()
+    // Passive: this listener never calls preventDefault, and saying so keeps
+    // it off the scroll's critical path.
+    el.addEventListener('scroll', read, { passive: true })
+    // The drawer resizes without the page doing so — a dragged edge, the
+    // maximize button — and a taller pane needs more rows.
+    const observer = new ResizeObserver(read)
+    observer.observe(el)
+    return () => {
+      el.removeEventListener('scroll', read)
+      observer.disconnect()
+    }
+  }, [scrollRef, rowCount])
+  return win
+}
+
+/**
+ * The spacer standing in for the rows above or below the window.
+ *
+ * It spans every column of the grid, so a blame gutter does not change it.
+ * @param height - px of rows it stands in for; nothing is rendered for 0.
+ */
+function RowSpacer({ height }: { height: number }): ReactNode {
+  if (height <= 0) return null
+  return <span className={css.sideSpacer} style={{ height: `${height}px` }} aria-hidden="true" />
+}
 
 /** Split a combined `git diff` into path -> its segment text. */
 function splitDiff(diff: string): Map<string, string> {

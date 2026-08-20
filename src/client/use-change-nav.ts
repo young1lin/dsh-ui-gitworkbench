@@ -29,8 +29,15 @@ export interface ChangeNav {
 /**
  * @param scrollRef - the element that scrolls, and the one whose subtree
  *   carries the `data-block` marks.
+ * @param tops - where the blocks are, when the caller can say. A WINDOWED pane
+ *   must supply this: it renders only the rows near the viewport, so the block
+ *   the reader is walking to usually has no DOM to measure. Omitted, the
+ *   positions are measured off the `data-block` marks as before.
  */
-export function useChangeNav(scrollRef: MutableRefObject<HTMLDivElement | null>): ChangeNav {
+export function useChangeNav(
+  scrollRef: MutableRefObject<HTMLDivElement | null>,
+  tops?: () => readonly BlockTop[],
+): ChangeNav {
   /** What the last press landed on. A ref, not state: it exists to make the
    *  NEXT press correct, and nothing on screen reads it. */
   const navMemory = useRef<NavMemory | null>(null)
@@ -38,12 +45,15 @@ export function useChangeNav(scrollRef: MutableRefObject<HTMLDivElement | null>)
   /**
    * Every change block's position inside the scrolled content.
    *
-   * Measured off the DOM rather than derived from a row model: a model knows
-   * which rows changed, not how many pixels down the page they sit, and the
-   * rows are never the only thing in the scroller — padding, a sticky bar and,
-   * in the armed side-by-side pane, a CodeMirror view of a different height
-   * all move the answer. One layout read per PRESS is cheap; nothing here runs
-   * on scroll.
+   * The fallback, for a pane that renders all of its rows. Measuring is the
+   * more general answer — a model knows which rows changed, not how many
+   * pixels down the page they sit, and the rows are never the only thing in
+   * the scroller. One layout read per PRESS is cheap; nothing here runs on
+   * scroll.
+   *
+   * It stops being available the moment a pane renders only part of its rows,
+   * which is why `tops` exists: what is not in the DOM cannot be measured, and
+   * a walk that skips every change outside the viewport is worse than no walk.
    *
    * `offsetTop` is deliberately not used: it is relative to whichever ancestor
    * happens to be positioned, which no rule in the stylesheet guarantees.
@@ -69,8 +79,8 @@ export function useChangeNav(scrollRef: MutableRefObject<HTMLDivElement | null>)
   const goToChange = (direction: 1 | -1): void => {
     const scroller = scrollRef.current
     if (scroller === null) return
-    const tops = blockTops()
-    const target = stepToBlock(tops, anchorFrom(tops, scroller.scrollTop, navMemory.current), direction)
+    const measured = tops === undefined ? blockTops() : tops()
+    const target = stepToBlock(measured, anchorFrom(measured, scroller.scrollTop, navMemory.current), direction)
     if (target === null) return
     scroller.scrollTop = scrollTopFor(target.top)
     // Read back rather than storing what was asked for: the browser clamps at

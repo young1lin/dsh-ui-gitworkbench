@@ -1806,6 +1806,10 @@
 .sideNumAdd { background: var(--gs-add-num, var(--gs-add-line)); }
 .sideNumDel { background: var(--gs-del-num, var(--gs-del-line)); }
 .sideCode { white-space: pre; padding: 0 16px 0 10px; min-height: 20px; }
+/* Stands in for the rows outside the window, so the scrollbar is the length of
+   the FILE rather than of whatever is currently rendered. Spans every column,
+   including the blame gutter's. */
+.sideSpacer { grid-column: 1 / -1; }
 .sideCodeSame { color: var(--gs-fg-muted); }
 .sideCodeAdd { background: var(--gs-add-line); }
 .sideCodeDel { background: var(--gs-del-line); }

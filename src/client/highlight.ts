@@ -223,6 +223,62 @@ export function highlightWholeFile(
   return tokenizeLines(lines, lang, theme)
 }
 
+/**
+ * How many lines above the window are tokenized for context.
+ *
+ * Shiki lexes a string from its start, so a slice beginning inside a block
+ * comment or a template literal would colour as if it were code. Reading a
+ * lead-in restores that state for everything but a construct longer than this,
+ * at a fraction of the cost of the file: at 4,000 lines the whole-file pass was
+ * the entire remaining freeze once the DOM was bounded.
+ */
+export const HIGHLIGHT_LEAD_IN = 240
+
+/**
+ * Runs for the rows in a window, and nothing outside it.
+ *
+ * This is the pane's whole highlighting cost now, and it is proportional to the
+ * viewport rather than to the file. Measured on a 4,000-line file with a
+ * one-line change: whole-file passes plus per-line re-lexing froze the pane for
+ * 1.4 seconds; the same file behind an extension no grammar claims cost 22ms of
+ * script, which is what proved the entire remainder was Shiki.
+ *
+ * Both passes happen inside the window: the slice pass, which knows about
+ * multi-line constructs within its reach, and the per-line re-lex that makes a
+ * diff reconstruction colour as top-level code.
+ *
+ * @param lines - source lines, no leading +/-.
+ * @param lang - from {@link shikiLangOf}.
+ * @param theme - from {@link shikiThemeOf}.
+ * @param from - first row in the window.
+ * @param to - one past the last row in the window.
+ * @returns an array indexed by ROW, filled only inside the window; undefined
+ *   when no grammar applies, which the caller already renders as plain text.
+ */
+export function highlightWindow(
+  lines: readonly string[],
+  lang: string | undefined,
+  theme: string,
+  from: number,
+  to: number,
+): (HighlightRun[] | undefined)[] | undefined {
+  const first = Math.max(0, Math.trunc(from))
+  const last = Math.min(lines.length, Math.trunc(to))
+  if (last <= first) return undefined
+  const lead = Math.max(0, first - HIGHLIGHT_LEAD_IN)
+  const sliceTok = tokenizeLines(lines.slice(lead, last), lang, theme)
+  if (sliceTok === undefined) return undefined
+  const out: (HighlightRun[] | undefined)[] = new Array<HighlightRun[] | undefined>(lines.length)
+  for (let i = first; i < last; i += 1) {
+    const line = lines[i]!
+    const together = sliceTok[i - lead] ?? [{ text: line, color: undefined }]
+    if (looksLikeCommentLine(line)) { out[i] = together; continue }
+    const solo = tokenizeLines([line], lang, theme)?.[0]
+    out[i] = solo !== undefined && solo.length > 0 ? solo : together
+  }
+  return out
+}
+
 function looksLikeCommentLine(text: string): boolean {
   const t = text.trimStart()
   return t.startsWith('//') || t.startsWith('/*') || t.startsWith('*') || t.startsWith('#')
