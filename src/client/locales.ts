@@ -28,9 +28,6 @@ export type WorkbenchKey =
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory' | 'paintTooLarge'
   | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
-  | 'jumpToDef' | 'jumpBack' | 'jumpHint' | 'jumpBackHint'
-  | 'jumpNone' | 'jumpOutside' | 'jumpUnavailable' | 'jumpUnclaimed' | 'jumpFailed'
-  | 'jumpSearching'
   | 'prevChange' | 'nextChange' | 'prevChangeHint' | 'nextChangeHint' | 'changeCount'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
@@ -165,16 +162,6 @@ export const zh: Record<WorkbenchKey, string> = {
   imageTooLarge: '图片有 {size}，超过 {cap} 的预览上限。',
   imageSource: '看源码',
   imagePreview: '看图',
-  jumpToDef: '跳到定义',
-  jumpBack: '返回',
-  jumpHint: '跳到光标处符号的定义（Ctrl/Cmd+点击、F12、Ctrl/Cmd+B）',
-  jumpBackHint: '回到跳转前的位置（Alt+←）',
-  jumpNone: '这里没有可跳转的定义。',
-  jumpOutside: '定义在本仓库之外：{where}',
-  jumpUnavailable: '跳转需要语言服务器：该 dsh 实例没有加载 LSP 能力（dsh-lsp + dsh-lsp-stdio）。',
-  jumpUnclaimed: '没有语言服务器认领这个文件类型。',
-  jumpFailed: '跳转失败。{where}',
-  jumpSearching: '正在查找定义…（首次调用会启动语言服务器，可能要等一会）',
   prevChange: '上一处变更',
   nextChange: '下一处变更',
   prevChangeHint: '上一处变更（Shift+F7）',
@@ -410,16 +397,6 @@ export const en: Record<WorkbenchKey, string> = {
   imageTooLarge: 'This image is {size}, past the {cap} preview limit.',
   imageSource: 'Source',
   imagePreview: 'Preview',
-  jumpToDef: 'Go to definition',
-  jumpBack: 'Back',
-  jumpHint: 'Go to the definition of the symbol at the caret (Ctrl/Cmd+click, F12, Ctrl/Cmd+B)',
-  jumpBackHint: 'Return to where the jump started (Alt+Left)',
-  jumpNone: 'No definition to jump to here.',
-  jumpOutside: 'The definition is outside this repository: {where}',
-  jumpUnavailable: 'Jumping needs a language server: this dsh instance has no LSP capability loaded (dsh-lsp + dsh-lsp-stdio).',
-  jumpUnclaimed: 'No language server claims this file type.',
-  jumpFailed: 'The jump failed. {where}',
-  jumpSearching: 'Looking for the definition… (the first call starts a language server, which can take a while)',
   prevChange: 'Previous change',
   nextChange: 'Next change',
   prevChangeHint: 'Previous change (Shift+F7)',

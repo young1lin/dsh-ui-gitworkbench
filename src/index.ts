@@ -69,10 +69,6 @@ import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
-import {
-  classifyJumpError, jumpDeclined, toJumpTarget,
-  type JumpLocation, type JumpTarget,
-} from './lsp-jump.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
@@ -258,32 +254,6 @@ interface StyleFileIo {
   save(file: StyleFile): Promise<void>
 }
 
-/**
- * The slice of `ctx.lsp` this plugin calls: one operation out of the seam's
- * four, and the two fields of its answer that a jump needs.
- *
- * Declared structurally instead of importing `LspService` from
- * `@deepseek-ai/dsh-lsp` because that package is an OPTIONAL capability — no
- * dsh bundle loads it, so this plugin has to typecheck, build and run in an
- * assembly where it is simply absent. A structural type is also the honest
- * description of what happens at runtime: the service is duck-typed off a
- * context that may not carry it.
- */
-interface LspLike {
-  query(
-    request: {
-      readonly operation: 'goToDefinition'
-      readonly filePath: string
-      readonly position: { readonly line: number; readonly character: number }
-      readonly workspaceRoot: string
-    },
-    signal?: AbortSignal,
-  ): Promise<
-    | { readonly kind: 'locations'; readonly locations: readonly JumpLocation[]; readonly resolvedWorkspaceUri: string }
-    | { readonly kind: 'hover'; readonly hover: unknown }
-  >
-}
-
 /** A TypertRemoteService registers itself under `ctx.gitWorkbench` and is found by the gateway. */
 export class GitWorkbenchService extends TypertRemoteService {
   static inject = ['subprocess', 'tools']
@@ -300,19 +270,10 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   private readonly bindingMirror = new Map<string, WorktreeBinding>()
 
-  /**
-   * The LSP seam while some assembly provides it, null otherwise — which is
-   * the state of every stock dsh profile, since no bundle loads `dsh-lsp`.
-   * Read on every `goToDefinition`; never awaited on, because a drawer that
-   * blocked waiting for a capability that will never arrive would hang.
-   */
-  private lsp: LspLike | null = null
-
   constructor(ctx: Context) {
     super(ctx, 'gitWorkbench')
     this.registerWorktreeTools(ctx)
     this.registerWorktreePrompt(ctx)
-    this.registerLspBridge(ctx)
     // Hydrate the mirror through the same queue as the mutations, so a binding
     // written before hydration finishes is not overwritten by the stale read.
     // A failed read leaves the mirror empty: sessions then get no standing
@@ -356,32 +317,6 @@ export class GitWorkbenchService extends TypertRemoteService {
             + 'A path without that prefix acts on the MAIN worktree, not the bound one. Call worktree_exit to unbind.'
         },
       })
-    })
-  }
-
-  /**
-   * Hold the LSP seam while one exists.
-   *
-   * Mounted through `ctx.inject` for the same reason the prompt contribution
-   * above is: an assembly without the service simply never runs the callback,
-   * and this plugin loads normally instead of waiting forever on a dependency
-   * that no bundle provides. The cast is the price of that optionality —
-   * `ctx.lsp` is declared by a package this plugin deliberately does not
-   * depend on, so the Context type here has never heard of it.
-   *
-   * The returned disposer nulls the field rather than leaving it dangling: the
-   * service goes away when its plugin unloads, and a retained reference would
-   * hand queries to a disposed seam (`LSP_DISPOSED`) instead of reporting the
-   * capability as absent. Cordis treats a plugin callback's return value as an
-   * effect body, so this is the same registration `ctx.effect` performs — and
-   * it is spelled this way because `ctx.effect` reaches the Context type
-   * through a `declare module './context.ts'` augmentation that does not
-   * resolve under this project's module settings.
-   */
-  private registerLspBridge(ctx: Context): void {
-    ctx.inject(['lsp'], (scope: Context) => {
-      this.lsp = (scope as unknown as { lsp?: LspLike }).lsp ?? null
-      return () => { this.lsp = null }
     })
   }
 
@@ -908,63 +843,6 @@ export class GitWorkbenchService extends TypertRemoteService {
       bytes: bytes.length,
       reason: '',
     }
-  }
-
-  /**
-   * `gitWorkbench/goToDefinition`: where the symbol under the cursor is
-   * defined, as a path this drawer can open.
-   *
-   * The query runs against the file ON DISK, because that is the only thing
-   * the seam can query: `LspQueryRequest` carries a path and a position and no
-   * text, and the provider opens the document itself through `ctx.fs`. Every
-   * caller-side rule follows from that one fact — the client only offers this
-   * where its buffer is the working-tree file and is not dirty, since a
-   * position in an edited buffer names a different symbol on disk.
-   *
-   * Read-only: no git spawn, no write. The language server may start a process
-   * of its own on first use, which is why the first jump in a session can take
-   * seconds while later ones are immediate.
-   *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
-   *   Doubles as the LSP workspace root, so a jump inside a linked worktree
-   *   indexes that worktree rather than the main checkout.
-   * @param path - repository-relative path, as the drawer lists it.
-   * @param line - ZERO-based line, as the protocol has it.
-   * @param character - ZERO-based UTF-16 offset within the line.
-   * @param signal - abort signal.
-   */
-  @Remote('goToDefinition')
-  async goToDefinition(worktreePath: string, path: string, line: number, character: number, signal: AbortSignal): Promise<JumpTarget> {
-    if (typeof path !== 'string' || !isSafePathArg(path)) {
-      throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
-    }
-    const service = this.lsp
-    // The ordinary state of a stock profile, not a failure: reported as its
-    // own outcome so the client can stay silent rather than show an error for
-    // a feature the operator never turned on.
-    if (service === null) return jumpDeclined('unavailable', '', '')
-    if (!Number.isInteger(line) || !Number.isInteger(character) || line < 0 || character < 0) {
-      throw new Error(`position out of range: ${String(line)}:${String(character)}`)
-    }
-    const workspaceRoot = this.cwdOf(worktreePath)
-    let answer: Awaited<ReturnType<LspLike['query']>>
-    try {
-      answer = await service.query({
-        operation: 'goToDefinition',
-        filePath: join(workspaceRoot, path),
-        position: { line, character },
-        workspaceRoot,
-      }, signal)
-    } catch (error: unknown) {
-      return classifyJumpError(error)
-    }
-    if (answer.kind !== 'locations') {
-      // Unreachable against a conforming provider: the seam normalizes this
-      // operation to `locations`. Reported rather than thrown, because a
-      // malformed provider is not the caller's bug to crash on.
-      return jumpDeclined('error', '', `provider answered with "${answer.kind}" for goToDefinition`)
-    }
-    return toJumpTarget(answer.locations, answer.resolvedWorkspaceUri)
   }
 
   /**

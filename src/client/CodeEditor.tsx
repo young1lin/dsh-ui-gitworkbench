@@ -124,66 +124,6 @@ function diffDecorations(state: EditorState): DecorationSet {
 const CHANGED_LINE = Decoration.line({ class: 'cm-gwChanged' })
 const DELETED_AT = Decoration.line({ class: 'cm-gwDeleted' })
 
-/** Where a jump was asked from, in the editor's own coordinates. */
-export interface JumpRequest {
-  /** One-based line, as `doc.line()` counts. */
-  readonly line: number
-  /** Zero-based UTF-16 offset within the line. */
-  readonly column: number
-}
-
-/** A line to put the caret on, with a token so the same line can be asked for
- *  twice. The pane hands over a NEW object per request; nothing else would
- *  distinguish "jump here again" from a re-render. */
-export interface Reveal {
-  readonly line: number
-  readonly token: number
-}
-
-/**
- * Ctrl/Cmd+click, F12 and Ctrl/Cmd+B ask the pane where a symbol is defined;
- * Alt+Left walks back.
- *
- * Three spellings because three editors taught three different reflexes, and
- * the one a reader has is not knowable from here. Ctrl+click is also the only
- * one that is discoverable by accident.
- *
- * Bound BEFORE the pane's other keymap in the extension list: CodeMirror
- * resolves keys in facet order, and `defaultKeymap` sitting first would take
- * the binding it happens to share.
- */
-function jumpKeys(
-  ask: (request: JumpRequest) => void,
-  back: () => void,
-): Extension {
-  const fromOffset = (view: EditorView, offset: number): boolean => {
-    const line = view.state.doc.lineAt(offset)
-    ask({ line: line.number, column: offset - line.from })
-    return true
-  }
-  const atCaret = (view: EditorView): boolean => fromOffset(view, view.state.selection.main.head)
-  return [
-    EditorView.domEventHandlers({
-      mousedown(event, view) {
-        if (event.button !== 0 || !(event.ctrlKey || event.metaKey)) return false
-        const offset = view.posAtCoords({ x: event.clientX, y: event.clientY })
-        if (offset === null) return false
-        // Taken over from CodeMirror, whose own Ctrl/Cmd+click starts a second
-        // selection range. Leaving that to also happen would drop an invisible
-        // extra cursor into the buffer on every jump, and the next keystroke
-        // would type in two places.
-        event.preventDefault()
-        return fromOffset(view, offset)
-      },
-    }),
-    keymap.of([
-      { key: 'F12', preventDefault: true, run: atCaret },
-      { key: 'Mod-b', preventDefault: true, run: atCaret },
-      { key: 'Alt-ArrowLeft', preventDefault: true, run: () => { back(); return true } },
-    ]),
-  ]
-}
-
 /**
  * Metrics restated to match the diff columns beside this editor exactly: same
  * family, same size, same 20px rhythm, ligatures off. The pane's own CSS
@@ -233,7 +173,7 @@ const paneTheme = EditorView.theme({
   },
 })
 
-export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, onCaret, onJump, onJumpBack, reveal }: {
+export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -260,27 +200,13 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
   readOnly?: boolean
   /** A click in the blame gutter, with the 1-based line number. */
   onBlameClick?: (line: number) => void
-  /** "Where is this defined?", from Ctrl/Cmd+click, F12 or Ctrl/Cmd+B.
-   *  Omitted where the buffer is not the file on disk — the pane decides, and
-   *  the keys then do nothing rather than asking about the wrong text. */
-  onJump?: (request: JumpRequest) => void
-  /** Alt+Left. Bound here as well as on the pane because CodeMirror sees the
-   *  key first while the caret is in the buffer, which is exactly when someone
-   *  wants to walk back. */
-  onJumpBack?: () => void
-  /** The caret moved. Reported so the pane's own "go to definition" button
-   *  can act on the same position the keys do; the pane is expected to keep
-   *  this in a ref, since it fires on every arrow key. */
-  onCaret?: (request: JumpRequest) => void
-  /** Put the caret on this line and scroll it into view, once per token. */
-  reveal?: Reveal | null
 }): ReactNode {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   // Read inside CodeMirror's own callbacks, which close over the render that
   // created the view — several states old by the time a key is pressed.
-  const latest = useRef({ onChange, onSave, onBlameClick, onCaret, onJump, onJumpBack })
-  latest.current = { onChange, onSave, onBlameClick, onCaret, onJump, onJumpBack }
+  const latest = useRef({ onChange, onSave, onBlameClick })
+  latest.current = { onChange, onSave, onBlameClick }
   // Stable across renders so reconfiguring the gutter does not depend on a
   // callback identity that changes every time the pane re-renders.
   const pick = useRef((line: number) => { latest.current.onBlameClick?.(line) }).current
@@ -300,14 +226,6 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
       originalText.init(() => original),
       diffField,
       paneTheme,
-      // Ahead of the keymap below, and reading the callbacks through `latest`
-      // so a pane that starts or stops offering jumps does not rebuild the
-      // view — a rebuild would drop the caret, the undo stack and the
-      // selection.
-      jumpKeys(
-        request => { latest.current.onJump?.(request) },
-        () => { latest.current.onJumpBack?.() },
-      ),
       keymap.of([
         { key: 'Mod-s', preventDefault: true, run: () => { latest.current.onSave(); return true } },
         ...searchKeymap,
@@ -317,11 +235,6 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
       ]),
       EditorView.updateListener.of(update => {
         if (update.docChanged) latest.current.onChange(update.state.doc.toString())
-        if (update.selectionSet || update.docChanged) {
-          const head = update.state.selection.main.head
-          const line = update.state.doc.lineAt(head)
-          latest.current.onCaret?.({ line: line.number, column: head - line.from })
-        }
       }),
       EditorState.allowMultipleSelections.of(true),
       EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
@@ -375,27 +288,6 @@ export function CodeEditor({ value, original, onChange, syntax, indent, ariaLabe
     if (held === value) return
     current.dispatch({ changes: { from: 0, to: held.length, insert: value } })
   }, [value])
-
-  // Landing a jump. Keyed on the request ALONE, never on `value`: the pane's
-  // buffer changes on every keystroke, and a reveal that re-ran with it would
-  // yank the caret back to the jump target while somebody was typing. The doc
-  // is already right when this runs — the pane withholds the editor until the
-  // file's sides have loaded, so a jump into another file mounts a fresh view
-  // whose initial document is that file.
-  useEffect(() => {
-    const current = view.current
-    if (current === null || reveal === null || reveal === undefined) return
-    // A server can name a line past the end of what this pane holds — the file
-    // changed on disk since it was indexed. The last line is the closest true
-    // thing to show, and it beats throwing.
-    const wanted = Math.min(Math.max(1, Math.trunc(reveal.line)), current.state.doc.lines)
-    const line = current.state.doc.line(wanted)
-    current.dispatch({
-      selection: { anchor: line.from },
-      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
-    })
-    current.focus()
-  }, [reveal])
 
   // Repaint. Depends on `value` as well as `syntax` so it runs after the write
   // above, against the text the view now actually holds.

@@ -1859,7 +1859,7 @@
    strength. Every tick stages through git, and fading the whole sync row for
    the ~150ms that takes was a blink, not feedback — nobody can act inside it.
    The click is still refused from the first frame; see `op-feedback.ts`. */
-.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled, .blockBtn[data-quiet]:disabled { opacity: 1; }
+.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled { opacity: 1; }
 
 /* Outcome of the last operation. Pre-wrap because git's own message rides along
    under the explanation, and it arrives with its newlines. */

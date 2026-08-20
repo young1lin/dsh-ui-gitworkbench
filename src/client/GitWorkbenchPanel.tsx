@@ -81,7 +81,6 @@ import { inCalRange, localTodayIso, monthGrid, weekdayLabels } from './calendar.
 import { NO_PATHS, preferredFile } from './active-file.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
-import type { JumpTarget } from '../lsp-jump.ts'
 import {
   fileCheckState, nextAction, nextBatch, pathsFor, rollUp, settledTicks, withPendingTicks,
   type CheckState, type Tick, type TickAction,
@@ -356,7 +355,6 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
    *  older than this client: the view then falls back to the text answer. */
   readonly fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
   /** Where the symbol at a zero-based protocol position is defined. */
-  readonly fetchGoToDefinition: (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal) => Promise<JumpTarget | null>
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
   readonly fetchSessionBinding: (sessionId: string, signal: AbortSignal) => Promise<{ worktreePath: string | null; name: string | null } | null>
@@ -628,7 +626,7 @@ const STATUS_BADGE: Record<GitFileStatus, string> = {
   renamed: css.stRenamed, deleted: css.stDeleted,
 }
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1554,7 +1552,6 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           writeChecked={writeChecked}
           fetchBlame={fetchBlame}
           fetchFileImage={fetchFileImage}
-          fetchGoToDefinition={fetchGoToDefinition}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1784,7 +1781,6 @@ interface DrawerProps {
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
-  fetchGoToDefinition: (worktreePath: string | undefined, path: string, line: number, character: number, signal: AbortSignal) => Promise<JumpTarget | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1796,7 +1792,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2283,7 +2279,6 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               writeChecked={writeChecked}
               fetchBlame={fetchBlame}
               fetchFileImage={fetchFileImage}
-              fetchGoToDefinition={fetchGoToDefinition}
               onSaved={onRefresh}
               onDirtyChange={onSideDirty}
               onShowHistory={query => { onHistoryQuery(query); leaveTab('history') }}
