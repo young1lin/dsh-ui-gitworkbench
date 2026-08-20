@@ -14,6 +14,8 @@
 ## Business Overview
 会话头的环境卡：分支 + ahead/behind + 增删计数（干净树也显示，仅 `stats.error` 时隐藏）。点开抽屉 = 文件树 + diff 两栏（变更页）或 提交列表 + 树 + diff 三栏（历史页），外加任意两分支对比页。
 
+**History 页签是上下分**（其余页签左右分）：提交列表横跨整宽在上，树+diff 在下——下半部分与 Changes 页签同构，只需学一套。三栏纵切的问题不是审美：抽屉总宽固定，拖分隔条只是把窘迫从一栏挪到另一栏，而最先让步的正是提交标题（实测 1900px 抽屉里列表只有 ~420px，标题全带省略号）。`.body[data-stacked]` 转成 column,`.bodyRow` **每个页签都渲染**（未堆叠时是行套行，零代价，换来一套 JSX 而非两套）。提交行随之改成单行（`hash | subject | 作者 时间`,按 `git log --oneline` 的顺序——hash 定宽才能让所有标题左对齐成一列可扫的东西）
+
 抽屉 chrome 收敛为三行：header（**分支胶囊就是 worktree 选择器本体**、齿轮下挂设置浮层、四个图标按钮 最大化/刷新/设置/关闭）、tabs、syncBar——分支名与 ↑↓ 计数全抽屉各只出现一次（曾各两处）。
 
 ## API Entry Points（客户端 → 宿主 RPC）
@@ -59,6 +61,7 @@ flowchart LR
 `~/.dsh/gitworkbench-style.json`：`{v:1, global, projects{repoRoot}}`，项目优先；背景图整条取项目、CSS 两作用域叠加（global 前 project 后）
 
 ## Potential Pitfalls
+- **提交行高是一个事实两个家**：`GRAPH_ROW_H`（TSX，车道 SVG 的高度）与 `.commitLine{height}`（CSS，行的高度）必须相等——不等不会报错，只是每条车道线在行与行的接缝处差一截，读者跟着的那股辫子就散了。`tests/commit-row-height.test.ts` 扣住（扫源码前先剥注释：本仓库已两次被注释里的散文骗过），并做过变异测试
 - **CSS 栈序是序关系不是数字表**：`.drawer > .header > .tabs > .compareBar > .syncBar` 的 z-index 必须沿 DOM 序**严格递减**，最低一条 bar 仍 > `.body`（z-index 1）。popover 只向下弹，上方 bar 的菜单必须压过下方一切 bar。曾三次踩坑：bar 与 `.body` 同层菜单被吃；全部 bar 同为 20 时上层菜单被下层吸掉；header 与 tabs 打平 23 时后者（源码序靠后的兄弟）吞掉 worktree 菜单——**同值即输**，测试因此断言严格递减而非硬编码数字
 - **逐处变更导航的两条不变式**（`client/diff-nav.ts`）：①**留出的上文必须加回去**——落点停在变更上方 3 行（`NAV_PEEK_PX=60`）好让上一行可见，但下一次算「下一处」时若不把这 60px 加回锚点，刚落到的那块仍然算「在视口顶之下」,每次按都停在同一块（`anchorFor`/`scrollTopFor` 成对存在就是为这个；变异测试会得到 `[0,0,0]`）。②**文件末尾的块滚不到 peek 线**——滚动条先到底，`scrollTop` 不再变化，视口就无法表达「我在哪」,于是永远绕不回第一块。解法是 `anchorFrom`:视口没动过就改用「上次落到的块」当锚点，手滚一下立即交还给视口。**这条纯测试预测不到**（纯模型没有地板），是 live 探针 `verify_diff_nav.py` 抓出来的
 - **`.sidePane` 必须 `tabIndex={-1}`**,否则 F7 收不到：处理器挂在 pane 上，而 diff 文本不可聚焦，点它焦点留在 body,React 的 onKeyDown 路径里根本没有 pane

@@ -53,3 +53,4 @@ scripts/verify_place_persist.py
 scripts/verify_image_view.py
 scripts/verify_jump.py
 scripts/verify_diff_nav.py
+scripts/verify_stacked_history.py

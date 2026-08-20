@@ -396,6 +396,11 @@ const MIN_DRAWER_WIDTH = 760
 const MIN_COMMITS_WIDTH = 190
 const MIN_TREE_WIDTH = 170
 const MIN_DIFF_WIDTH = 300
+/** Floors for the History tab's horizontal split. The list keeps enough for a
+ *  few rows to read as a list rather than as a strip; the half below keeps
+ *  enough that the tree and the diff are still worth rendering. */
+const MIN_COMMITS_HEIGHT = 90
+const MIN_STACKED_LOWER = 200
 
 /** Longest edge a chosen background image is resampled to before storage. Past
  *  this the file grows fast while a blurred backdrop gains nothing. */
@@ -419,13 +424,26 @@ const STORE_PANES = 'dsh-ui-gitworkbench:panes'
  *  two people on one repository should not share each other's place. */
 const STORE_FILES = 'dsh-ui-gitworkbench:files'
 
-/** Dragged pane widths in px; null on either side keeps that pane's CSS default. */
+/** Dragged pane sizes in px; null on any of them keeps that pane's CSS default. */
 interface PaneWidths {
   readonly commits: number | null
   readonly tree: number | null
+  /**
+   * The commit list's HEIGHT, which is what the History tab's divider moves
+   * now that the list spans the drawer's full width.
+   *
+   * Optional because storage is a durable boundary: values written before the
+   * tab was stacked have no such field, and rejecting them outright would
+   * throw away the column widths the reader had already chosen.
+   */
+  readonly commitsTall?: number | null
 }
 
-const DEFAULT_PANES: PaneWidths = { commits: null, tree: null }
+/** The two panes whose WIDTH a divider drags. `commitsTall` is deliberately
+ *  not one of them — it is a height, with its own floors. */
+type PaneWidthKey = 'commits' | 'tree'
+
+const DEFAULT_PANES: PaneWidths = { commits: null, tree: null, commitsTall: null }
 
 /**
  * @param value - value read back from storage.
@@ -433,9 +451,9 @@ const DEFAULT_PANES: PaneWidths = { commits: null, tree: null }
  */
 function isPaneWidths(value: unknown): value is PaneWidths {
   if (typeof value !== 'object' || value === null) return false
-  const { commits, tree } = value as Partial<PaneWidths>
+  const { commits, tree, commitsTall } = value as Partial<PaneWidths>
   const ok = (v: unknown): boolean => v === null || (typeof v === 'number' && Number.isFinite(v))
-  return ok(commits) && ok(tree)
+  return ok(commits) && ok(tree) && (commitsTall === undefined || ok(commitsTall))
 }
 
 /**
@@ -484,24 +502,26 @@ function writeStored(key: string, value: unknown): void {
  * crosses a child that stops propagation.
  * @returns the active flag for styling, and the pointerdown handler to attach.
  */
-function useHorizontalDrag(): {
+function usePaneDrag(axis: 'x' | 'y' = 'x'): {
   dragging: boolean
-  start: (event: ReactPointerEvent<HTMLElement>, onDrag: (clientX: number, done: boolean) => void) => void
+  start: (event: ReactPointerEvent<HTMLElement>, onDrag: (position: number, done: boolean) => void) => void
 } {
+  const along = (event: { clientX: number; clientY: number }): number =>
+    axis === 'y' ? event.clientY : event.clientX
   const [dragging, setDragging] = useState(false)
-  const start = (event: ReactPointerEvent<HTMLElement>, onDrag: (clientX: number, done: boolean) => void): void => {
+  const start = (event: ReactPointerEvent<HTMLElement>, onDrag: (position: number, done: boolean) => void): void => {
     event.preventDefault()
     const handle = event.currentTarget
     handle.setPointerCapture(event.pointerId)
     setDragging(true)
-    const onMove = (move: PointerEvent): void => { onDrag(move.clientX, false) }
+    const onMove = (move: PointerEvent): void => { onDrag(along(move), false) }
     // `pointercancel` ends a drag the browser took over (a touch became a
     // gesture, the window lost focus). It releases capture itself, so only the
     // pointerup path releases — and both must detach, or the next drag stacks a
     // second set of listeners on the same handle.
     const finish = (end: PointerEvent): void => {
       if (end.type === 'pointerup') {
-        onDrag(end.clientX, true)
+        onDrag(along(end), true)
         handle.releasePointerCapture(end.pointerId)
       }
       handle.removeEventListener('pointermove', onMove)
@@ -522,16 +542,22 @@ function useHorizontalDrag(): {
  * @param onDrag - receives the pointer's x and whether the drag just ended.
  * @returns the divider element.
  */
-function PaneDivider({ label, onDrag }: {
+function PaneDivider({ label, onDrag, axis = 'x' }: {
   label: string
-  onDrag: (clientX: number, done: boolean) => void
+  /** clientX for an 'x' handle, clientY for a 'y' one. */
+  onDrag: (position: number, done: boolean) => void
+  /** Which way the handle moves. 'y' is the History tab's stacked split. */
+  axis?: 'x' | 'y'
 }): ReactNode {
-  const { dragging, start } = useHorizontalDrag()
+  const { dragging, start } = usePaneDrag(axis)
+  const base = axis === 'y' ? `${css.paneDivider} ${css.paneDividerY}` : css.paneDivider
   return (
     <div
-      className={dragging ? `${css.paneDivider} ${css.paneDividerActive}` : css.paneDivider}
+      className={dragging ? `${base} ${css.paneDividerActive}` : base}
       role="separator"
-      aria-orientation="vertical"
+      // The orientation a separator reports is the axis it SEPARATES along,
+      // which is the opposite of the one it slides on.
+      aria-orientation={axis === 'y' ? 'horizontal' : 'vertical'}
       aria-label={label}
       onPointerDown={event => start(event, onDrag)}
     />
@@ -1357,13 +1383,36 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    * @param measured - the drawer's inner width and the panes' current widths.
    * @param persist - whether to store it; false for intermediate drag frames.
    */
-  const applyPane = (which: keyof PaneWidths, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean): void => {
+  const applyPane = (which: PaneWidthKey, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean): void => {
     const min = which === 'commits' ? MIN_COMMITS_WIDTH : MIN_TREE_WIDTH
     const other = which === 'commits' ? measured.tree : measured.commits
     const max = Math.max(min, measured.drawer - other - MIN_DIFF_WIDTH)
     const clamped = Math.min(Math.max(next, min), max)
     setPanes(prev => {
       const updated = { ...prev, [which]: clamped }
+      if (persist) writeStored(STORE_PANES, updated)
+      return updated
+    })
+  }
+
+  /**
+   * Drag the History tab's horizontal split.
+   *
+   * Clamped the same way `applyPane` clamps a width, and for the same reason:
+   * a pane dragged to nothing reads as broken and offers nothing to drag back
+   * out. The outer `Math.max` keeps the range from inverting in a drawer too
+   * short to hold both floors — the list then simply takes its minimum.
+   *
+   * @param next - the height in px the pointer implies.
+   * @param bodyHeight - the space the two stacked halves share.
+   * @param persist - false for every intermediate frame of a drag, so a
+   *   synchronous localStorage write never lands mid-resize.
+   */
+  const applyCommitsTall = (next: number, bodyHeight: number, persist: boolean): void => {
+    const max = Math.max(MIN_COMMITS_HEIGHT, bodyHeight - MIN_STACKED_LOWER)
+    const clamped = Math.min(Math.max(next, MIN_COMMITS_HEIGHT), max)
+    setPanes(prev => {
+      const updated = { ...prev, commitsTall: clamped }
       if (persist) writeStored(STORE_PANES, updated)
       return updated
     })
@@ -1485,6 +1534,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onWidth={applyWidth}
           panes={panes}
           onPane={applyPane}
+          onCommitsTall={applyCommitsTall}
           onClose={() => setOpen(false)}
           onRefresh={refresh}
           commitDraft={commitDraft}
@@ -1696,7 +1746,9 @@ interface DrawerProps {
   onWidth: (next: number, persist: boolean) => void
   /** Dragged pane widths; null on either side keeps that pane's CSS default. */
   panes: PaneWidths
-  onPane: (which: keyof PaneWidths, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean) => void
+  onPane: (which: PaneWidthKey, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean) => void
+  /** Drag the History tab's horizontal split: the commit list's height in px. */
+  onCommitsTall: (next: number, bodyHeight: number, persist: boolean) => void
   onClose: () => void
   onRefresh: () => void
   /** Commit draft, lifted so a tab switch cannot discard it. */
@@ -1744,7 +1796,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchGoToDefinition, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1937,9 +1989,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   }
 
   const drawerRef = useRef<HTMLDivElement>(null)
+  /** The two stacked halves' shared box, which the History split measures in. */
+  const bodyRef = useRef<HTMLDivElement>(null)
   const commitsRef = useRef<HTMLDivElement>(null)
   const treeRef = useRef<HTMLDivElement>(null)
-  const edgeDrag = useHorizontalDrag()
+  const edgeDrag = usePaneDrag()
 
   /**
    * What a pane drag is clamped against: the drawer's inner width and what the
@@ -1958,7 +2012,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    * @param ref - that pane's element, whose left edge the width is measured from.
    * @returns a drag handler for {@link PaneDivider}.
    */
-  const paneDrag = (which: keyof PaneWidths, ref: { current: HTMLDivElement | null }) =>
+  const paneDrag = (which: PaneWidthKey, ref: { current: HTMLDivElement | null }) =>
     (clientX: number, done: boolean): void => {
       const left = ref.current?.getBoundingClientRect().left
       if (left === undefined) return
@@ -1977,6 +2031,21 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    *  written for the undragged default. */
   const paneStyle = (px: number | null): CSSProperties | undefined =>
     px === null ? undefined : { width: `${px}px`, maxWidth: 'none' }
+
+  /** The History tab's commit list, sized by height instead. `flex: none` so
+   *  the height is the height — a flex child in a column would otherwise
+   *  stretch or shrink away from it. */
+  const paneTall = (px: number | null): CSSProperties | undefined =>
+    px === null ? undefined : { height: `${px}px`, flex: 'none' }
+
+  /** The stacked split, measured from the top of the body rather than from the
+   *  list: the list's own top is what the drag is moving the bottom of, and
+   *  measuring from a moving edge makes the handle drift under the pointer. */
+  const commitsTallDrag = (clientY: number, done: boolean): void => {
+    const box = bodyRef.current?.getBoundingClientRect()
+    if (box === undefined) return
+    onCommitsTall(clientY - box.top, box.height, done)
+  }
 
   // Width and the background's three tunables are inline because both are live
   // user values; the stylesheet only says what reads them. The pane floors are
@@ -2162,12 +2231,19 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             role="status"
           >{opMessage(t, opResult.op, opResult.result)}</div>
         ) : null}
-        <div className={css.body}>
+        {/* History stacks: the commit list across the top, the tree and diff
+            below it. Three columns left every one of them too narrow — the
+            subjects, which are the reason to read a log at all, were the part
+            that gave way — and the drawer's total width is fixed, so dragging
+            a divider could only move the shortage somewhere else. Stacked, the
+            subject gets the whole drawer, and the lower half becomes exactly
+            the Changes tab's layout: one arrangement to learn, not two. */}
+        <div ref={bodyRef} className={css.body} data-stacked={tab === 'history' ? '' : undefined}>
           {tab === 'history' ? (
             <>
               <CommitList
                 paneRef={commitsRef}
-                style={paneStyle(panes.commits)}
+                style={paneTall(panes.commitsTall ?? null)}
                 t={t}
                 loading={historyLoading}
                 commits={commits}
@@ -2184,9 +2260,10 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 fetchAuthors={fetchAuthors}
                 fetchRepoTree={fetchRepoTree}
               />
-              <PaneDivider label={t('resizeCommits')} onDrag={paneDrag('commits', commitsRef)} />
+              <PaneDivider axis="y" label={t('resizeCommits')} onDrag={commitsTallDrag} />
             </>
           ) : null}
+          <div className={css.bodyRow}>
           {tab === 'files' ? (
             <FileBrowser
               t={t}
@@ -2294,6 +2371,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           </div>
             </>
           )}
+          </div>
         </div>
         {discardPending?.plan != null ? (
           <DiscardConfirm
@@ -3420,9 +3498,17 @@ function CopyCommitButton({ t, text }: { t: Translate; text: string }): ReactNod
  */
 /* ---------- commit graph ---------- */
 
-/** Row height the graph and the list agree on. The lines only join up if every
- *  row is exactly as tall as the segment drawn for it. */
-const GRAPH_ROW_H = 48
+/**
+ * Row height the graph and the list agree on. The lines only join up if every
+ * row is exactly as tall as the segment drawn for it, so this number and
+ * `.commitLine`'s `height` are one fact with two homes —
+ * `tests/commit-row-height.test.ts` holds them together.
+ *
+ * 28 since the History tab stacked: the list spans the drawer's full width, a
+ * commit fits on one line, and 48px of row would spend the vertical space the
+ * stacked layout has least of on empty padding.
+ */
+const GRAPH_ROW_H = 28
 /** Horizontal distance between lanes. */
 const GRAPH_LANE_W = 14
 /** Ref chips shown inline before the subject; the rest collapse into a "+N". */
@@ -3575,11 +3661,12 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
           onMouseEnter={show}
           onMouseLeave={hide}
         >
-          <span className={css.commitTop}>
-            <code className={css.commitHash}>{commit.hash}</code>
-            {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
-            <span className={css.commitWhen}>{commit.when}</span>
-          </span>
+          {/* One line, in git log --oneline's order: a fixed-width hash, then
+              the subject, then who and when pushed to the right. The hash
+              being fixed width is what aligns every subject into a column the
+              eye can run down — leading with the author's name instead would
+              start each subject at a different place. */}
+          <code className={css.commitHash}>{commit.hash}</code>
           <span className={css.commitSubjectRow}>
             {/* Capped at two. A release commit can carry six refs, and the
                 subject is what the row is actually for — the rest are counted
@@ -3594,6 +3681,10 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
             ) : null}
             <span className={css.commitSubject}>{commit.subject}</span>
             {body.length > 0 ? <span className={css.commitHasBody} aria-hidden="true">···</span> : null}
+          </span>
+          <span className={css.commitMeta}>
+            {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
+            <span className={css.commitWhen}>{commit.when}</span>
           </span>
         </button>
       </div>

@@ -501,6 +501,16 @@
 }
 .paneDivider:hover::after { opacity: 0.6; }
 .paneDividerActive::after { opacity: 0.9; height: 48px; }
+/* The same handle turned through a right angle. Both modifier rules below beat
+   the shared ones on specificity, so their order relative to them does not
+   matter — the stylesheet's usual "same value loses" trap does not apply. */
+.paneDividerY {
+  width: auto; height: 7px;
+  cursor: row-resize;
+}
+.paneDividerY::before { top: 3px; bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
+.paneDividerY::after { width: 28px; height: 3px; transition: opacity 140ms ease, width 140ms ease; }
+.paneDividerY.paneDividerActive::after { width: 48px; height: 3px; }
 
 .header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1310,12 +1320,15 @@
 .commitLine {
   display: flex; align-items: stretch;
   flex: none;
-  height: 48px;
+  /* Must equal GRAPH_ROW_H in GitWorkbenchPanel.tsx, or the lanes drawn per
+     row stop meeting across the seam between rows. Guarded by
+     tests/commit-row-height.test.ts. */
+  height: 28px;
 }
 .graphCell { flex: none; display: block; }
 /* An inset row, like dsh's own session rows: 12px radius, filled when active. */
 .commit {
-  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  display: flex; align-items: center; gap: 10px;
   flex: 1 1 auto; min-width: 0; box-sizing: border-box;
   height: 100%;
   margin: 1px 0;
@@ -1332,11 +1345,14 @@
 }
 .commit:hover { background: var(--gs-raise); }
 .commitActive { border-color: var(--gs-accent-border); background: var(--gs-accent-bg); }
-.commitTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.commitHash { color: var(--gs-info); }
+/* Pushed to the right end of the row, and never squeezed: the subject is what
+   gives way when the pane narrows, because it is the part with an ellipsis to
+   give. */
+.commitMeta { flex: none; display: flex; align-items: baseline; gap: 8px; }
+.commitHash { flex: none; color: var(--gs-info); }
 .commitSubjectRow {
   display: flex; align-items: baseline; gap: 4px;
-  min-width: 0;
+  flex: 1 1 auto; min-width: 0;
 }
 .commitSubject {
   flex: 1; min-width: 0;
@@ -1366,6 +1382,17 @@
 }
 
 .body { display: flex; flex: 1; min-height: 0; z-index: 1; }
+/* History stacks: the commit list over the tree-and-diff row. `.bodyRow` is
+   rendered on every tab, so the unstacked tabs are a row inside a row — which
+   costs nothing and keeps one JSX shape instead of two. */
+.body[data-stacked] { flex-direction: column; }
+.bodyRow { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+/* Stacked, the list is sized by HEIGHT and spans the drawer; the width rules
+   it carries for the column layout would otherwise pin it to 26%. */
+.body[data-stacked] .commitsPane {
+  width: auto; max-width: none; min-width: 0;
+  height: 34%; flex: none;
+}
 
 /* File tree column. A peer of the commit pane and the diff, never their parent:
    each of the three scrolls on its own and keeps its full height. */
