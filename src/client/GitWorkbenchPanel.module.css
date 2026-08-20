@@ -1354,8 +1354,15 @@
   display: flex; align-items: baseline; gap: 4px;
   flex: 1 1 auto; min-width: 0;
 }
+/* Shrinks, never grows. Growing was invisible while the list was a 26%%
+   column — the subject filled the row either way — and became a defect the
+   moment the list spanned the drawer: a subject that takes ALL the free space
+   pushes the has-a-body marker a thousand pixels right, where it reads as an
+   unexplained ellipsis next to the author rather than as "there is more to
+   this message". The row still pushes author and date to the right end;
+   .commitSubjectRow is what absorbs the slack. */
 .commitSubject {
-  flex: 1; min-width: 0;
+  flex: 0 1 auto; min-width: 0;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   color: var(--gs-fg-muted);
 }

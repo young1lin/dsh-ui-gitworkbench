@@ -29,6 +29,24 @@ function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
+describe('the commit subject', () => {
+  it('does not grow past its own text', () => {
+    // Growing was harmless while the list was a 26% column and the subject
+    // filled the row anyway. Full-width it is a defect: a subject taking ALL
+    // the free space pushes the has-a-body marker to the far right of the
+    // drawer, where it reads as an unexplained ellipsis beside the author.
+    const rule = /\.commitSubject\s*\{([^}]*)\}/.exec(code(css))
+    expect(rule, '.commitSubject rule not found').not.toBeNull()
+    const flex = /flex:\s*([^;]+);/.exec(rule![1]!)
+    expect(flex, '.commitSubject declares no flex').not.toBeNull()
+    const grow = flex![1]!.trim().split(/\s+/)[0]
+    expect(grow, 'the subject must not take the free space in its row').toBe('0')
+    // It must still be allowed to shrink, or a long subject overflows the row
+    // instead of ellipsising.
+    expect(rule![1]!, 'the subject must still ellipsise').toMatch(/text-overflow:\s*ellipsis/)
+  })
+})
+
 describe('the commit row height', () => {
   it('is the same number in the graph and in the stylesheet', () => {
     const constant = /const GRAPH_ROW_H = (\d+)/.exec(code(tsx))
