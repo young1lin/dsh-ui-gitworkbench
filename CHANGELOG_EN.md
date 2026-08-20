@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.10] - 2026-08-20
+
+A performance release: what the drawer costs no longer depends on how long the file is.
+
+### Performance
+
+- **Long files open without freezing, and long files have syntax colour again.** The editor — the Files tab, and the side pane once editing is armed — used to hand shiki the WHOLE file: 1,637ms on 1,837 lines of real TypeScript, and files past 2,000 lines were simply not coloured, with a notice explaining why. That is not a fix; it is a freeze traded for a missing feature. The editor now asks only for the lines it is about to show, driven by CodeMirror's own viewport, and the 2,000-line cap went with the notice. Measured at 1,837 lines: **1,461ms with a 1,274ms frozen frame becomes 254ms with 60ms**. A 6,065-line file used to be fast and colourless; it is now **255ms, with colour**.
+- **No line is ever tokenized twice.** Every window move used to re-lex a 240-line lead-in plus its rows and remember nothing — ten screenfuls cost 3,021ms. The new `token-cache.ts` cuts a document into 128-line chunks, tokenizes each once, and **continues from the grammar state the previous chunk ended in** (shiki 4.3 returns that state with the tokens and accepts it back, so the continuation is exact rather than a lead-in's guess). Only a cold jump into the middle of a file reads a lead-in, and only once. The diff panes' second pass — re-lexing each line alone, which has to exist because a hunk is not a real file and would otherwise paint added statements as object keys — depends on nothing but the line's text, so it is cached by it. **Scrolling back over a file: 77ms, no dropped frame.** Both caches are LRU, bounded in LINES, and report their own size, so the tests prove the bound rather than trusting it.
+- **Changing the engine does not help — that was measured, not assumed.** Five shiki engine configurations (eager compilation, ES2024 and ES2018 targets, an internal cache) all landed between 130ms and 180ms for 300 lines of real code. Half a millisecond per line is this tokenizer's floor, so the only lever is to tokenize less and remember it — the two entries above.
+
+### Fixed
+
+- **Opening a second file froze for seven to nine seconds** — which is also what was really behind "clicking a 4,000-line file after a 22-line one nearly locks up". A CPU profile named `@codemirror/merge`'s diff. Switching files replaces the buffer and the side it is compared against in two separate transactions, so for one frame the new file's text sits opposite the OLD file's: two unrelated documents, diffed with no ceiling. The live tint now recomputes only once both sides have settled (by which point they are usually identical and it returns immediately), and `presentableDiff` is given the bound CodeMirror's own merge view uses (`scanLimit: 500`, plus a 100ms timeout). Without that bound, the pair in the new test takes **292 seconds**. Measured: a file switch goes from **6,952-8,974ms to 270-357ms**, and the text arrives painted.
+- **Nothing document-sized runs on the keystroke path any more.** The live tint used to diff the whole document on EVERY transaction — 709ms per keystroke at 4,000 lines. Colour and tint now map through the edit (so they ride along with the text instead of smearing) and recompute once the typing stops.
+
+### Internal
+
+- `tests/no-leaks.test.ts`: per client source, every `addEventListener` has a `removeEventListener`, every `setInterval` a `clearInterval`, every observer a `disconnect`, and the CodeMirror layer's deferred timer — the one React's cleanup cannot reach — is cleared in `destroy()`. Comments and string literals are stripped before counting.
+- `AGENTS.md` gains a "Performance first, and no leaks" section: nothing proportional to the file or the repository; a cap that turns a feature off is not a fix; nothing document-sized on the keystroke path; caches bounded, evicting, and able to report their size; and a performance change ships with before/after numbers taken on real code.
+
 ## [0.1.9] - 2026-08-20
 
 ### Performance
