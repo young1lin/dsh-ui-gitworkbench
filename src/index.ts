@@ -91,8 +91,7 @@ export type { WriteResult }
 const DIFF_CHAR_CAP = 400_000
 /** Untracked files larger than this are listed + counted but never diffed. */
 const UNTRACKED_FILE_BYTE_CAP = 1_000_000
-/** At most this many bytes of synthesized untracked diff ride along in `stats`. */
-const UNTRACKED_TOTAL_CHAR_CAP = 160_000
+
 /** Files with a NUL byte in the first 8k are treated as binary. */
 const BINARY_SNIFF_BYTES = 8_000
 /** Context radius that makes `git diff` emit ONE hunk covering the whole file —
@@ -413,13 +412,21 @@ export class GitWorkbenchService extends TypertRemoteService {
   async stats(worktreePath: string | undefined, signal: AbortSignal): Promise<WorkbenchStats> {
     const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
 
-    // Four independent reads of the same worktree. Running them together is
+    // Three independent reads of the same worktree. Running them together is
     // safe: git takes .git/index.lock only to write back a refreshed index and
     // skips that write when it cannot get the lock, so the reports stay correct.
-    const [statusInfo, numstat, diff, revInfo] = await Promise.all([
+    //
+    // `git diff HEAD` is NOT among them any more. This call is polled — every
+    // 3 seconds while an agent is running — and the full patch is the most
+    // expensive thing in it by a wide margin: measured on a worktree with
+    // 90,000 changed lines it took 595ms and produced 7.43MB, of which the
+    // 400,000-character clip below then discarded 94.6% before it ever reached
+    // the browser. The tree and the counters need only `status` and
+    // `--numstat`, both of which stay around 110-140ms at that size, and the
+    // pane already fetches the file it is actually showing through `fileDiff`.
+    const [statusInfo, numstat, revInfo] = await Promise.all([
       this.git(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all'], signal),
       this.git(cwd, ['diff', 'HEAD', '--numstat'], signal),
-      this.git(cwd, ['diff', 'HEAD'], signal),
       this.git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], signal),
     ])
     if (statusInfo.exitCode !== 0) {
@@ -430,25 +437,18 @@ export class GitWorkbenchService extends TypertRemoteService {
     const counts = parseNumstat(numstat.stdout)
     const files = parseStatus(statusInfo.stdout, counts)
 
-    // Untracked files in two passes, because the two halves cost wildly
-    // different amounts. EVERY untracked file needs a line count and a binary
-    // flag, which come off the raw buffer with no utf8 decode; only the handful
-    // that fit the payload budget pay for a decode and a synthesized segment.
+    // Every untracked file needs a line count and a binary flag for the tree,
+    // and both come off the raw buffer with no utf8 decode. The second pass
+    // that used to follow — decoding some of them and synthesizing new-file
+    // segments into the payload — is gone with the payload itself; `fileDiff`
+    // synthesizes the one segment the reader has actually opened.
     const untracked = files.filter(file => file.status === 'untracked')
     const measured = await mapPooled(untracked, UNTRACKED_READ_CONCURRENCY, file => measureUntracked(cwd, file.path))
 
-    let budget = UNTRACKED_TOTAL_CHAR_CAP
-    let untrackedDiff = ''
     for (const [index, file] of untracked.entries()) {
       const measure = measured[index]
       file.addedLines = measure.lineCount
       file.binary = measure.binary
-      if (budget <= 0 || !measure.diffable) continue
-      const segment = await untrackedSegment(cwd, file.path)
-      if (segment === null) continue
-      const text = clipDiff(segment, budget, '…[untracked diff truncated]')
-      untrackedDiff += `${text}\n`
-      budget -= text.length
     }
 
     let addedLines = 0
@@ -481,14 +481,13 @@ export class GitWorkbenchService extends TypertRemoteService {
     }
     const { ahead, behind } = parseBranch(statusInfo.stdout)
 
-    let combined = diff.stdout
-    if (untrackedDiff.length > 0) combined += `\n${untrackedDiff}`
-    combined = clipDiff(combined, DIFF_CHAR_CAP, '…[diff truncated]')
 
     return {
       worktreePath: cwd, branch, ahead, behind, detached,
       addedLines, deletedLines, addedFiles, deletedFiles, modifiedFiles,
-      files, diff: combined,
+      // No bundled patch: every per-file diff is fetched on demand. See the
+      // reads above for what that saves and why it is affordable.
+      files, diff: '',
       // No log here: this call is polled every 15s, and the history list follows
       // a ref this one knows nothing about. `commits` serves it instead.
       commits: [],
