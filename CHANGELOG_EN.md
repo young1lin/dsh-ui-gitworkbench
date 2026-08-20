@@ -2,6 +2,39 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.6] - 2026-08-20
+
+### Added
+
+- **Side-by-side diff (IDEA-style)** for every file in the Changes tab: two columns of the whole file, aligned row by row — the alignment is read off git's full-context diff rather than computed. Hovering any cell outlines the **change block** it belongs to and floats that block's buttons: **stage** or **roll back** the block on the unstaged tab, **unstage** it on the staged one. The click carries the block's hunk-line indices and the sha of the diff as rendered, so the host can prove the file has not moved since the pane drew it — and does nothing if it has. Binary and oversized files fall back to the unified view with a notice: a view that silently changes shape reads as broken, not as guarded.
+- **The right column is editable** (unstaged layer only — editing the index would mean writing a blob with no file behind it). Editing **arms explicitly and saves explicitly**, never per keystroke. A save carries the blob sha the buffer is based on, and the host refuses a stale write; if the file moved while you were typing, the drawer raises a reload-or-overwrite banner, and overwrite waits for the refetch so it is checked against the file as it truly stands. The poll keeps running: a refresh landing on a dirty buffer updates the tree and leaves the editor alone.
+- **The editor is CodeMirror 6 now**: a real undo stack, multiple selections, find-in-file, and Tab that indents instead of leaving the field. Highlighting still comes from shiki — the diff columns beside it are already shiki-painted, and a second grammar engine would cost another megabyte to render the same file in slightly different colours. **Diff tints survive while editing**, so a line you just typed reads as the same kind of thing as a line git already knows about.
+- **The pane says which half takes keystrokes**: a 2px rule down the editor's leading edge, dim at rest and full accent while the caret is inside (which doubles as "this pane has the keyboard"). A read-only file draws no rule — the Files tab's editor is live the moment a file opens, with no button in between, and a CRLF or non-UTF-8 file **swallows** the keystrokes; a mark that appears on a pane which will refuse them is worse than no mark, so it and `EditorState.readOnly` come from one boolean.
+- **Blame**: a gutter beside the working-tree column with the person's name and a short hash, merging consecutive lines from the same commit (forty rows of the same name says nothing). Clicking a line raises that commit's detail strip and offers a one-click jump to History filtered to "this person, on this file". It withdraws the moment the buffer is dirty — once lines have been typed the numbers no longer match the commits, and an annotation quietly pointing at the wrong line is worse than none.
+- **A Files tab** that browses the **whole repository**, not just what git has something to say about — "who wrote this line" is almost always about a file nobody has touched today. Directory tree plus a search box (multi-term, smart case); read, blame and edit. **It remembers where you were**: the expanded folders and the open file are kept per worktree and survive a restart.
+- **Pictures open as pictures**: PNG, JPEG, GIF, WebP, BMP, ICO, AVIF and SVG, identified by the **magic numbers in their format specs** (the extension only decides whether a file is worth asking about). SVG renders through an `<img>` with a `blob:` URL and is never inlined — the document inside an `<img>` is a non-scripted context by specification, and that guarantee is what makes showing SVG safe. A "Source" toggle shows the markup instead.
+- **Walk a diff change by change**: previous/next buttons and a change count on both the Changes and the History diff, on **F7 / Shift+F7** (IDEA's spelling). A file whose whole delta is `+1 −1` cannot be found by scrolling: the tint on that one line is only visible once you are already looking at it. The landing keeps three rows of context above the change, and wraps at either end rather than going dead.
+- **The History tab is stacked**: the commit list spans the whole drawer, one line per commit, with the tree and diff below it — the same arrangement as the Changes tab, so there is one layout to learn. In three columns the list had about 420px and **every subject was ellipsised**, which is the part a log is read for; dragging a divider could not help, since the drawer's width is fixed and it only moves the shortage elsewhere. The split between the two halves drags.
+
+### Fixed
+
+- **A file the editor cannot round-trip is refused before the save, not after**: a CRLF or non-UTF-8 file offers no edit affordance at all, rather than a button whose press would rewrite bytes nobody touched.
+- **Every gesture that would drop the buffer asks first**: another file, another tab, closing the drawer, switching worktree.
+- **A leave gesture that did not actually happen can no longer disarm the unsaved-edits guard.**
+- **A file with no grammar crashed the whole header slot.**
+- **A shortened line is changed, not vanished** — the side-by-side view used to read it as a deletion.
+- **The stacked split could not be dragged back open after the window got shorter.** The list's height is stored in pixels and only the *drag* clamped it; make the window shorter and the stored height is taller than everything — the lower half collapses to zero and the handle is pushed past the bottom edge, leaving nothing on screen to pull it back with. The cap now lives in the stylesheet as a percentage, re-resolved on every layout. Your chosen height is capped, not rewritten: make the window tall again and it returns.
+- **The tree/diff divider in History was pinned at its minimum.** The ceiling is `drawer − neighbour − MIN_DIFF`, and the stacked commit list spans the whole drawer, so that came out negative. Neighbourliness is now decided by geometry: two panes take space from each other only when one ends where the other begins.
+- **The "this commit has a body" marker (`···`) floated over to the author's name.** The subject was allowed to grow as well as shrink — invisible while the list was a narrow column, and a defect once it spanned the drawer, where the subject takes all the free space and pushes the marker a thousand pixels right.
+- **The blame toggle keeps git's own wording.**
+
+### Performance
+
+- **The Files tab froze on a large repository.** Reproduced and measured on a scratch repository of 56,000 files (the host caps `repoTree` at 50,000) with one directory holding 6,000 subdirectories:
+  - **One click could put an unbounded number of rows in the DOM.** Files were capped per directory at 100; **subdirectories were not** — expanding that directory rendered 6,000 buttons: 875ms of main thread and a **628ms frozen frame**, growing with the directory. Subdirectories are now capped the same way, with the same "and N others" marker and the same escape hatch: the search box reads the whole path list and ignores the tree. That same click is now 123ms, no stall, 123 rows.
+  - **The whole tree rebuilt itself on a timer.** The drawer polls `git status` every 3–15 seconds, and the untracked-path array comes back with a new identity whether or not the repository moved — the head of a chain that runs merge, then directory tree, then rows. Holding it steady while its contents are unchanged took the script time per 20s of sitting still from 49–92ms (rising with the number of rows on screen) to a flat ~4ms. That matters most while an agent is running, when the poll is every 3 seconds rather than 15.
+- **The file browser holds up at repository scale**: the path list, the directory tree and the rows are pure functions with their own caps, and the number of rendered rows does not follow the size of the repository.
+
 ## [0.1.5] - 2026-08-18
 
 ### Fixed
