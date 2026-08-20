@@ -2,6 +2,16 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.7] - 2026-08-20
+
+### Added
+
+- **The History tab keeps both arrangements and you pick**, defaulting to the three columns. 0.1.6 stacked the tab for a measured reason — in three columns the commit list had about 420px and every subject was ellipsised — but it paid for that in the other axis: the list went from thirteen rows tall to whatever is left above the diff. Both cost something, which makes this a choice rather than a fix. The switch is at the end of the `Branch` row, two icon buttons; the choice is remembered per browser. Each arrangement **keeps its own size**: side by side you drag a width, stacked you drag a height, and switching back finds the pane where you left it. The commit row changes shape with it — two lines beside the diff, where a 340px column cannot hold a hash, an author, a date and a subject; one line when it spans the drawer, in `git log --oneline`'s order.
+
+### Fixed
+
+- **The commit list's head wraps instead of clipping its search box at the pane's edge.** Dragged narrow, the pane cannot hold a title, a `Filter by` button and a search box on one line, and what it used to do was cut the search box off at the pane boundary — a control showing half of itself, with nothing to say the other half existed.
+
 ## [0.1.6] - 2026-08-20
 
 ### Added
