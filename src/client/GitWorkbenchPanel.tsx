@@ -59,6 +59,7 @@ import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import { countBlocks, unifiedBlocks } from './diff-nav.ts'
+import { clampPane, neighbourWidth } from './pane-size.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, gateLeave, isDirty,
@@ -1385,8 +1386,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const applyPane = (which: PaneWidthKey, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean): void => {
     const min = which === 'commits' ? MIN_COMMITS_WIDTH : MIN_TREE_WIDTH
     const other = which === 'commits' ? measured.tree : measured.commits
-    const max = Math.max(min, measured.drawer - other - MIN_DIFF_WIDTH)
-    const clamped = Math.min(Math.max(next, min), max)
+    const clamped = clampPane(next, min, measured.drawer, other, MIN_DIFF_WIDTH)
     setPanes(prev => {
       const updated = { ...prev, [which]: clamped }
       if (persist) writeStored(STORE_PANES, updated)
@@ -1998,11 +1998,20 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    * resized since the last render.
    * @returns the three widths in px.
    */
-  const measurePanes = (): { drawer: number; commits: number; tree: number } => ({
-    drawer: drawerRef.current?.clientWidth ?? window.innerWidth,
-    commits: commitsRef.current?.getBoundingClientRect().width ?? 0,
-    tree: treeRef.current?.getBoundingClientRect().width ?? 0,
-  })
+  const measurePanes = (): { drawer: number; commits: number; tree: number } => {
+    const commits = commitsRef.current?.getBoundingClientRect() ?? null
+    const tree = treeRef.current?.getBoundingClientRect() ?? null
+    return {
+      drawer: drawerRef.current?.clientWidth ?? window.innerWidth,
+      // Each width counts only where the pane is actually IN THE WAY of the
+      // other. Stacked, the commit list spans the drawer above the row rather
+      // than sitting beside the tree, and taking its width as the tree's
+      // neighbour made the ceiling smaller than the floor — the tree stayed at
+      // its minimum whatever the pointer did.
+      commits: neighbourWidth(commits, tree),
+      tree: neighbourWidth(tree, commits),
+    }
+  }
 
   /**
    * @param which - the pane a divider resizes.

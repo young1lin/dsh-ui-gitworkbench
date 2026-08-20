@@ -56,3 +56,4 @@ scripts/verify_stacked_history.py
 scripts/verify_editable_cue.py
 scripts/verify_stacked_drag.py
 scripts/verify_history_nav.py
+scripts/verify_tree_divider.py
