@@ -33,6 +33,45 @@ This split shapes everything else:
 - `@Remote` method params must be bare identifiers with `signal` last (the gateway reads `Function.prototype.toString`), and return values must be JSON-safe — no `undefined` property values, omit the key entirely.
 - Host git calls use `ctx.subprocess.spawn` with `stdout: 'pipe'`, accumulating chunks manually — never `ctx.shell` (PTY scrollback silently truncates large output: lost branch headers, lost files).
 
+## Performance first, and no leaks
+
+This is the drawer's first requirement, ahead of features. It reads
+repositories that are large, files that are long, and diffs that are dense, and
+every one of those has, at some point, frozen it for seconds. The rules below
+are what those freezes cost to find.
+
+- **Nothing may be proportional to the file, the diff, or the repository.**
+  Work is proportional to the VIEWPORT: the rows on screen, plus a bounded
+  overscan. `row-window.ts` decides which rows are in the DOM; `token-cache.ts`
+  decides which lines get tokenized. A new pane wires into both — it does not
+  invent a third answer, and it does not render "just this once" over
+  everything.
+- **A cap that turns a feature off is not a fix.** The Files tab used to stop
+  colouring past 2,000 lines and print a notice about it; that is a freeze
+  traded for a missing feature. Bound the WORK, keep the feature.
+- **Never put an O(document) pass on the keystroke path.** The live diff tint
+  cost 709ms per keystroke at 4,000 lines. Map what is already computed through
+  the change and recompute when the typing stops (`IdleLayer` in
+  `CodeEditor.tsx`).
+- **Caches are bounded, evicting, and able to report their own size**, so a
+  test can prove the bound instead of trusting it — `ChunkedTokens.size()`,
+  `LineTokens.size()`, `CommitPayloadCache`. An unbounded cache is a leak with
+  a nicer name.
+- **Everything acquired is released**: `addEventListener` /
+  `removeEventListener`, `setInterval` / `clearInterval`, every observer
+  `disconnect()`ed, every timer cleared in the view's `destroy()` or the
+  effect's cleanup. `tests/no-leaks.test.ts` counts the pairs per file, so an
+  unbalanced one fails the suite.
+- **Measure before and after, on real code, and put the numbers in the commit
+  message.** Generated fixtures lie: 4,000 identical lines with one change
+  opened in 200ms while the reporter's 800-line file took two seconds. The
+  live probes under `scripts/` (`verify_perf_profile.py`,
+  `verify_paint_window.py`) take a CDP CPU profile and count painted spans, so
+  the answer is a function name and a span count, not an impression. A
+  "performance fix" with no before/after number is a guess.
+- **A fast pane that shows nothing is not fast.** Every perf probe asserts what
+  is ON SCREEN as well as what it cost.
+
 ## Testing pattern
 
 Pure rules live in React/CSS-free modules so vitest can load them — `src/client/stage-tree.ts`, `diff-model.ts`, `worktree-view.ts`, `commit-graph.ts`, `op-feedback.ts`, `themes.ts`, `highlight.ts` (client); `worktree.ts`, `style-store.ts`, `atomic-json.ts`, `commit-cache.ts`, `git-ops.ts`, `git-log.ts` (host). React state stays in `GitWorkbenchPanel.tsx` (~3400 lines: chip + drawer + diff rendering). New behavior = pure helper + unit tests first, component wiring after.
