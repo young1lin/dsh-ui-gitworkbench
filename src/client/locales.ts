@@ -47,6 +47,8 @@ export type WorkbenchKey =
   | 'bgNone' | 'bgChoose' | 'bgClear' | 'bgBlur' | 'bgVeil' | 'bgWorking' | 'bgFailed' | 'bgTooBig'
   | 'cssPlaceholder' | 'cssImport' | 'cssApply' | 'cssUnapplied' | 'styleFailed'
   | 'resizeLabel' | 'resizeCommits' | 'resizeTree' | 'resizeSides'
+  // History arrangement switch: the commit list beside the diff, or above it
+  | 'historyLayout' | 'layoutColumns' | 'layoutStacked'
   | 'expandAll' | 'collapseAll' | 'noBranch'
   | 'copyCommit' | 'copiedCommit'
   // write operations
@@ -149,6 +151,9 @@ export const zh: Record<WorkbenchKey, string> = {
   styleFailed: '保存失败',
   resizeLabel: '拖动调整抽屉宽度',
   resizeCommits: '拖动调整提交列表宽度',
+  historyLayout: '提交列表布局',
+  layoutColumns: '并排：列表与差异分列',
+  layoutStacked: '上下：列表横跨顶部',
   resizeTree: '拖动调整文件树宽度',
   resizeSides: '拖动调整左右两栏宽度',
   sourceLabel: '统计来源切换',
@@ -384,6 +389,9 @@ export const en: Record<WorkbenchKey, string> = {
   styleFailed: 'Could not save',
   resizeLabel: 'Drag to resize the drawer',
   resizeCommits: 'Drag to resize the commit list',
+  historyLayout: 'Commit list layout',
+  layoutColumns: 'Side by side: list beside the diff',
+  layoutStacked: 'Stacked: list across the top',
   resizeTree: 'Drag to resize the file tree',
   resizeSides: 'Drag to resize the two columns',
   sourceLabel: 'Switch stats source',

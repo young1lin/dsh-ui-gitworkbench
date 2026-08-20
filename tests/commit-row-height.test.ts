@@ -1,19 +1,30 @@
 /**
- * The commit row's height is one fact with two homes.
+ * The commit row's height, and the two places it must arrive intact.
  *
- * The lane graph is drawn per row as an SVG exactly `GRAPH_ROW_H` tall, with
+ * The lane graph draws each row as an SVG exactly as tall as the row, with
  * lines running from its top edge to its bottom edge; the row itself is sized
- * by `.commitLine`'s `height` in the stylesheet. When the two disagree the
- * graph does not fail — every lane simply stops short of, or overshoots, the
- * seam between rows, and the braid a reader is following comes apart. That is
- * invisible in review and silent at runtime, which is what puts it here.
+ * by `.commitLine` in the stylesheet. When the two disagree the graph does not
+ * fail — every lane simply stops short of, or overshoots, the seam between
+ * rows, and the braid a reader is following comes apart. That is invisible in
+ * review and silent at runtime, which is what puts it here.
  *
- * The source is read as TEXT rather than imported: the panel pulls a CSS
+ * It used to be one number written twice, and this file compared them. Now the
+ * History tab has two arrangements wanting two differently shaped rows, so the
+ * number lives once in `COMMIT_ROW_H` and travels: the panel publishes the
+ * active entry as a custom property the stylesheet reads, and hands the same
+ * entry to the graph as a prop. What is guarded is therefore the ROUTE rather
+ * than a value — including that the property is actually defined, since a
+ * custom property that is never set makes the whole declaration invalid at
+ * computed-value time and the row silently loses its height.
+ *
+ * The sources are read as TEXT rather than imported: the panel pulls a CSS
  * module and React, neither of which loads in a node test environment.
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+
+import { COMMIT_ROW_H } from '../src/client/history-layout.ts'
 
 const css = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.module.css', import.meta.url)), 'utf8')
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.tsx', import.meta.url)), 'utf8')
@@ -28,6 +39,9 @@ const tsx = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.
 function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
+
+/** The name the height travels under, from the panel to the stylesheet. */
+const PROPERTY = '--gs-commit-row'
 
 describe('the commit subject', () => {
   it('does not grow past its own text', () => {
@@ -48,25 +62,49 @@ describe('the commit subject', () => {
 })
 
 describe('the commit row height', () => {
-  it('is the same number in the graph and in the stylesheet', () => {
-    const constant = /const GRAPH_ROW_H = (\d+)/.exec(code(tsx))
-    expect(constant, 'GRAPH_ROW_H not found in GitWorkbenchPanel.tsx').not.toBeNull()
-
+  it('is taken from the property rather than written into the stylesheet', () => {
     const rule = /\.commitLine\s*\{([^}]*)\}/.exec(code(css))
     expect(rule, '.commitLine rule not found').not.toBeNull()
-    const height = /height:\s*(\d+)px/.exec(rule![1]!)
-    expect(height, '.commitLine declares no pixel height').not.toBeNull()
-
-    expect(Number(height![1]), 'the row and the lane segment drawn for it must be equally tall')
-      .toBe(Number(constant![1]))
+    const height = /height:\s*([^;]+);/.exec(rule![1]!)
+    expect(height, '.commitLine declares no height').not.toBeNull()
+    // A pixel count here would pin one arrangement's row onto both.
+    expect(height![1]!.trim(), 'the row height must come from the panel')
+      .toBe(`var(${PROPERTY})`)
   })
 
-  it('fits one line of text, which is what the stacked History tab assumes', () => {
-    // A guard against the number drifting back up rather than merely apart:
-    // the list spans the drawer now and a commit is one line, so a row twice
-    // this tall would spend the stacked layout's scarcest axis on padding.
-    const constant = Number(/const GRAPH_ROW_H = (\d+)/.exec(code(tsx))![1])
-    expect(constant).toBeGreaterThanOrEqual(20)
-    expect(constant).toBeLessThanOrEqual(34)
+  it('is published by the panel from the layout in force', () => {
+    const panel = code(tsx)
+    // An undefined property invalidates the declaration above and the row
+    // loses its height with nothing said anywhere.
+    expect(panel, `${PROPERTY} is read by the stylesheet but never defined`)
+      .toContain(`'${PROPERTY}':`)
+    // From the ACTIVE layout, and from `COMMIT_ROW_H` rather than a literal:
+    // published off a fixed key, the switch would change the rows' shape
+    // without changing their height.
+    expect(panel, 'the published height must follow the chosen layout')
+      .toContain(`'${PROPERTY}': \`\${COMMIT_ROW_H[historyLayout]}px\``)
+  })
+
+  it('reaches the lane graph as the same entry', () => {
+    const panel = code(tsx)
+    expect(panel, 'GraphCell should be handed the row height, not read a constant')
+      .toMatch(/rowH=\{COMMIT_ROW_H\[layout\]\}/)
+    expect(panel, "the graph's SVG must be exactly as tall as the row")
+      .toMatch(/height=\{rowH\}/)
+    // The graph's own geometry — the dot's centre, where an edge leaves the
+    // bottom — has to come from the prop too.
+    const cell = /function GraphCell\([\s\S]*?\n\}/.exec(panel)
+    expect(cell, 'GraphCell not found').not.toBeNull()
+    expect(cell![0], 'GraphCell still has a hard-coded row height')
+      .not.toMatch(/\b(?:28|48)\b/)
+  })
+
+  it('fits one line stacked and two beside the diff', () => {
+    // Bounds rather than exact numbers: the point is the SHAPE each row has to
+    // hold, which is what stops a future tweak turning one into the other.
+    expect(COMMIT_ROW_H.stacked).toBeGreaterThanOrEqual(20)
+    expect(COMMIT_ROW_H.stacked).toBeLessThanOrEqual(34)
+    expect(COMMIT_ROW_H.columns).toBeGreaterThanOrEqual(40)
+    expect(COMMIT_ROW_H.columns).toBeLessThanOrEqual(60)
   })
 })

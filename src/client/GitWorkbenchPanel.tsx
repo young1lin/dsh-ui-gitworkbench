@@ -60,6 +60,7 @@ import { parsePatch } from '../patch-model.ts'
 import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import { countBlocks, unifiedBlocks } from './diff-nav.ts'
 import { clampPane, neighbourWidth } from './pane-size.ts'
+import { COMMIT_ROW_H, DEFAULT_HISTORY_LAYOUT, isHistoryLayout, type HistoryLayout } from './history-layout.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, gateLeave, isDirty,
@@ -423,6 +424,10 @@ const STORE_PANES = 'dsh-ui-gitworkbench:panes'
  *  belongs here beside the layout rather than in the host's per-project store:
  *  two people on one repository should not share each other's place. */
 const STORE_FILES = 'dsh-ui-gitworkbench:files'
+/** Which way the History tab arranges its panes. Its own key rather than a
+ *  field of the appearance object: that one is about colour, and this choice
+ *  has to survive a build that adds a palette. */
+const STORE_HISTORY_LAYOUT = 'dsh-ui-gitworkbench:history-layout'
 
 /** Dragged pane sizes in px; null on any of them keeps that pane's CSS default. */
 interface PaneWidths {
@@ -742,6 +747,16 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   /** Dragged pane widths, persisted so a layout survives a reload. */
   const [panes, setPanes] = useState<PaneWidths>(
     () => readStored(STORE_PANES, isPaneWidths, DEFAULT_PANES),
+  )
+  /**
+   * The History tab's arrangement.
+   *
+   * Panel-level, beside the palette rather than inside the tab: the choice has
+   * to hold across tab switches and reopens, and the drawer's own card is where
+   * the row height it implies is published from.
+   */
+  const [historyLayout, setHistoryLayout] = useState<HistoryLayout>(
+    () => readStored(STORE_HISTORY_LAYOUT, isHistoryLayout, DEFAULT_HISTORY_LAYOUT),
   )
   /** Per-project and global styling; both scopes, unresolved. */
   const [style, setStyle] = useState<StyleSettings>(EMPTY_SETTINGS)
@@ -1435,6 +1450,18 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     if (persist) writeStored(STORE_WIDTH, clamped)
   }
 
+  /**
+   * Pick the History tab's arrangement.
+   *
+   * Written through immediately: unlike a drag this is one click, so there is
+   * no intermediate frame to withhold a synchronous storage write for.
+   * @param next - the arrangement to switch to.
+   */
+  const applyHistoryLayout = (next: HistoryLayout): void => {
+    setHistoryLayout(next)
+    writeStored(STORE_HISTORY_LAYOUT, next)
+  }
+
   /** Tab switch. No direction refetches the working tree: `viewKey` already
    *  separates the tabs' per-file diff caches, so bumping `gen` here only cost a
    *  redundant round trip. */
@@ -1534,6 +1561,8 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           panes={panes}
           onPane={applyPane}
           onCommitsTall={applyCommitsTall}
+          historyLayout={historyLayout}
+          onHistoryLayout={applyHistoryLayout}
           onClose={() => setOpen(false)}
           onRefresh={refresh}
           commitDraft={commitDraft}
@@ -1747,6 +1776,9 @@ interface DrawerProps {
   onPane: (which: PaneWidthKey, next: number, measured: { drawer: number; commits: number; tree: number }, persist: boolean) => void
   /** Drag the History tab's horizontal split: the commit list's height in px. */
   onCommitsTall: (next: number, bodyHeight: number, persist: boolean) => void
+  /** Which way the History tab arranges its panes. */
+  historyLayout: HistoryLayout
+  onHistoryLayout: (next: HistoryLayout) => void
   onClose: () => void
   onRefresh: () => void
   /** Commit draft, lifted so a tab switch cannot discard it. */
@@ -1793,7 +1825,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2066,6 +2098,15 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     onCommitsTall(clientY - box.top, box.height, done)
   }
 
+  /**
+   * Whether the History tab is showing its stacked arrangement.
+   *
+   * Three things follow from it and they must agree: the body's direction, how
+   * the commit list is sized, and which way its divider slides. Read from one
+   * name so a fourth reader cannot be added out of step.
+   */
+  const stackedHistory = tab === 'history' && historyLayout === 'stacked'
+
   // Width and the background's three tunables are inline because both are live
   // user values; the stylesheet only says what reads them. The pane floors are
   // inline for a different reason: they belong to the drag clamp above, and
@@ -2079,6 +2120,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
       '--gs-min-diff': `${MIN_DIFF_WIDTH}px`,
       '--gs-min-commits-tall': `${MIN_COMMITS_HEIGHT}px`,
       '--gs-min-stacked-lower': `${MIN_STACKED_LOWER}px`,
+      // The commit row's height, which the lane graph also draws itself at.
+      // Published rather than written into the stylesheet twice: the two
+      // arrangements want different rows, and lanes only meet across the seam
+      // between rows while both numbers come from `COMMIT_ROW_H`.
+      '--gs-commit-row': `${COMMIT_ROW_H[historyLayout]}px`,
     } as CSSProperties,
     ...maximized || width === null ? {} : { width: `${width}px` },
     ...background === null ? {} : {
@@ -2230,14 +2276,46 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             onHeadRef={onHeadRef}
           />
         ) : null}
-        {tab === 'history' && branches.length > 0 ? (
+        {/* History's own toolbar: which ref is listed, and how the panes are
+            arranged. The switch lives HERE rather than in the commit list's
+            head because that head is about 340px wide in the column layout and
+            already holds a title, a funnel and a search box — adding a fourth
+            control pushed it off the pane, and the narrower the reader dragged
+            the list the sooner it went. This row spans the drawer whichever
+            arrangement is in force, so the control cannot be squeezed out of
+            reach by the thing it controls.
+
+            The bar renders for the whole tab, not only when there are branches
+            to pick between: a repository with an unborn HEAD still has an
+            arrangement, and a control that comes and goes is worse than one
+            beside an empty space. */}
+        {tab === 'history' ? (
           <div className={css.compareBar}>
-            <RefPicker
-              t={t} label={t('historyRefLabel')} value={historyRef}
-              branches={branches} worktreeBranches={worktreeBranches} truncated={branchesTruncated}
-              onPick={onHistoryRef}
-              allLabel={t('allBranches')}
-            />
+            {branches.length > 0 ? (
+              <RefPicker
+                t={t} label={t('historyRefLabel')} value={historyRef}
+                branches={branches} worktreeBranches={worktreeBranches} truncated={branchesTruncated}
+                onPick={onHistoryRef}
+                allLabel={t('allBranches')}
+              />
+            ) : null}
+            {/* Two pressed-state buttons rather than one that toggles, so the
+                arrangement in force is readable without knowing which way a
+                toggle points. */}
+            <div className={css.layoutSwitch} role="group" aria-label={t('historyLayout')}>
+              <LayoutButton
+                glyph={<ColumnsGlyph />}
+                label={t('layoutColumns')}
+                on={historyLayout === 'columns'}
+                onPick={() => onHistoryLayout('columns')}
+              />
+              <LayoutButton
+                glyph={<StackedGlyph />}
+                label={t('layoutStacked')}
+                on={historyLayout === 'stacked'}
+                onPick={() => onHistoryLayout('stacked')}
+              />
+            </div>
           </div>
         ) : null}
         {/* Write operations act on the working tree, so they belong to the tab
@@ -2252,19 +2330,19 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             role="status"
           >{opMessage(t, opResult.op, opResult.result)}</div>
         ) : null}
-        {/* History stacks: the commit list across the top, the tree and diff
-            below it. Three columns left every one of them too narrow — the
-            subjects, which are the reason to read a log at all, were the part
-            that gave way — and the drawer's total width is fixed, so dragging
-            a divider could only move the shortage somewhere else. Stacked, the
-            subject gets the whole drawer, and the lower half becomes exactly
-            the Changes tab's layout: one arrangement to learn, not two. */}
-        <div ref={bodyRef} className={css.body} data-stacked={tab === 'history' ? '' : undefined}>
+        {/* History arranges itself two ways and the reader picks; see
+            `history-layout.ts` for what each is good at. Stacked, the commit
+            list spans the top and the tree and diff sit below it, so a subject
+            is never cut; in columns the list is a pane beside them, so the log
+            is as tall as the drawer. Everything else on the tab is identical,
+            which is why one flag decides all three differences here. */}
+        <div ref={bodyRef} className={css.body} data-stacked={stackedHistory ? '' : undefined}>
           {tab === 'history' ? (
             <>
               <CommitList
                 paneRef={commitsRef}
-                style={paneTall(panes.commitsTall ?? null)}
+                style={stackedHistory ? paneTall(panes.commitsTall ?? null) : paneStyle(panes.commits)}
+                layout={historyLayout}
                 t={t}
                 loading={historyLoading}
                 commits={commits}
@@ -2281,7 +2359,12 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                 fetchAuthors={fetchAuthors}
                 fetchRepoTree={fetchRepoTree}
               />
-              <PaneDivider axis="y" label={t('resizeCommits')} onDrag={commitsTallDrag} />
+              {/* Each arrangement drags its own stored size — a width and a
+                  height are separate fields, so switching back finds the pane
+                  where it was left rather than reset. */}
+              {stackedHistory
+                ? <PaneDivider axis="y" label={t('resizeCommits')} onDrag={commitsTallDrag} />
+                : <PaneDivider label={t('resizeCommits')} onDrag={paneDrag('commits', commitsRef)} />}
             </>
           ) : null}
           <div className={css.bodyRow}>
@@ -3518,17 +3601,6 @@ function CopyCommitButton({ t, text }: { t: Translate; text: string }): ReactNod
  */
 /* ---------- commit graph ---------- */
 
-/**
- * Row height the graph and the list agree on. The lines only join up if every
- * row is exactly as tall as the segment drawn for it, so this number and
- * `.commitLine`'s `height` are one fact with two homes —
- * `tests/commit-row-height.test.ts` holds them together.
- *
- * 28 since the History tab stacked: the list spans the drawer's full width, a
- * commit fits on one line, and 48px of row would spend the vertical space the
- * stacked layout has least of on empty padding.
- */
-const GRAPH_ROW_H = 28
 /** Horizontal distance between lanes. */
 const GRAPH_LANE_W = 14
 /** Ref chips shown inline before the subject; the rest collapse into a "+N". */
@@ -3542,23 +3614,28 @@ const laneX = (lane: number): number => lane * GRAPH_LANE_W + GRAPH_LANE_W / 2
 /**
  * One row's slice of the commit graph.
  *
- * Drawn as an SVG of exactly {@link GRAPH_ROW_H} pixels, so consecutive rows
- * butt together and a lane reads as one unbroken line down the list. The dot
- * sits at the vertical centre; edges leave the top edge, the dot, or the bottom
- * edge, and a cubic with its control points at the quarter heights gives the
- * S-curve every git client draws for a branch or a merge.
+ * Drawn as an SVG exactly as tall as the row, so consecutive rows butt together
+ * and a lane reads as one unbroken line down the list. The dot sits at the
+ * vertical centre; edges leave the top edge, the dot, or the bottom edge, and a
+ * cubic with its control points at the quarter heights gives the S-curve every
+ * git client draws for a branch or a merge.
+ *
+ * The height is passed in rather than read from a constant here: the two
+ * History arrangements want differently shaped rows, and the segment and the
+ * row it belongs to must come from the same entry of `COMMIT_ROW_H` or the
+ * lanes stop meeting across the seam between rows.
  */
-function GraphCell({ row, width, active }: { row: GraphRow; width: number; active: boolean }): ReactNode {
+function GraphCell({ row, width, active, rowH }: { row: GraphRow; width: number; active: boolean; rowH: number }): ReactNode {
   const lanes = Math.min(width, GRAPH_MAX_LANES)
   const w = lanes * GRAPH_LANE_W
-  const mid = GRAPH_ROW_H / 2
+  const mid = rowH / 2
   const visible = (lane: number): boolean => lane < GRAPH_MAX_LANES
   const stroke = (lane: number): string => `var(--gs-graph-${lane % 6})`
 
   const paths: ReactNode[] = []
   for (const lane of row.through) {
     if (!visible(lane)) continue
-    paths.push(<path key={`t${lane}`} d={`M ${laneX(lane)} 0 V ${GRAPH_ROW_H}`} stroke={stroke(lane)} />)
+    paths.push(<path key={`t${lane}`} d={`M ${laneX(lane)} 0 V ${rowH}`} stroke={stroke(lane)} />)
   }
   for (const lane of row.into) {
     if (!visible(lane) || !visible(row.lane)) continue
@@ -3575,11 +3652,11 @@ function GraphCell({ row, width, active }: { row: GraphRow; width: number; activ
   for (const lane of row.outOf) {
     if (!visible(lane) || !visible(row.lane)) continue
     paths.push(lane === row.lane
-      ? <path key={`o${lane}`} d={`M ${laneX(lane)} ${mid} V ${GRAPH_ROW_H}`} stroke={stroke(lane)} />
+      ? <path key={`o${lane}`} d={`M ${laneX(lane)} ${mid} V ${rowH}`} stroke={stroke(lane)} />
       : (
         <path
           key={`o${lane}`}
-          d={`M ${laneX(row.lane)} ${mid} C ${laneX(row.lane)} ${mid + mid / 2}, ${laneX(lane)} ${mid + mid / 2}, ${laneX(lane)} ${GRAPH_ROW_H}`}
+          d={`M ${laneX(row.lane)} ${mid} C ${laneX(row.lane)} ${mid + mid / 2}, ${laneX(lane)} ${mid + mid / 2}, ${laneX(lane)} ${rowH}`}
           stroke={stroke(lane)}
         />
       ))
@@ -3589,8 +3666,8 @@ function GraphCell({ row, width, active }: { row: GraphRow; width: number; activ
     <svg
       className={css.graphCell}
       width={w}
-      height={GRAPH_ROW_H}
-      viewBox={`0 0 ${w} ${GRAPH_ROW_H}`}
+      height={rowH}
+      viewBox={`0 0 ${w} ${rowH}`}
       aria-hidden="true"
       focusable="false"
     >
@@ -3611,7 +3688,7 @@ function GraphCell({ row, width, active }: { row: GraphRow; width: number; activ
   )
 }
 
-function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
+function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth, layout }: {
   t: Translate
   commit: GitCommit
   active: boolean
@@ -3619,6 +3696,8 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
   /** This commit's lane geometry; absent while the graph is still empty. */
   graphRow?: GraphRow
   graphWidth: number
+  /** Which arrangement the list is in, which decides the row's shape. */
+  layout: HistoryLayout
 }): ReactNode {
   const rowRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
@@ -3661,6 +3740,25 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
 
   const refs = commit.refs ?? []
 
+  /* The part both shapes share, and the only part either is really for. */
+  const subjectRow = (
+    <span className={css.commitSubjectRow}>
+      {/* Capped at two. A release commit can carry six refs, and the
+          subject is what the row is actually for — the rest are counted
+          and named in the title rather than crowding it out. */}
+      {refs.slice(0, COMMIT_REF_CHIPS).map(ref => (
+        <span key={ref} className={css.commitRef} title={ref}>{ref}</span>
+      ))}
+      {refs.length > COMMIT_REF_CHIPS ? (
+        <span className={css.commitRefMore} title={refs.slice(COMMIT_REF_CHIPS).join('\n')}>
+          +{refs.length - COMMIT_REF_CHIPS}
+        </span>
+      ) : null}
+      <span className={css.commitSubject}>{commit.subject}</span>
+      {body.length > 0 ? <span className={css.commitHasBody} aria-hidden="true">···</span> : null}
+    </span>
+  )
+
   return (
     <>
       {/* The graph is a SIBLING of the row button, spanning the line's full
@@ -3669,7 +3767,7 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
           inset and its rounded corners. */}
       <div className={css.commitLine}>
         {graphRow !== undefined
-          ? <GraphCell row={graphRow} width={graphWidth} active={active} />
+          ? <GraphCell row={graphRow} width={graphWidth} active={active} rowH={COMMIT_ROW_H[layout]} />
           : null}
         <button
           ref={rowRef}
@@ -3681,31 +3779,33 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth }: {
           onMouseEnter={show}
           onMouseLeave={hide}
         >
-          {/* One line, in git log --oneline's order: a fixed-width hash, then
-              the subject, then who and when pushed to the right. The hash
-              being fixed width is what aligns every subject into a column the
-              eye can run down — leading with the author's name instead would
-              start each subject at a different place. */}
-          <code className={css.commitHash}>{commit.hash}</code>
-          <span className={css.commitSubjectRow}>
-            {/* Capped at two. A release commit can carry six refs, and the
-                subject is what the row is actually for — the rest are counted
-                and named in the title rather than crowding it out. */}
-            {refs.slice(0, COMMIT_REF_CHIPS).map(ref => (
-              <span key={ref} className={css.commitRef} title={ref}>{ref}</span>
-            ))}
-            {refs.length > COMMIT_REF_CHIPS ? (
-              <span className={css.commitRefMore} title={refs.slice(COMMIT_REF_CHIPS).join('\n')}>
-                +{refs.length - COMMIT_REF_CHIPS}
+          {layout === 'stacked' ? (
+            <>
+              {/* One line, in git log --oneline's order: a fixed-width hash,
+                  then the subject, then who and when pushed to the right. The
+                  hash being fixed width is what aligns every subject into a
+                  column the eye can run down — leading with the author's name
+                  instead would start each subject at a different place. */}
+              <code className={css.commitHash}>{commit.hash}</code>
+              {subjectRow}
+              <span className={css.commitMeta}>
+                {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
+                <span className={css.commitWhen}>{commit.when}</span>
               </span>
-            ) : null}
-            <span className={css.commitSubject}>{commit.subject}</span>
-            {body.length > 0 ? <span className={css.commitHasBody} aria-hidden="true">···</span> : null}
-          </span>
-          <span className={css.commitMeta}>
-            {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
-            <span className={css.commitWhen}>{commit.when}</span>
-          </span>
+            </>
+          ) : (
+            <>
+              {/* Two lines, because a pane beside the diff has no width to
+                  spare: everything but the subject goes above it, and the
+                  subject then gets the column to itself. */}
+              <span className={css.commitTop}>
+                <code className={css.commitHash}>{commit.hash}</code>
+                {authorName.length > 0 ? <span className={css.commitAuthor}>{authorName}</span> : null}
+                <span className={css.commitWhen}>{commit.when}</span>
+              </span>
+              {subjectRow}
+            </>
+          )}
         </button>
       </div>
       {open && box !== null && host !== null ? createPortal(
@@ -3893,15 +3993,81 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
 }
 
 /**
- * The commit log as its own full-height pane.
+ * The two arrangements, drawn in the same 16px/1px idiom as the drawer's other
+ * glyphs: a pane and its neighbour, either side by side or one over the other.
+ * The filled half is the list, so the picture says which pane moves.
+ */
+function ColumnsGlyph(): ReactNode {
+  return (
+    <svg
+      className={css.layoutGlyph}
+      width="16" height="16" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1"
+      strokeLinejoin="round" aria-hidden="true"
+    >
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <rect x="1.5" y="2.5" width="5" height="11" rx="1.5" fill="currentColor" stroke="none" opacity="0.55" />
+      <path d="M6.5 2.5 V13.5" />
+    </svg>
+  )
+}
+
+function StackedGlyph(): ReactNode {
+  return (
+    <svg
+      className={css.layoutGlyph}
+      width="16" height="16" viewBox="0 0 16 16"
+      fill="none" stroke="currentColor" strokeWidth="1"
+      strokeLinejoin="round" aria-hidden="true"
+    >
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <rect x="1.5" y="2.5" width="13" height="4" rx="1.5" fill="currentColor" stroke="none" opacity="0.55" />
+      <path d="M1.5 6.5 H14.5" />
+    </svg>
+  )
+}
+
+/**
+ * One end of the arrangement switch.
  *
- * It sits BESIDE the file tree rather than stacked above it, which is what
- * GitHub Desktop, the JetBrains git log and GitKraken all do: a commit list and
- * the selected commit's files are peer panes, each with its own scrollbar. The
- * earlier stacked layout had to be collapsible because two scrolling lists were
- * sharing one narrow column — a control that hid the thing you were reading and
- * that nobody could be expected to discover. Side by side, there is nothing to
- * collapse and nothing to explain.
+ * `aria-pressed` rather than a radio group: these are two states of one view
+ * control, not a value being submitted, and a screen reader then reads the
+ * arrangement in force without the group needing a name per option.
+ * @param glyph - the arrangement, drawn.
+ * @param label - accessible name, also the tooltip.
+ * @param on - whether this arrangement is the one in force.
+ * @param onPick - switch to it.
+ */
+function LayoutButton({ glyph, label, on, onPick }: {
+  glyph: ReactNode
+  label: string
+  on: boolean
+  onPick: () => void
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className={on ? `${css.layoutButton} ${css.layoutButtonOn}` : css.layoutButton}
+      aria-pressed={on}
+      aria-label={label}
+      title={label}
+      onClick={onPick}
+    >{glyph}</button>
+  )
+}
+
+/**
+ * The commit log as its own pane, in whichever arrangement the reader picked.
+ *
+ * Beside the file tree it is a peer pane the way GitHub Desktop, the JetBrains
+ * git log and GitKraken all draw it — list and selected commit's files side by
+ * side, each with its own scrollbar. Across the top it is IDEA's git log
+ * instead, which is the arrangement that stops a long subject being cut; see
+ * `history-layout.ts` for what each costs. The switch that picks between them
+ * is in the toolbar row above, not in this pane's head — the head is the first
+ * thing to run out of room when the pane is dragged narrow, which is exactly
+ * when a reader reaches for the switch. Either way there is nothing to
+ * collapse and nothing to discover.
  *
  * Pages load by scrolling. A button at the end of a growing list is the worst
  * of both worlds — it retreats every time it is used, and it asks the reader to
@@ -3910,13 +4076,18 @@ function PathTreeRows({ dirs, depth, expanded, stateOf, onToggleOpen, onTogglePa
  * what GitHub and GitLens do. The observer is rebuilt whenever the list grows,
  * so a page too short to fill the pane immediately triggers the next one.
  */
-function CommitList({ paneRef, style, t, loading, commits, active, onSelect, hasMore, loadingMore, onLoadMore, query, onQueryChange, error, statsPath, refName, fetchAuthors, fetchRepoTree }: {
+function CommitList({ paneRef, style, layout, t, loading, commits, active, onSelect, hasMore, loadingMore, onLoadMore, query, onQueryChange, error, statsPath, refName, fetchAuthors, fetchRepoTree }: {
   /** The pane element, which the divider beside it measures from. Not named
    *  `ref`: React reserves that on a function component, so it would be stripped
    *  from props and never reach this element. */
   paneRef: Ref<HTMLDivElement>
-  /** Dragged width, when the divider has been used. */
+  /** Dragged size, when the divider has been used: a width beside the diff, a
+   *  height above it. */
   style: CSSProperties | undefined
+  /** The arrangement in force, which decides the row's shape as well as the
+   *  pane's. The control that CHANGES it is not in here — see the toolbar row
+   *  above the panes. */
+  layout: HistoryLayout
   t: Translate
   /** First page in flight — the pane says "loading", not "no history", which
    *  would be a claim about the repository the data has not made. */
@@ -4107,7 +4278,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
   }, [hasMore, loadingMore, commits.length, onLoadMore])
 
   return (
-    <div ref={paneRef} className={css.commitsPane} style={style} data-gs-part="commits">
+    <div ref={paneRef} className={css.commitsPane} style={style} data-layout={layout} data-gs-part="commits">
       {/* No count: the only number available is how many pages have been loaded,
           which is not how many commits exist. A number that cannot be right is
           worse than none. */}
@@ -4369,6 +4540,7 @@ function CommitList({ paneRef, style, t, loading, commits, active, onSelect, has
               onSelect={onSelect}
               graphRow={graph.rows[index]}
               graphWidth={graph.width}
+              layout={layout}
             />
           ))}
           <div ref={sentinelRef} className={css.commitsSentinel} />

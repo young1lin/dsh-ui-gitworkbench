@@ -14,7 +14,9 @@
 ## Business Overview
 会话头的环境卡：分支 + ahead/behind + 增删计数（干净树也显示，仅 `stats.error` 时隐藏）。点开抽屉 = 文件树 + diff 两栏（变更页）或 提交列表 + 树 + diff 三栏（历史页），外加任意两分支对比页。
 
-**History 页签是上下分**（其余页签左右分）：提交列表横跨整宽在上，树+diff 在下——下半部分与 Changes 页签同构，只需学一套。三栏纵切的问题不是审美：抽屉总宽固定，拖分隔条只是把窘迫从一栏挪到另一栏，而最先让步的正是提交标题（实测 1900px 抽屉里列表只有 ~420px，标题全带省略号）。`.body[data-stacked]` 转成 column,`.bodyRow` **每个页签都渲染**（未堆叠时是行套行，零代价，换来一套 JSX 而非两套）。提交行随之改成单行（`hash | subject | 作者 时间`,按 `git log --oneline` 的顺序——hash 定宽才能让所有标题左对齐成一列可扫的东西）
+**History 页签有两种排布，由读者自选**（其余页签只有左右分）：`columns` 是提交列表与树、diff 并排的三栏；`stacked` 是列表横跨整宽在上、树+diff 在下，下半部分与 Changes 页签同构。两者各有代价，所以这是选项而非修复——三栏里抽屉总宽固定，拖分隔条只是把窘迫从一栏挪到另一栏，最先让步的正是提交标题（实测 1900px 抽屉里列表只有 ~420px，标题全带省略号）；上下分则把差异区本可以有的高度让了出去。默认 `columns`，选择存 localStorage 键 `dsh-ui-gitworkbench:history-layout`，开关是 `Branch` 那一行（`.compareBar`）右端的两个图标按钮。**不要放进提交列表标题栏**——三栏下那一栏只有约 340px，标题+funnel+搜索框已经占满，第四个控件会被挤出面板，而且读者把列表拖得越窄它消失得越早（第一版就是这么错的）。这一行横跨整个抽屉、且只在 History 出现，作用域正好，也不会被它所控制的那个面板挤掉；`branches` 为空时这一行照样渲染，只是里面没有 ref 选择器。
+
+实现上，`src/client/history-layout.ts` 是唯一真源（类型、校验器、`DEFAULT_HISTORY_LAYOUT`、`COMMIT_ROW_H`）。面板用一个 `stackedHistory` 标志同时决定三件事：`.body[data-stacked]`、列表按宽还是按高（`panes.commits` / `panes.commitsTall` 是两个字段，各存各的，来回切不丢）、分隔条 `axis` 取 x 还是 y。分隔条的钳制**不需要分情况**——`neighbourWidth` 按几何判断列表在不在树旁边，堆叠时自然算出 0。`.bodyRow` **每个页签都渲染**（未堆叠时是行套行，零代价，换来一套 JSX 而非两套）。行形状也跟着排布走：三栏是两行（hash/作者/时间一行，subject 一行，48px，因为 ~340px 的窄栏挤不下四样东西）；堆叠是单行（`hash | subject | 作者 时间`，按 `git log --oneline` 的顺序——hash 定宽才能让所有标题左对齐成一列可扫的东西，28px）。行高**只有一个家**：面板把 `COMMIT_ROW_H[layout]` 作为 `--gs-commit-row` 发出去，样式表读它，泳道图元把同一个值当 prop 收——两边对不上时泳道就接不上行与行之间的缝，静默无报错，所以 `tests/commit-row-height.test.ts` 守的是这条链路而不是某个数字
 
 抽屉 chrome 收敛为三行：header（**分支胶囊就是 worktree 选择器本体**、齿轮下挂设置浮层、四个图标按钮 最大化/刷新/设置/关闭）、tabs、syncBar——分支名与 ↑↓ 计数全抽屉各只出现一次（曾各两处）。
 

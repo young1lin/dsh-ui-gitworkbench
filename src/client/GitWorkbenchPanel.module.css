@@ -1278,7 +1278,11 @@
    the compact control it hosts, so a pane with tools and a pane without one
    still line up across the divider. */
 .paneHead {
-  display: flex; align-items: center; gap: 8px;
+  /* Wraps rather than overflows. Dragged narrow the pane cannot hold a title,
+     a funnel and a search box on one line, and what it used to do was clip the
+     search box at the pane's edge — a control half off the screen, with no
+     sign that the rest of it existed. */
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   flex: none;
   min-height: 37px; box-sizing: border-box;
   padding: 6px var(--gs-gutter-pane);
@@ -1320,10 +1324,12 @@
 .commitLine {
   display: flex; align-items: stretch;
   flex: none;
-  /* Must equal GRAPH_ROW_H in GitWorkbenchPanel.tsx, or the lanes drawn per
-     row stop meeting across the seam between rows. Guarded by
-     tests/commit-row-height.test.ts. */
-  height: 28px;
+  /* Published by the panel from `COMMIT_ROW_H`, which the lane graph also draws
+     each row's segment at — one source, because a row and its segment that
+     disagree leave the lanes short of the seam between rows. The two
+     arrangements want different rows, which is why this is a property and not
+     a number. Guarded by tests/commit-row-height.test.ts. */
+  height: var(--gs-commit-row);
 }
 .graphCell { flex: none; display: block; }
 /* An inset row, like dsh's own session rows: 12px radius, filled when active. */
@@ -1342,6 +1348,20 @@
   font-size: var(--gs-t-dense);
   overflow: hidden;
   transition: background 120ms ease, border-color 120ms ease;
+}
+/* Beside the diff the row turns into two lines: a pane of about 340px has no
+   width for the hash, the author, the date AND the subject on one, and the
+   subject is the part that would have given way. Above the diff it stays one
+   line — see the row's two shapes in `CommitRow`. */
+.commitsPane[data-layout="columns"] .commit {
+  flex-direction: column; align-items: stretch; justify-content: center; gap: 2px;
+}
+/* The subject line must not absorb the row's spare height, or the two lines
+   stop sitting together in the middle of the row. */
+.commitsPane[data-layout="columns"] .commitSubjectRow { flex: none; }
+.commitTop {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-width: 0;
 }
 .commit:hover { background: var(--gs-raise); }
 .commitActive { border-color: var(--gs-accent-border); background: var(--gs-accent-bg); }
@@ -2093,7 +2113,7 @@
  * its own padding, radius and font-size, and the same "small secondary button"
  * had drifted to four heights and three radii across one screen.
  */
-.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton, .funnelPreset {
+.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton, .funnelPreset, .layoutButton {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   box-sizing: border-box;
   flex: none;
@@ -2111,14 +2131,14 @@
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .btn:hover, .miniBtn:hover, .treeIcon:hover, .commitCopy:hover,
-.scopeBtn:hover, .refButton:hover, .funnelButton:hover, .funnelPreset:hover {
+.scopeBtn:hover, .refButton:hover, .funnelButton:hover, .funnelPreset:hover, .layoutButton:hover {
   background: var(--gs-raise);
   color: var(--gs-fg);
   border-color: var(--gs-fg-fainter);
 }
 .btn:focus-visible, .miniBtn:focus-visible, .treeIcon:focus-visible,
 .commitCopy:focus-visible, .scopeBtn:focus-visible, .refButton:focus-visible,
-.funnelPreset:focus-visible {
+.funnelPreset:focus-visible, .layoutButton:focus-visible {
   outline: 2px solid var(--gs-accent);
   outline-offset: 1px;
 }
@@ -2131,7 +2151,7 @@
 
 /* Pane tools give their vertical space back to the diff; the date presets sit
    inside a 320px popover, so they take the compact height too. */
-.treeIcon, .commitCopy, .funnelPreset {
+.treeIcon, .commitCopy, .funnelPreset, .layoutButton {
   height: var(--gs-h-compact);
   padding: var(--gs-pad-compact);
   font-size: var(--gs-t-dense);
@@ -2141,6 +2161,19 @@
    the pane drags down to, two more text buttons cannot share a row with the
    count — and these two are the pair a tree header always carries. */
 .treeIcon { width: var(--gs-h-compact); padding: 0; }
+/* The arrangement switch: two square icon buttons at the end of the commit
+   list's head, side by side with no gap so they read as one control. Icon-only
+   for the same reason the tree's are — the head already carries a title, a
+   funnel and a search box, and at the 190px the pane drags down to there is no
+   room for two more words. */
+/* Pushed to the far end of History's toolbar row, away from the ref picker:
+   one changes WHAT is listed, the other only where it is drawn. */
+.layoutSwitch { display: inline-flex; flex: none; gap: 2px; margin-left: auto; }
+.layoutButton { width: var(--gs-h-compact); padding: 0; }
+/* Qualified, like `.treeIconOn`: the shared vocabulary sets `color` at the
+   same specificity a few rules above. */
+.layoutButton.layoutButtonOn { color: var(--gs-accent); border-color: var(--gs-accent); }
+.layoutGlyph { display: block; }
 /* Qualified, like `.funnelButtonActive`: this sits inside the shared button
    vocabulary, which sets `color` at the same specificity a few lines above. */
 .treeIcon.treeIconOn { color: var(--gs-accent); border-color: var(--gs-accent); }
