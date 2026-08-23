@@ -1,0 +1,89 @@
+/* Change inspector.
+ *
+ * The session-header card lives in dsh chrome and keeps dsh's own --dsw-* tokens,
+ * so it is themed by the app and needs nothing here. The DRAWER paints its own
+ * surface — a diff needs an add/delete/word-level/syntax palette dsh does not
+ * define — so it carries a self-contained palette instead.
+ *
+ * Every drawer colour resolves through a --gs-* token. The palettes below are the
+ * only place a literal colour appears; each theme sets the same token names, so a
+ * theme is a palette swap and nothing else. `data-gs-theme` on the overlay picks
+ * one, and the panel computes it from the theme setting (`system` follows dsh's
+ * `body[data-ds-dark-theme]`; light/dark pin the drawer).
+ *
+ * One exception is deliberate: the mode picker's own light/dark chips are fixed
+ * white and near-black, because those buttons name colours rather than wear them.
+ *
+ * `data-gs-part` attributes on the overlay, card, header, tabs and three panes are
+ * the stable hooks user CSS targets — class names are hashed by CSS Modules and
+ * change on every build, so they are not addressable from outside.
+ */
+
+/* ---- environment card (lives in dsh chrome — keep dsw tokens) ---- */
+.card {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.card:hover, .card:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+.cardBranch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 550;
+}
+.cardBranchName { min-width: 0; overflow: hidden; }
+.cardGlyph { flex: none; opacity: 0.7; }
+.cardDetached {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-warning-bg, rgba(187, 128, 9, 0.15));
+  color: var(--dsw-alias-state-warning-primary, #d29922);
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+}
+/* Bound-worktree badge: the session is attached to an agent worktree. */
+.cardWt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-bg, rgba(56, 139, 253, 0.16));
+  color: var(--dsw-alias-state-business-primary, #58a6ff);
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cardAhead, .cardBehind {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+.cardAhead { color: var(--dsw-alias-state-success-primary); }
+.cardBehind { color: var(--dsw-alias-state-attention-primary, #d29922); }
+.cardSep { width: 1px; height: 14px; background: var(--dsw-alias-border-l2); }
+.cardAdded { color: var(--dsw-alias-state-success-primary); }
+.cardDeleted { color: var(--dsw-alias-state-error-primary); }
+.cardFiles { color: var(--dsw-alias-label-tertiary); }

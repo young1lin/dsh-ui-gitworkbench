@@ -186,6 +186,41 @@ export function blockCount(rows: readonly SideRow[]): number {
   return max + 1
 }
 
+export type BlockEdge = 'single' | 'first' | 'middle' | 'last'
+
+/** Where one present side-cell sits on its block's visible perimeter. Absent
+ * cells return null: an addition-only block must not draw a blue cage through
+ * the empty left pane, and a deletion-only block does the symmetric thing. */
+export function blockEdge(rows: readonly SideRow[], index: number, side: 'left' | 'right'): BlockEdge | null {
+  const row = rows[index]
+  if (row === undefined || row.block < 0 || row[side] === null) return null
+  const before = index > 0 && rows[index - 1]!.block === row.block && rows[index - 1]![side] !== null
+  const after = index + 1 < rows.length && rows[index + 1]!.block === row.block && rows[index + 1]![side] !== null
+  if (!before && !after) return 'single'
+  if (!before) return 'first'
+  return after ? 'middle' : 'last'
+}
+
+/** The only unambiguous block action while editing: a one-block diff. The
+ * buffer may diverge from git after typing, so the component keeps the buttons
+ * visible but disables them through its dirty guard. */
+export function editorActionBlock(totalBlocks: number, editing: boolean): number | null {
+  return editing && totalBlocks === 1 ? 0 : null
+}
+
+/**
+ * Whether the first rendered row is already inside a change block.
+ *
+ * The block action bar normally floats one row above its first cell. When the
+ * file itself starts with a change there is no preceding row, so the columns
+ * must reserve that bar's clearance inside their own clipping boxes. This is
+ * derived from the full row model rather than hover state, avoiding a layout
+ * jump when the pointer enters line 1.
+ */
+export function needsFirstBlockClearance(rows: readonly SideRow[]): boolean {
+  return rows.length > 0 && rows[0]!.block >= 0
+}
+
 /**
  * Whether a block is the file's ENTIRE content: the one block of a diff with
  * no context row at all.

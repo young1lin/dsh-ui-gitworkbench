@@ -1,0 +1,276 @@
+/* Drawer tabs — mirrors the app's own tab bar: 13/16 text at weight 500, a
+   tertiary label, the selected one riding the accent over a 2px bar. */
+.tabs {
+  display: flex; gap: 24px;
+  flex: none;
+  padding: 0 var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  font-family: inherit;
+}
+.tab {
+  position: relative;
+  padding: 8px 0 9px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--gs-t-ui); line-height: 16px; font-weight: 500;
+  color: var(--gs-fg-dim);
+  cursor: pointer;
+}
+.tab::after {
+  content: '';
+  position: absolute; right: 0; bottom: 1px; left: 0;
+  height: 2px; border-radius: 2px;
+  background: transparent;
+}
+.tabActive { color: var(--gs-accent); }
+.tabActive::after { background: var(--gs-accent); }
+
+/* Compare tab: the base/head ref pickers. */
+.compareBar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  color: var(--gs-fg-dim);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.compareArrow { color: var(--gs-fg-faint); }
+
+/* Ref picker: a button that opens a filter box over a scrolling list. Sized for
+   a repository with hundreds of branches, where a chip row or a plain select
+   stops being usable. */
+.refPicker { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.refLabel { flex: none; color: var(--gs-fg-faint); }
+.refButton { max-width: 260px; justify-content: space-between; }
+.refValue { min-width: 0; overflow: hidden; }
+.refCaret { flex: none; color: var(--gs-fg-faint); font-size: 9px; }
+.refPop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 10;
+  display: flex; flex-direction: column;
+  width: 300px; max-width: 80vw;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-panel);
+  box-shadow: 0 12px 32px var(--gs-shadow);
+  overflow: hidden;
+}
+/* A short fixed menu rather than a branch list: no search box, no footer, and
+   sized to its own labels instead of the 300px a few hundred refs need. Anchored
+   right because the pickers that use it sit in a bar's right-hand cluster, where
+   a left-anchored popover would open off the drawer. */
+.menuPop {
+  width: auto; min-width: 100%;
+  left: auto; right: 0;
+  padding: 4px;
+}
+.refSearch {
+  flex: none;
+  padding: 7px 10px;
+  border: 0; border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.refSearch::placeholder { color: var(--gs-fg-faint); }
+/* Bounded so the popover never runs off the drawer, whatever the branch count. */
+.refList { flex: 1; max-height: 280px; overflow-y: auto; padding: 4px; }
+.refGroup {
+  padding: 6px 8px 3px;
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.refRow {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; width: 100%;
+  padding: 5px 8px;
+  border: 0; border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-muted);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  text-align: left; cursor: pointer;
+}
+.refRow:hover { background: var(--gs-raise); color: var(--gs-fg); }
+/* .refRowActive: see the shared selected-state rule at the foot of the file. */
+/* Keeps a branch without a worktree aligned with one that has the glyph. */
+.refRowSpacer { flex: none; width: 12px; }
+.refRowName { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.refEmpty { padding: 14px 10px; color: var(--gs-fg-faint); font-size: var(--gs-t-dense); }
+.refFoot {
+  flex: none;
+  padding: 5px 10px;
+  border-top: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-faint); font-size: var(--gs-t-meta);
+}
+
+/* Commit log — its own full-height pane beside the file tree. Rows are stacked
+   so each subject gets the pane's full width instead of a 340px ellipsis. */
+.commitsPane {
+  /* Shrinkable, with the floor as a min-width rather than a JS clamp alone: a
+     width dragged in one tab must not squeeze the diff to nothing when a third
+     pane appears in another. The floors come from the panel's own constants, so
+     the clamp and the stylesheet cannot drift apart. */
+  flex: 0 1 auto; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 0;
+  /* Capped, so every pixel past the cap goes to the diff — the pane whose
+     content cannot wrap. */
+  width: 26%; min-width: var(--gs-min-commits); max-width: 340px;
+  background: var(--gs-surface);
+}
+/* Shared header bar for the commit and tree panes. Its own height comes from
+   the compact control it hosts, so a pane with tools and a pane without one
+   still line up across the divider. */
+.paneHead {
+  /* Wraps rather than overflows. Dragged narrow the pane cannot hold a title,
+     a funnel and a search box on one line, and what it used to do was clip the
+     search box at the pane's edge — a control half off the screen, with no
+     sign that the rest of it existed. */
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  flex: none;
+  min-height: 37px; box-sizing: border-box;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-dim);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.paneTitle { font-weight: 600; }
+/* Zero-height probe below the last row; scrolling it into view fetches the next
+   page. It carries no pixels of its own so it cannot disturb the list. */
+.commitsSentinel { flex: none; height: 1px; }
+.commitsFoot {
+  flex: none;
+  padding: 8px;
+  color: var(--gs-fg-faint);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-meta); text-align: center;
+  /* Reserved whether or not there is text, so arriving at the end of the list
+     does not shift the rows above it. */
+  min-height: 16px;
+}
+
+/* `flex: 1` with `min-height: 0` gives this scroller a DEFINITE height from the
+   pane. A percentage max-height cannot: its parent is sized by content, so the
+   percentage has nothing to resolve against and the list grows without bound —
+   which is what pushed the file tree off screen and the footer out of reach. */
+/* No gap between lines and no left padding: the graph column runs down the left
+   edge and a lane has to reach the next row to stay one line. The rows' own
+   breathing room is inside `.commit`, which keeps its inset and rounding. */
+.commits {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 4px 0;
+}
+/* One list line: the graph slice, then the row. Fixed height, because the SVG
+   is drawn at exactly this height and the lanes only join if they agree. */
+.commitLine {
+  display: flex; align-items: stretch;
+  flex: none;
+  /* Published by the panel from `COMMIT_ROW_H`, which the lane graph also draws
+     each row's segment at — one source, because a row and its segment that
+     disagree leave the lanes short of the seam between rows. The two
+     arrangements want different rows, which is why this is a property and not
+     a number. Guarded by tests/commit-row-height.test.ts. */
+  height: var(--gs-commit-row);
+}
+.graphCell { flex: none; display: block; }
+/* An inset row, like dsh's own session rows: 12px radius, filled when active. */
+.commit {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+  height: 100%;
+  margin: 1px 0;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--gs-r-surface);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--gs-t-dense);
+  overflow: hidden;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+/* Beside the diff the row turns into two lines: a pane of about 340px has no
+   width for the hash, the author, the date AND the subject on one, and the
+   subject is the part that would have given way. Above the diff it stays one
+   line — see the row's two shapes in `CommitRow`. */
+.commitsPane[data-layout="columns"] .commit {
+  flex-direction: column; align-items: stretch; justify-content: center; gap: 2px;
+}
+/* The subject line must not absorb the row's spare height, or the two lines
+   stop sitting together in the middle of the row. */
+.commitsPane[data-layout="columns"] .commitSubjectRow { flex: none; }
+.commitTop {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-width: 0;
+}
+.commit:hover { background: var(--gs-raise); }
+.commitActive { border-color: var(--gs-accent-border); background: var(--gs-accent-bg); }
+/* Pushed to the right end of the row, and never squeezed: the subject is what
+   gives way when the pane narrows, because it is the part with an ellipsis to
+   give. */
+.commitMeta { flex: none; display: flex; align-items: baseline; gap: 8px; }
+.commitHash { flex: none; color: var(--gs-info); }
+.commitSubjectRow {
+  display: flex; align-items: baseline; gap: 4px;
+  flex: 1 1 auto; min-width: 0;
+}
+/* Shrinks, never grows. Growing was invisible while the list was a 26%%
+   column — the subject filled the row either way — and became a defect the
+   moment the list spanned the drawer: a subject that takes ALL the free space
+   pushes the has-a-body marker a thousand pixels right, where it reads as an
+   unexplained ellipsis next to the author rather than as "there is more to
+   this message". The row still pushes author and date to the right end;
+   .commitSubjectRow is what absorbs the slack. */
+.commitSubject {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--gs-fg-muted);
+}
+.commitHasBody { flex: none; color: var(--gs-fg-faint); letter-spacing: 0.04em; }
+/* Branch and tag names pointing at this commit. Capped and ellipsised: a release
+   commit can carry a dozen refs, and none of them is worth the subject's room. */
+.commitRef {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  padding: 0 5px;
+  border: 1px solid var(--gs-accent-border); border-radius: var(--gs-r-pill);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-size: var(--gs-t-meta); line-height: 15px;
+}
+.commitWhen { flex: none; color: var(--gs-fg-faint); }
+/* Who wrote it — sits between hash and relative time, capped so a long name
+   cannot evict the time from the row. */
+.commitAuthor {
+  flex: none; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--gs-fg-dim);
+}
+
+.body { display: flex; flex: 1; min-height: 0; z-index: 1; }
+/* History stacks: the commit list over the tree-and-diff row. `.bodyRow` is
+   rendered on every tab, so the unstacked tabs are a row inside a row — which
+   costs nothing and keeps one JSX shape instead of two. */
+.body[data-stacked] { flex-direction: column; }
+.bodyRow { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+/* Stacked, the list is sized by HEIGHT and spans the drawer; the width rules
+   it carries for the column layout would otherwise pin it to 26%. */
+.body[data-stacked] .commitsPane {
+  width: auto; max-width: none; min-width: 0;
+  height: 34%; flex: none;
+  /* The drag's clamp, restated where a RESIZE can also reach it. An inline
+     `height` in pixels survives the window getting shorter, and then the list
+     is taller than the body: the lower half goes to zero and the handle ends
+     up below the bottom edge with nothing to grab. Percentages re-resolve on
+     every layout, which is exactly what the stored pixel height cannot do.
+     Both numbers come from the panel's own constants, so there is still one
+     home for them. `max()` keeps the range from inverting in a drawer too
+     short to hold both floors — the list then simply takes its minimum. */
+  min-height: var(--gs-min-commits-tall);
+  max-height: max(var(--gs-min-commits-tall), calc(100% - var(--gs-min-stacked-lower)));
+}

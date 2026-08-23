@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emitPatch, parsePatch } from '../src/patch-model.ts'
-import { alignRows, blockCount, blockIsWholeFile, blockLines, blockTally, sideBodyState } from '../src/client/side-rows.ts'
+import { alignRows, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, editorActionBlock, needsFirstBlockClearance, sideBodyState } from '../src/client/side-rows.ts'
 
 /** Join with LF and keep the trailing newline git's own output carries. */
 function diff(...lines: string[]): string {
@@ -296,6 +296,44 @@ describe('blockIsWholeFile', () => {
   it('an unchanged file has no block to be the whole file', () => {
     expect(blockIsWholeFile(alignRows(parsePatch(PURE_CONTEXT)!), 0)).toBe(false)
     expect(blockIsWholeFile([], 0)).toBe(false)
+  })
+})
+
+describe('blockEdge', () => {
+  it('draws one perimeter around an addition block and nothing on its empty side', () => {
+    const rows = alignRows(parsePatch(NEW_FILE)!)
+    expect(rows.map((_, i) => blockEdge(rows, i, 'right'))).toEqual(['first', 'last'])
+    expect(rows.map((_, i) => blockEdge(rows, i, 'left'))).toEqual([null, null])
+  })
+
+  it('treats one present cell on a side as a single-cell perimeter', () => {
+    const rows = alignRows(parsePatch(THREE_DEL_ONE_ADD)!)
+    expect(blockEdge(rows, 0, 'left')).toBeNull()
+    expect(blockEdge(rows, 1, 'right')).toBe('single')
+    expect(rows.slice(1, 4).map((_, i) => blockEdge(rows, i + 1, 'left'))).toEqual(['first', 'middle', 'last'])
+  })
+})
+
+describe('editorActionBlock', () => {
+  it('keeps the sole git block actionable after Edit is armed', () => {
+    expect(editorActionBlock(1, true)).toBe(0)
+  })
+
+  it('does not guess between blocks or offer editor actions while reading', () => {
+    expect(editorActionBlock(0, true)).toBeNull()
+    expect(editorActionBlock(2, true)).toBeNull()
+    expect(editorActionBlock(1, false)).toBeNull()
+  })
+})
+
+describe('needsFirstBlockClearance', () => {
+  it('reserves a stable action rail when line 1 is changed', () => {
+    expect(needsFirstBlockClearance(alignRows(parsePatch(NEW_FILE)!))).toBe(true)
+  })
+
+  it('does not add a rail when context precedes the first block', () => {
+    expect(needsFirstBlockClearance(alignRows(parsePatch(EQUAL_RUN)!))).toBe(false)
+    expect(needsFirstBlockClearance([])).toBe(false)
   })
 })
 

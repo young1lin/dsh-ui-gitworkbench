@@ -38,6 +38,38 @@ const nodeEnv = JSON.stringify(process.env.NODE_ENV ?? 'production')
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
+/** Build-time-only local imports used to split one CSS Module into maintainable
+ *  source files. They are concatenated BEFORE Lightning CSS scopes classes, so
+ *  the browser still receives one stylesheet and one class map — importing ten
+ *  separate `.module.css` files would hash shared class names independently and
+ *  inject ten style elements without reducing this bundle's runtime payload. */
+const LOCAL_CSS_IMPORT = /^\s*@import\s+(['"])(\.{1,2}\/[^'"]+)\1\s*;\s*$/gm
+
+async function inlineCssSource(
+  fileId: string,
+  watch: (path: string) => void,
+  stack: Set<string> = new Set(),
+): Promise<string> {
+  if (stack.has(fileId)) throw new Error(`circular CSS import: ${[...stack, fileId].join(' -> ')}`)
+  stack.add(fileId)
+  watch(fileId)
+  try {
+    const source = await readFile(fileId, 'utf8')
+    let output = ''
+    let cursor = 0
+    for (const match of source.matchAll(LOCAL_CSS_IMPORT)) {
+      const start = match.index ?? 0
+      const imported = resolvePath(dirname(fileId), match[2]!)
+      output += source.slice(cursor, start)
+      output += await inlineCssSource(imported, watch, stack)
+      cursor = start + match[0].length
+    }
+    return output + source.slice(cursor)
+  } finally {
+    stack.delete(fileId)
+  }
+}
+
 export default defineConfig([
   {
     name: 'gitworkbench-client',
@@ -67,10 +99,9 @@ export default defineConfig([
           if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
           const fileId = resolvePath(process.cwd(), virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length))
           if (!existsSync(fileId)) return null
-          this.addWatchFile(fileId)
-          const source = await readFile(fileId)
+          const source = await inlineCssSource(fileId, path => { this.addWatchFile(path) })
           const { code, exports: cssExports } = transform({
-            filename: fileId, code: source,
+            filename: fileId, code: Buffer.from(source),
             cssModules: { pattern: '[hash]_[local]' }, minify: true,
           })
           const classMap: Record<string, string> = {}

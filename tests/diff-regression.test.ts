@@ -5,13 +5,12 @@
  * imported the panel pulled CSS modules + React and blew up. The model is a
  * plain module; the stylesheet is read as text.
  */
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from '../src/client/diff-model.ts'
 import { highlightFile, highlightForRows, shikiLangOf, shikiThemeOf } from '../src/client/highlight.ts'
+import { panelCssSource } from './helpers/panel-css.ts'
 
-const css = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.module.css', import.meta.url)), 'utf8')
+const css = panelCssSource()
   // Comments stripped: prose inside a rule's block reads as a declaration to a
   // raw-text scan, which has fooled guards in this repo before (AGENTS.md).
   .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -272,6 +271,14 @@ describe('drawer CSS invariants', () => {
   // resizer: clicking it dragged the drawer instead of staging the file.
   it('pulls no control past the pane gutter, where the drawer resizer paints over it', () => {
     expect(css).not.toMatch(/margin-left:\s*calc\(var\(--gs-gutter-pane\)\s*\*\s*-1\)/)
+  })
+
+  it('outlines only the perimeter of a hot block, not every row', () => {
+    expect(css).not.toMatch(/\.sideBlockHot\s*\{[^}]*outline:/)
+    expect(rule('.sideNum.sideBlockHot')).toMatch(/box-shadow:\s*inset 1px 0/)
+    expect(rule('.sideCode.sideBlockHot')).toMatch(/box-shadow:\s*inset -1px 0/)
+    expect(rule('.sideNum.sideBlockHot.sideBlockHotFirst')).toMatch(/inset 0 1px/)
+    expect(rule('.sideNum.sideBlockHot.sideBlockHotLast')).toMatch(/inset 0 -1px/)
   })
 })
 

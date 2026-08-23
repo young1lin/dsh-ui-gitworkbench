@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  DIFF_ROW_H, WINDOW_OVERSCAN, WINDOW_WHOLE_BELOW, rowTop, rowWindow,
+  DIFF_ROW_H, WINDOW_OVERSCAN, WINDOW_WHOLE_BELOW, rowTop, rowWindow, rowWindowForMount, sameRowWindow,
 } from '../src/client/row-window.ts'
 
 /** Total scrollable height the window implies, which must not move. */
@@ -94,6 +94,30 @@ describe('a long file', () => {
     const win = rowWindow(999_999, 800, ROWS)
     expect(win.end).toBeGreaterThanOrEqual(win.start)
     expect(spanned(win)).toBe(ROWS * DIFF_ROW_H)
+  })
+})
+
+describe('sameRowWindow', () => {
+  it('detects a stale spacer even when the rendered range is unchanged', () => {
+    const before = rowWindow(0, 800, 4_000)
+    const after = rowWindow(0, 800, 2_000)
+    expect({ start: before.start, end: before.end }).toEqual({ start: after.start, end: after.end })
+    expect(before.padBottom).not.toBe(after.padBottom)
+    expect(sameRowWindow(before, after)).toBe(false)
+  })
+
+  it('reuses a truly identical window', () => {
+    const win = rowWindow(10_000, 800, 4_000)
+    expect(sameRowWindow(win, { ...win })).toBe(true)
+  })
+})
+
+describe('rowWindowForMount', () => {
+  it('drops a stale scroll window when an equal-length diff mounts', () => {
+    const scrolled = rowWindow(10_000, 800, 4_000)
+    const held = { mountKey: 'before', rowCount: 4_000, win: scrolled }
+    expect(rowWindowForMount(held, 4_000, 'after')).toEqual(rowWindow(0, 0, 4_000))
+    expect(rowWindowForMount(held, 4_000, 'before')).toBe(scrolled)
   })
 })
 

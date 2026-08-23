@@ -72,6 +72,29 @@ export interface RowWindow {
   readonly padBottom: number
 }
 
+/** Whether two windows paint the same rows AND reserve the same total height.
+ * Comparing only start/end leaves a previous file's bottom spacer behind when
+ * two long files happen to expose the same viewport-sized row range. */
+export function sameRowWindow(a: RowWindow, b: RowWindow): boolean {
+  return a.start === b.start && a.end === b.end
+    && a.padTop === b.padTop && a.padBottom === b.padBottom
+}
+
+/** A rendered window is reusable only for the exact mounted diff. Equal-length
+ * files can be at different scroll positions, so row count alone is not an identity. */
+export interface HeldRowWindow {
+  readonly mountKey: string
+  readonly rowCount: number
+  readonly win: RowWindow
+}
+
+/** Return the held window when it belongs to this diff, otherwise a fresh top window. */
+export function rowWindowForMount(held: HeldRowWindow, rowCount: number, mountKey: string): RowWindow {
+  return held.rowCount === rowCount && held.mountKey === mountKey
+    ? held.win
+    : rowWindow(0, 0, rowCount)
+}
+
 /**
  * @param value - a number from the DOM, which can be NaN or negative.
  * @param fallback - used when it is neither finite nor usable.

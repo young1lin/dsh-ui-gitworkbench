@@ -1,0 +1,225 @@
+/* ============================ one button vocabulary ============================
+ *
+ * Every clickable control in the drawer is one of two shapes, and which one it
+ * gets is decided by WHERE IT LIVES, never by what it does: drawer-level chrome
+ * (header actions, ref chips, menu triggers) is a PILL, and anything inside a
+ * panel or pane is a ROUNDED RECT. They differ in shape and nothing else — same
+ * height, same type size, same hover, same focus ring, same transition.
+ *
+ * Grouping the selectors is what enforces that. Each class used to spell out
+ * its own padding, radius and font-size, and the same "small secondary button"
+ * had drifted to four heights and three radii across one screen.
+ */
+.btn, .miniBtn, .treeIcon, .commitCopy, .scopeBtn, .refButton, .funnelButton, .funnelPreset, .layoutButton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-sizing: border-box;
+  flex: none;
+  height: var(--gs-h-control);
+  padding: var(--gs-pad-control);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-control);
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit;
+  font-size: var(--gs-t-ui);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.btn:hover, .miniBtn:hover, .treeIcon:hover, .commitCopy:hover,
+.scopeBtn:hover, .refButton:hover, .funnelButton:hover, .funnelPreset:hover, .layoutButton:hover {
+  background: var(--gs-raise);
+  color: var(--gs-fg);
+  border-color: var(--gs-fg-fainter);
+}
+.btn:focus-visible, .miniBtn:focus-visible, .treeIcon:focus-visible,
+.commitCopy:focus-visible, .scopeBtn:focus-visible, .refButton:focus-visible,
+.funnelPreset:focus-visible, .layoutButton:focus-visible {
+  outline: 2px solid var(--gs-accent);
+  outline-offset: 1px;
+}
+
+/* Pills are for drawer-level chrome: the header's actions, the ref chips, and
+   anything that opens a menu — dsh spells its own dropdown triggers
+   ("Code mode ⌄", "glm-5.3 ⌄") as pills, so a trigger that is not one reads as
+   foreign. Controls that live INSIDE a panel or pane stay 8px rects. */
+.btn, .refButton { border-radius: var(--gs-r-pill); }
+
+/* Pane tools give their vertical space back to the diff; the date presets sit
+   inside a 320px popover, so they take the compact height too. */
+.treeIcon, .commitCopy, .funnelPreset, .layoutButton {
+  height: var(--gs-h-compact);
+  padding: var(--gs-pad-compact);
+  font-size: var(--gs-t-dense);
+}
+/* Expand / collapse all are the tree's own chevron at its two angles: the
+   button shows the state it puts every row into. Icon-only because at the 170px
+   the pane drags down to, two more text buttons cannot share a row with the
+   count — and these two are the pair a tree header always carries. */
+.treeIcon { width: var(--gs-h-compact); padding: 0; }
+/* The arrangement switch: two square icon buttons at the end of the commit
+   list's head, side by side with no gap so they read as one control. Icon-only
+   for the same reason the tree's are — the head already carries a title, a
+   funnel and a search box, and at the 190px the pane drags down to there is no
+   room for two more words. */
+/* Pushed to the far end of History's toolbar row, away from the ref picker:
+   one changes WHAT is listed, the other only where it is drawn. */
+.layoutSwitch { display: inline-flex; flex: none; gap: 2px; margin-left: auto; }
+.layoutButton { width: var(--gs-h-compact); padding: 0; }
+/* Qualified, like `.treeIconOn`: the shared vocabulary sets `color` at the
+   same specificity a few rules above. */
+.layoutButton.layoutButtonOn { color: var(--gs-accent); border-color: var(--gs-accent); }
+.layoutGlyph { display: block; }
+/* Qualified, like `.funnelButtonActive`: this sits inside the shared button
+   vocabulary, which sets `color` at the same specificity a few lines above. */
+.treeIcon.treeIconOn { color: var(--gs-accent); border-color: var(--gs-accent); }
+.treeIconGlyph { display: block; font-size: var(--gs-t-meta); line-height: 1; }
+.treeIconDown { transform: rotate(90deg); }
+
+/* The scope toggle splits its row in two equal halves, so it opts out of the
+   vocabulary's `flex: none`. Declared here rather than beside `.scopeRow`
+   because it has to win against the grouped rule above by source order. */
+.scopeBtn { flex: 1 1 0; }
+
+/* The single "this one is selected" idiom. Three different ones — accent chip,
+   bordered panel, left accent bar — used to mean the same thing in one drawer. */
+.scopeBtnActive, .miniBtnPrimary, .segmentActive, .refRowActive, .paletteRowActive {
+  border-color: var(--gs-accent-border);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+
+/* Icon-only chrome: square, so four of them read as a control cluster rather
+   than four pills of drifting width. Height, border, radius and hover still
+   come from the vocabulary — only the box changes shape. */
+.btnIcon { width: var(--gs-h-control); padding: 0; }
+.btnIcon svg { display: block; }
+/* Close is the one destructive control in the row, and every window on the
+   machine says so with red on hover. Quiet until then: a permanently red X in
+   a header would read as an error state. */
+.btnClose:hover:not(:disabled) {
+  border-color: var(--gs-del); background: var(--gs-del-bg); color: var(--gs-del);
+}
+
+/* Sync actions that have something to report.
+ *
+ * These three variants set COLOUR ONLY — height, padding, radius and type size
+ * still come from the vocabulary above, so a loud Push is the same object as a
+ * quiet one and not a second button that happens to look similar.
+ *
+ * Fetch deliberately has no variant. It writes nothing, so it has no state to
+ * announce, and leaving one of the three permanently quiet is what makes the
+ * other two register as signal rather than decoration. */
+.btnBehind {
+  border-color: var(--gs-warn); background: var(--gs-warn-bg); color: var(--gs-warn);
+  font-weight: 600;
+}
+.btnBehind:hover:not(:disabled) { background: var(--gs-warn-bg); color: var(--gs-warn); border-color: var(--gs-warn); }
+.btnAhead {
+  border-color: var(--gs-add); background: var(--gs-add-bg); color: var(--gs-add);
+  font-weight: 600;
+}
+.btnAhead:hover:not(:disabled) { background: var(--gs-add-bg); color: var(--gs-add); border-color: var(--gs-add); }
+/* Publishing a branch that exists nowhere else is the one moment this bar has a
+   primary action, so it gets the solid fill Commit uses — and only then. */
+.btnPrimary {
+  border-color: var(--gs-accent); background: var(--gs-accent); color: var(--gs-on-accent, #fff);
+  font-weight: 600;
+}
+.btnPrimary:hover:not(:disabled) { background: var(--gs-accent); color: var(--gs-on-accent, #fff); border-color: var(--gs-accent); }
+
+/* The count riding inside Pull / Push. Reads as part of the label rather than a
+   badge stuck on it: same colour, tabular, just set apart by a hairline. */
+.btnCount {
+  margin-left: 1px; padding-left: 6px;
+  border-left: 1px solid currentColor;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/* Pull and its strategy are one control. The picker is Pull's argument, not a
+   third action, so the two are welded: shared border, one outer radius. */
+.pullGroup { display: inline-flex; flex: none; align-items: center; }
+.pullGroup > .refPicker > .refButton {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  border-right-color: transparent;
+}
+.pullGroup > .btn {
+  margin-left: -1px;
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+}
+
+/* Scrollbars inside the drawer.
+   Listing the scrolling panes by name is what let the file tree keep the
+   platform's own wide light scrollbar after that pane was renamed, so this
+   matches every descendant instead: nothing to keep in step as panes change.
+   `scrollbar-*` inherit, which covers Firefox from the same declaration. */
+.drawer { scrollbar-width: thin; scrollbar-color: var(--gs-border) transparent; }
+.drawer ::-webkit-scrollbar { width: 10px; height: 10px; }
+.drawer ::-webkit-scrollbar-track, .drawer ::-webkit-scrollbar-corner { background: transparent; }
+.drawer ::-webkit-scrollbar-thumb {
+  /* Painted inside a transparent border so the thumb reads as a floating pill
+     rather than a bar welded to the pane edge. */
+  background: var(--gs-border);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+.drawer ::-webkit-scrollbar-thumb:hover { background: var(--gs-fg-faint); background-clip: padding-box; }
+
+/* Overflow counter for a commit carrying more refs than the row can show. */
+.commitRefMore {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--gs-r-pill);
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-meta); line-height: 15px;
+  cursor: default;
+}
+
+/* ---- the roll-back confirmation ----
+ *
+ * Scoped to the drawer rather than the viewport: `.drawer` is the positioned
+ * ancestor, so the scrim dims the thing the question is about and leaves the
+ * session behind it alone. It is also the only modal surface in this plugin —
+ * everything else the drawer does can be done again.
+ */
+.confirmScrim {
+  /* `position`, `inset` and the stacking rank live with the drawer's other
+     child ranks — see `.drawer > .confirmScrim`. */
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: var(--gs-backdrop);
+  animation: gsFade 120ms ease-out;
+}
+.confirmBox {
+  display: flex; flex-direction: column; gap: 10px;
+  box-sizing: border-box;
+  width: min(440px, 100%);
+  padding: 18px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-drawer);
+  background: var(--gs-bg);
+  box-shadow: 0 18px 48px var(--gs-shadow);
+}
+.confirmTitle { color: var(--gs-fg); font-size: var(--gs-t-ui); font-weight: 600; }
+/* The body carries a path, which is the one string here that can be long and
+   has no sensible break points of its own. */
+.confirmBody {
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-dense); line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+/* Cancel first in the DOM so it takes focus and the Tab order starts on the
+   harmless answer; `row-reverse` puts the destructive one where the eye ends. */
+.confirmActions { display: flex; flex-direction: row-reverse; gap: 8px; margin-top: 2px; }
+/* Qualified rather than a bare modifier: written this way it out-specifies
+   `.btn` wherever either rule sits, which is the failure the drawer already
+   shipped once. */
+.btn.btnDanger {
+  border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff);
+  font-weight: 600;
+}
+.btn.btnDanger:hover:not(:disabled) { border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff); }

@@ -17,9 +17,10 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { panelCssSource } from './helpers/panel-css.ts'
 
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/CodeEditor.tsx', import.meta.url)), 'utf8')
-const css = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.module.css', import.meta.url)), 'utf8')
+const css = panelCssSource()
 
 /**
  * Comments stripped before anything is matched.

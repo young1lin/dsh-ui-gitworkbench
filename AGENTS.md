@@ -74,7 +74,7 @@ are what those freezes cost to find.
 
 ## Testing pattern
 
-Pure rules live in React/CSS-free modules so vitest can load them — `src/client/stage-tree.ts`, `diff-model.ts`, `worktree-view.ts`, `commit-graph.ts`, `op-feedback.ts`, `themes.ts`, `highlight.ts` (client); `worktree.ts`, `style-store.ts`, `atomic-json.ts`, `commit-cache.ts`, `git-ops.ts`, `git-log.ts` (host). React state stays in `GitWorkbenchPanel.tsx` (~3400 lines: chip + drawer + diff rendering). New behavior = pure helper + unit tests first, component wiring after.
+Pure rules live in React/CSS-free modules so vitest can load them — `src/client/stage-tree.ts`, `diff-model.ts`, `worktree-view.ts`, `commit-graph.ts`, `op-feedback.ts`, `themes.ts`, `highlight.ts` (client); `worktree.ts`, `style-store.ts`, `atomic-json.ts`, `commit-cache.ts`, `git-ops.ts`, `git-log.ts` (host). React state orchestration stays in `GitWorkbenchPanel.tsx` (~2000 lines); rendered features live in `ChangesFileTree.tsx`, `CommitHistory.tsx`, `DiffViews.tsx`, and `WorkbenchControls.tsx`, all sharing the root panel CSS Module contract. New behavior = pure helper + unit tests first, component wiring after.
 
 `scripts/` holds the live probes — `probe_worktree.py` (host RPCs), `verify_worktree_ui.py` (6-step Playwright UI probe), `llm_smoke.py` (real-LLM smoke). They are local-only and git-ignored: they embed machine-local paths and need a running dsh instance.
 

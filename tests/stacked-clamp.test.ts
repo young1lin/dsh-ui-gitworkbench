@@ -18,8 +18,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { panelCssSource } from './helpers/panel-css.ts'
 
-const css = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.module.css', import.meta.url)), 'utf8')
+const css = panelCssSource()
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.tsx', import.meta.url)), 'utf8')
 
 /** Comments stripped: prose in this repo has satisfied a source guard twice. */

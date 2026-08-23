@@ -1,0 +1,430 @@
+/* ============================ drawer shell ============================ */
+
+/* ---- geometry and type scale ----
+ *
+ * The drawer is a plugin surface inside dsh, so it borrows dsh's own control
+ * vocabulary rather than inventing a second one. The numbers below are measured
+ * from the running app, not guessed: dsh settles on a 28px control height, a
+ * 12px radius for its rows and panes, a full pill for its dropdown triggers,
+ * and the `--dsw-font-*` ladder for type.
+ *
+ * Every control in this stylesheet resolves its height, radius, padding and
+ * size through these. That is the whole mechanism keeping the drawer coherent —
+ * before it, eight classes each spelled out their own padding and radius, and
+ * the same "small secondary button" rendered at four different heights.
+ */
+.overlay {
+  --gs-inset: 14px;
+
+  /* Control geometry — dsh's own. */
+  --gs-h-control: 28px;   /* chrome: header actions, chips, ref pickers */
+  --gs-h-compact: 24px;   /* in-pane tools, where vertical space belongs to the diff */
+  --gs-pad-control: 0 12px;
+  --gs-pad-compact: 0 10px;
+
+  /* Readable against a solid --gs-accent fill. White for every palette whose
+     accent is a mid-to-dark hue; the two palettes with a light accent override
+     it, because white on #00f0ff is not a colour anyone can read. */
+  --gs-on-accent: #ffffff;
+
+  /* Commit-graph lanes. Deliberately NOT per-palette: a lane's colour carries no
+     meaning beyond "not the same as the lane beside it", so it has nothing to
+     follow the theme for. What it does need is to stay legible on every ground
+     the drawer can paint, from #0d1117 to Solarized's cream — these are mid
+     hues chosen to hold on both ends rather than tuned to either. */
+  --gs-graph-0: #58a6ff;
+  --gs-graph-1: #3fb950;
+  --gs-graph-2: #d29922;
+  --gs-graph-3: #bc8cff;
+  --gs-graph-4: #f778ba;
+  --gs-graph-5: #39c5cf;
+
+  /* Radii. Four values, each with one job; nothing else may invent a fifth. */
+  --gs-r-pill: 999px;    /* drawer chrome: header actions, ref chips, triggers */
+  --gs-r-control: 8px;   /* controls inside a panel or pane; inputs; badges */
+  --gs-r-surface: 12px;  /* rows, popovers, panes */
+  --gs-r-drawer: 14px;   /* the drawer and its companion card */
+
+  /* Type — dsh's --dsw-font-* ladder, which tops out at 11px for meta text. */
+  --gs-t-meta: 11px;     /* --dsw-font-xxxs-11: counters, captions */
+  --gs-t-dense: 12px;    /* --dsw-font-xxs-12: dense list rows */
+  --gs-t-ui: 13px;       /* --dsw-font-xs-13: controls, tabs, body */
+
+  /* Two gutters, one per container. Chrome bars that span the drawer — header,
+     tabs, worktree chips, path line, compare bar — share `--gs-gutter`; they
+     used to sit at 20/20/14/20/20 and the drawer's left edge read as ragged.
+     Inside a pane the gutter is tighter, because a pane is already inset by its
+     divider and its rows carry indentation of their own. */
+  --gs-gutter: 16px;
+  --gs-gutter-pane: 12px;
+
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; justify-content: flex-end; align-items: stretch; gap: 12px;
+  padding: var(--gs-inset);
+  box-sizing: border-box;
+  background: var(--gs-backdrop);
+  animation: gsFade 160ms ease-out;
+}
+.drawer {
+  position: relative;
+  display: flex; flex-direction: column; box-sizing: border-box;
+  width: min(1600px, 94vw); height: 100%;
+  color: var(--gs-fg);
+  background: var(--gs-bg);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-drawer);
+  /* Rounded corners only hold if the panes cannot paint past them. This also
+     clips the scaled-up background layer below. */
+  overflow: hidden;
+  box-shadow: 0 24px 64px var(--gs-shadow);
+  font-family: var(--dsw-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+  animation: gsSlide 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Surfaces the panes paint with. Identical to the palette's own colours until
+     a background image is set, at which point they thin out to let it show. Every
+     large filled area uses these; small chips and hovers keep the solid tokens,
+     since a translucent 20px pill only reads as muddy. */
+  --gs-surface: var(--gs-bg);
+  --gs-surface-2: var(--gs-panel);
+}
+/* `--gs-bg-image`, `--gs-bg-blur` and `--gs-veil` are set inline by the panel
+   from the winning style scope; the attribute is what switches the surfaces. */
+.drawer[data-gs-bg] {
+  --gs-surface: color-mix(in srgb, var(--gs-bg) var(--gs-veil), transparent);
+  --gs-surface-2: color-mix(in srgb, var(--gs-panel) var(--gs-veil), transparent);
+}
+/* Background image layer. Scaled past the edges because a blur samples beyond
+   its own box and would otherwise fade to transparent at the border. */
+.drawer[data-gs-bg]::before {
+  content: '';
+  position: absolute; inset: 0; z-index: 0;
+  background-image: var(--gs-bg-image);
+  background-size: cover; background-position: center;
+  filter: blur(var(--gs-bg-blur));
+  transform: scale(1.12);
+  pointer-events: none;
+}
+/* Everything real sits above that layer. The drag handle is excluded because it
+   is absolutely positioned and carries its own stacking order; matching it here
+   would leave the two rules deciding by source order.
+   Chrome that hosts a popover must sit ABOVE `.body`: later siblings with the
+   same z-index paint on top, which buried Theme and Branch menus under the
+   panes. A menu that renders but cannot be clicked looks like a dead control.
+   Popovers also drop DOWNWARD, so a bar's list can reach past every bar below
+   it — which means the ranks must strictly DECREASE down the DOM, or a lower
+   bar at the same z-index absorbs the rows (the worktree picker's list was
+   unclickable behind the sync bar until they were separated).
+   STRICTLY decreasing, including between the header and the tabs. Those two
+   shared rank 23 for as long as the header's only menu was Appearance, which
+   portals to the rail outside the drawer and so never dropped through anything.
+   The worktree picker does drop, and the tab bar — a later sibling at the same
+   rank — swallowed its filter box on the first try. */
+.drawer > *:not(.resizer) { position: relative; z-index: 1; }
+.drawer > .header { z-index: 24; }
+.drawer > .tabs { z-index: 23; }
+.drawer > .compareBar { z-index: 22; }
+.drawer > .syncBar { z-index: 20; }
+/* The roll-back confirmation, and the one deliberate exception to the
+   strictly-decreasing rule above: it is the LAST child and outranks every
+   other, because it is not a popover dropping through its siblings but a
+   modal that has to cover them. It also has to be declared here — the
+   `> *:not(.resizer)` rule out-specifies a bare `.confirmScrim`, which is
+   what pinned it to the bottom of the drawer as an in-flow flex item. */
+.drawer > .confirmScrim { position: absolute; inset: 0; z-index: 40; }
+/* Maximized drops the inset and the rounding: at full bleed they would only
+   waste edge pixels the diff wants. */
+.overlayMax { padding: 0; gap: 0; }
+.overlayMax .drawer { flex: 1 1 auto; width: auto; min-width: 0; border-radius: 0; border-width: 0 0 0 1px; }
+@keyframes gsFade { from { opacity: 0; } }
+@keyframes gsSlide { from { transform: translateX(24px); opacity: 0; } }
+
+/* Drag handle on the leading edge: a 10px hit area that is easy to grab, showing
+   a short centred grip in the card's own border colour. A full-height accent bar
+   was read as a second scrollbar and pulled the eye off the diff. */
+.resizer {
+  position: absolute; top: 0; bottom: 0; left: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resizer::after {
+  content: '';
+  width: 3px; height: 32px;
+  border-radius: 999px;
+  background: var(--gs-fg-fainter);
+  opacity: 0;
+  transition: opacity 140ms ease, height 140ms ease;
+}
+.resizer:hover::after { opacity: 0.6; }
+.resizerActive::after { opacity: 0.9; height: 56px; }
+
+/* Divider between two panes. It carries the 1px rule the panes used to draw as
+   their own border, so the visible line and the drag target are one element and
+   cannot drift apart. */
+.paneDivider {
+  position: relative; z-index: 5;
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.paneDivider::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 3px;
+  width: 1px;
+  background: var(--gs-border-soft);
+}
+.paneDivider::after {
+  content: '';
+  position: relative;
+  width: 3px; height: 28px;
+  border-radius: 999px;
+  background: var(--gs-fg-fainter);
+  opacity: 0;
+  transition: opacity 140ms ease, height 140ms ease;
+}
+.paneDivider:hover::after { opacity: 0.6; }
+.paneDividerActive::after { opacity: 0.9; height: 48px; }
+/* The same handle turned through a right angle. Both modifier rules below beat
+   the shared ones on specificity, so their order relative to them does not
+   matter — the stylesheet's usual "same value loses" trap does not apply. */
+.paneDividerY {
+  width: auto; height: 7px;
+  cursor: row-resize;
+}
+.paneDividerY::before { top: 3px; bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
+.paneDividerY::after { width: 28px; height: 3px; transition: opacity 140ms ease, width 140ms ease; }
+.paneDividerY.paneDividerActive::after { width: 48px; height: 3px; }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex: none;
+  padding: 10px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border);
+  background: var(--gs-surface-2);
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+  font-size: var(--gs-t-ui);
+}
+.headerLeft { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+/* The subject of the drawer: which worktree. Worn by the picker's trigger when
+   there is a choice (`.headerPicker` below) and by a plain span when there is
+   not, so a one-worktree repository still states its identity in the same
+   place, at the same weight. */
+.headerBranch {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--gs-accent-border);
+  border-radius: 999px;
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+/* Colour only — the geometry stays the button vocabulary's, so the trigger is
+   the same pill as every other menu in the drawer and only its role differs.
+   Qualified with `.refButton` deliberately: the shared vocabulary is declared
+   at the FOOT of this file, so a bare `.headerPicker` up here loses every
+   property they both set to source order, and the chip came out grey. */
+.refButton.headerPicker {
+  /* The drawer's subject, in a row with 1400px to spare — the 260px the small
+     pickers share clipped `feature/nested/deep/scheduler` at a point where the
+     name needed 205. Still capped, so one absurd branch cannot push the totals
+     off the row. */
+  max-width: 420px;
+  border-color: var(--gs-accent-border);
+  background: var(--gs-accent-bg);
+  color: var(--gs-accent);
+  font-weight: 600;
+}
+.refButton.headerPicker:hover { background: var(--gs-accent-bg); color: var(--gs-accent); border-color: var(--gs-accent); }
+
+/* Slash-separated names — paths and branches alike — that give up their HEAD
+   when the row runs short. Plain `text-overflow: ellipsis` eats the leaf, and
+   the leaf is the half that answers "which one": `…/worktrees/fixture-07` vs
+   `…/worktrees/fixture-14`, `feature/deep/parser` vs `feature/deep/lexer`.
+
+   The shrink is WEIGHTED rather than pinned. `flex: none` on the tail read
+   correctly for a path, but a name with no head at all — a bare
+   `some-very-long-branch-name` — would then refuse to shrink and simply
+   overflow its row. At 999 the head absorbs effectively all of it, and the
+   tail only starts giving ground once the head has nothing left. */
+.elide { display: inline-flex; align-items: baseline; flex: 0 1 auto; min-width: 0; }
+.elideHead {
+  flex: 0 999 auto; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.elideTail {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+/* The header's path: quiet, with the leaf a shade brighter than its directory,
+   and free to take whatever the totals beside it leave. */
+.headerPathMain { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); }
+.headerPathMain .elideTail { color: var(--gs-fg-dim); }
+/* Either end of the compare pill, so a long branch elides there too rather
+   than stretching the pill across the header. */
+.headerViewRef { max-width: 160px; }
+
+/* What the view is about when it is NOT the working tree: a commit hash, or a
+   comparison's two ends. Quieter than the worktree chip — the worktree is where
+   you are, this is only what you are looking at inside it. */
+.headerView {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-muted);
+  font-size: var(--gs-t-meta);
+  font-variant-numeric: tabular-nums;
+}
+.headerDetached {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gs-warn-bg);
+  color: var(--gs-warn);
+  font-size: var(--gs-t-meta);
+  letter-spacing: 0.02em;
+}
+.headerTotals { font-variant-numeric: tabular-nums; }
+.headerTotalsAdd { color: var(--gs-add); font-weight: 600; }
+.headerTotalsDel { color: var(--gs-del); font-weight: 600; }
+.headerTotalsDim { color: var(--gs-fg-dim); font-size: var(--gs-t-dense); }
+/* The gap is the rule, not each button's margin. `.btn` used to carry its own
+   `margin-left`, which meant the spacing lived in the button and vanished the
+   moment the button's geometry moved into the shared vocabulary. */
+.headerRight { display: flex; flex: none; gap: 8px; position: relative; }
+
+/* Theme button in the header. The panel is a companion card in the overlay,
+   to the LEFT of the drawer — not a column stolen from the diff, and not a
+   popover painted over the code. */
+.theme { position: relative; display: inline-flex; }
+/* Settings hangs from its own gear like every other menu in the drawer, right
+   edge aligned to the button because the button is the last thing in the row
+   and a left-aligned card would run off the drawer. Wider than a ref list: it
+   holds a palette grid, an image preview and a CSS editor, none of which fit a
+   menu-width column. */
+.refPop.settingsPop {
+  top: calc(100% + 6px); right: 0; left: auto;
+  width: 320px; max-width: calc(100vw - 32px);
+  max-height: min(560px, calc(100vh - 120px));
+}
+.themeRail {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 12px 14px 16px;
+  overflow-y: auto;
+  font-family: var(--dsw-font-ui, system-ui, sans-serif);
+}
+.themeGroup { display: flex; flex-direction: column; gap: 6px; }
+.themeLabel {
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.themeRowSplit { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* Mode picker. Each option is a painted swatch over its label, and the swatch
+   colours are FIXED rather than palette-derived: "light" and "dark" name the
+   colours themselves, so a dark-palette button rendering the light option in
+   dark grey would be telling the user the opposite of what it does. */
+/* The mode picker is the one control that is taller than the scale: it stacks a
+   painted swatch over its label, because "light" and "dark" are better shown
+   than named. Everything except the height comes from the vocabulary. */
+.segmented { display: flex; gap: 6px; }
+.segment {
+  flex: 1 1 0;
+  display: flex; flex-direction: column; gap: 4px; align-items: stretch;
+  box-sizing: border-box;
+  padding: 4px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-meta);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.segment:hover { background: var(--gs-raise); border-color: var(--gs-fg-fainter); color: var(--gs-fg); }
+.segment:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+.segmentChip {
+  height: 20px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: calc(var(--gs-r-control) - 4px);
+}
+.chipLight { background: #ffffff; }
+.chipDark { background: #0b0b0d; }
+/* System takes both halves, which is how every OS appearance control shows it. */
+.chipSystem { background: linear-gradient(105deg, #ffffff 0 50%, #0b0b0d 50% 100%); }
+
+.paletteRow {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; box-sizing: border-box;
+  padding: 5px 8px;
+  border: 0; border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg-muted);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  text-align: left; cursor: pointer;
+}
+.paletteRow:hover { background: var(--gs-raise); color: var(--gs-fg); }
+/* .paletteRowActive: see the shared selected-state rule at the foot of the file. */
+/* Three-stop swatch: ground, accent, and the add colour the diff leans on. */
+.swatch {
+  flex: none;
+  display: inline-flex; overflow: hidden;
+  width: 26px; height: 12px;
+  border: 1px solid var(--gs-border); border-radius: 3px;
+}
+.swatch span { flex: 1; }
+
+/* Scope switch: which of the two stores an edit lands in. */
+.scopeRow { display: flex; gap: 6px; }
+.scopeHint { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); overflow-wrap: anywhere; }
+
+.bgPreview {
+  height: 64px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background-color: var(--gs-bg);
+  background-size: cover; background-position: center;
+}
+.bgEmpty {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gs-fg-faint); font-size: var(--gs-t-meta);
+}
+.sliderRow { display: flex; align-items: center; gap: 8px; font-size: var(--gs-t-meta); color: var(--gs-fg-dim); }
+.sliderRow input { flex: 1; min-width: 0; accent-color: var(--gs-accent); }
+.sliderValue { flex: none; width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.cssArea {
+  width: 100%; box-sizing: border-box;
+  min-height: 96px; max-height: 220px;
+  padding: 7px 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: var(--dsw-font-mono, ui-monospace, Consolas, monospace); font-size: var(--gs-t-meta);
+  resize: vertical;
+  outline: none;
+}
+.cssArea:focus { border-color: var(--gs-accent-border); }
+.themeNote { color: var(--gs-warn); font-size: var(--gs-t-meta); }
+.themeDirty { color: var(--gs-accent); font-size: var(--gs-t-meta); }
+
+/* Worktree rows give their whole width to the branch; `.refRowName` already
+   flexes and ellipsises, so nothing else here competes for it. The path is on
+   the row's `title`. */
+/* Marks the session's OWN worktree, independent of which one is being viewed. */
+.wtCurrent { color: var(--gs-add); font-size: 8px; line-height: 1; }
+
+.commitCopy { margin-left: auto; }
+
+.commitPop {
+  position: fixed; z-index: 40;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 24px));
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px 12px;
+  overflow: auto;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
+  background: var(--gs-panel); color: var(--gs-fg);
+  box-shadow: 0 16px 40px var(--gs-shadow);
+  font-family: var(--dsw-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+  font-size: var(--gs-t-dense);
+}
+.commitPopTop { display: flex; align-items: center; gap: 8px; }
+.commitPopTop .commitWhen { margin-right: auto; }

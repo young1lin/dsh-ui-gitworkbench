@@ -1,0 +1,224 @@
+/* ============================ theme palettes ============================ */
+
+/* GitHub — the default, and the reference the other palettes are balanced against. */
+.overlay[data-gs-theme='github-dark'] {
+  --gs-bg: #0d1117; --gs-panel: #161b22; --gs-raise: #21262d;
+  --gs-border: #30363d; --gs-border-soft: #21262d;
+  --gs-fg: #e6edf3; --gs-fg-muted: #c9d1d9; --gs-fg-dim: #8b949e; --gs-fg-faint: #6e7681; --gs-fg-fainter: #484f58;
+  --gs-accent: #58a6ff; --gs-accent-bg: rgba(56, 139, 253, 0.14); --gs-accent-border: rgba(56, 139, 253, 0.55);
+  --gs-add: #3fb950; --gs-del: #f85149; --gs-warn: #d29922; --gs-info: #79c0ff;
+  --gs-add-bg: rgba(46, 160, 67, 0.16); --gs-del-bg: rgba(248, 81, 73, 0.16);
+  --gs-warn-bg: rgba(187, 128, 9, 0.16); --gs-info-bg: rgba(56, 139, 253, 0.16);
+  /* Primer's own diffBlob tokens, flattened over --gs-bg (#0d1117). Opaque
+     rather than the alpha hexes Primer ships, because here the number cells
+     paint ON TOP of the row tint — two alphas would composite to roughly twice
+     GitHub's strength. Line 15% / num 30% / word 40% of the base hue. */
+  --gs-add-line: #12261e; --gs-del-line: #25181c;
+  --gs-add-word: #1a4a29; --gs-del-word: #6b2b2b;
+  --gs-add-num: #1c4428; --gs-del-num: #542426;
+  --gs-hunk: #111d2e; --gs-hunk-num: #0c2d6b;
+  --gs-neutral-bg: rgba(110, 118, 129, 0.18);
+  --gs-backdrop: rgba(1, 4, 9, 0.6); --gs-shadow: rgba(1, 4, 9, 0.55);
+}
+.overlay[data-gs-theme='github-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f6f8fa; --gs-raise: #eaeef2;
+  --gs-border: #d0d7de; --gs-border-soft: #eaeef2;
+  --gs-fg: #1f2328; --gs-fg-muted: #32383f; --gs-fg-dim: #656d76; --gs-fg-faint: #8c959f; --gs-fg-fainter: #afb8c1;
+  --gs-accent: #0969da; --gs-accent-bg: rgba(9, 105, 218, 0.1); --gs-accent-border: rgba(9, 105, 218, 0.45);
+  --gs-add: #1a7f37; --gs-del: #cf222e; --gs-warn: #9a6700; --gs-info: #0550ae;
+  --gs-add-bg: rgba(26, 127, 55, 0.12); --gs-del-bg: rgba(207, 34, 46, 0.12);
+  --gs-warn-bg: rgba(154, 103, 0, 0.12); --gs-info-bg: rgba(9, 105, 218, 0.12);
+  /* Primer's light diffBlob tokens, which are already opaque upstream. */
+  --gs-add-line: #dafbe1; --gs-del-line: #ffebe9;
+  --gs-add-word: #aceebb; --gs-del-word: #ffcecb;
+  --gs-add-num: #aceebb; --gs-del-num: #ffcecb;
+  --gs-hunk: #ddf4ff; --gs-hunk-num: #b6e3ff;
+  --gs-neutral-bg: rgba(110, 118, 129, 0.12);
+  --gs-backdrop: rgba(31, 35, 40, 0.28); --gs-shadow: rgba(31, 35, 40, 0.22);
+}
+
+/* IntelliJ IDEA — the New UI (2022.3+, the default since 2024.1), not Darcula.
+   Its greys are the giveaway: the New UI dropped Darcula's warm #3C3F41 chrome
+   for the cooler #1E1F22 editor over a #2B2D30 tool window, and moved the
+   accent to #3574F0.
+
+   The semantic four are the IntelliJ platform's own VCS colours (the keys the
+   log and the diff gutter paint with), except that dark's green is the New UI's
+   brighter #5FAD65 rather than the platform #499C54 — the latter is a fill
+   colour there, and as 12px TEXT on #1E1F22 it lands under 4:1.
+
+   Unlike the GitHub palettes below, these are not transcribed from a published
+   token file, so there is no test pinning them to a source of truth; they are
+   read off the New UI's own chrome and diff. */
+.overlay[data-gs-theme='idea-dark'] {
+  --gs-bg: #1e1f22; --gs-panel: #2b2d30; --gs-raise: #393b40;
+  --gs-border: #393b40; --gs-border-soft: #2b2d30;
+  --gs-fg: #dfe1e5; --gs-fg-muted: #ced0d6; --gs-fg-dim: #9da0a8; --gs-fg-faint: #6f737a; --gs-fg-fainter: #4e5157;
+  --gs-accent: #548af7; --gs-accent-bg: rgba(84, 138, 247, 0.16); --gs-accent-border: rgba(84, 138, 247, 0.55);
+  --gs-add: #5fad65; --gs-del: #e26e6e; --gs-warn: #f0a732; --gs-info: #3592c4;
+  --gs-add-bg: rgba(95, 173, 101, 0.16); --gs-del-bg: rgba(226, 110, 110, 0.16);
+  --gs-warn-bg: rgba(240, 167, 50, 0.16); --gs-info-bg: rgba(53, 146, 196, 0.16);
+  /* IDEA paints diff as solid blocks rather than a wash, and the word-level
+     highlight as a distinctly stronger block over it — so these are opaque,
+     like GitHub's, instead of the alpha tints the other families use. */
+  --gs-add-line: #293c2e; --gs-del-line: #3d2b2b;
+  --gs-add-word: #3d6640; --gs-del-word: #6b3838;
+  --gs-hunk: rgba(84, 138, 247, 0.10); --gs-neutral-bg: rgba(157, 160, 168, 0.18);
+  --gs-backdrop: rgba(16, 17, 19, 0.6); --gs-shadow: rgba(0, 0, 0, 0.5);
+}
+.overlay[data-gs-theme='idea-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f7f8fa; --gs-raise: #ebecf0;
+  --gs-border: #d3d5db; --gs-border-soft: #ebecf0;
+  --gs-fg: #1e1f22; --gs-fg-muted: #3c3f44; --gs-fg-dim: #6c707e; --gs-fg-faint: #818594; --gs-fg-fainter: #a8adbd;
+  --gs-accent: #3574f0; --gs-accent-bg: rgba(53, 116, 240, 0.1); --gs-accent-border: rgba(53, 116, 240, 0.45);
+  --gs-add: #398a4a; --gs-del: #cc4a4a; --gs-warn: #a8760b; --gs-info: #2b7fb8;
+  --gs-add-bg: rgba(57, 138, 74, 0.12); --gs-del-bg: rgba(204, 74, 74, 0.12);
+  --gs-warn-bg: rgba(168, 118, 11, 0.12); --gs-info-bg: rgba(43, 127, 184, 0.12);
+  --gs-add-line: #e6f5e9; --gs-del-line: #fbe9ea;
+  --gs-add-word: #c2e5c9; --gs-del-word: #f5c9cc;
+  --gs-hunk: rgba(53, 116, 240, 0.07); --gs-neutral-bg: rgba(108, 112, 126, 0.12);
+  --gs-backdrop: rgba(30, 31, 34, 0.26); --gs-shadow: rgba(30, 31, 34, 0.18);
+}
+
+/* VS Code — Dark+ / Light+, the default editor themes. */
+.overlay[data-gs-theme='vscode-dark'] {
+  --gs-bg: #1e1e1e; --gs-panel: #252526; --gs-raise: #2d2d30;
+  --gs-border: #3e3e42; --gs-border-soft: #2d2d30;
+  --gs-fg: #d4d4d4; --gs-fg-muted: #cccccc; --gs-fg-dim: #9d9d9d; --gs-fg-faint: #808080; --gs-fg-fainter: #5a5a5a;
+  --gs-accent: #0098ff; --gs-accent-bg: rgba(0, 122, 204, 0.24); --gs-accent-border: rgba(0, 152, 255, 0.6);
+  --gs-add: #89d185; --gs-del: #f14c4c; --gs-warn: #cca700; --gs-info: #75beff;
+  --gs-add-bg: rgba(137, 209, 133, 0.18); --gs-del-bg: rgba(241, 76, 76, 0.18);
+  --gs-warn-bg: rgba(204, 167, 0, 0.18); --gs-info-bg: rgba(117, 190, 255, 0.18);
+  --gs-add-line: rgba(155, 185, 85, 0.18); --gs-del-line: rgba(255, 0, 0, 0.16);
+  --gs-add-word: rgba(155, 185, 85, 0.4); --gs-del-word: rgba(255, 0, 0, 0.36);
+  --gs-hunk: rgba(0, 122, 204, 0.14); --gs-neutral-bg: rgba(190, 190, 190, 0.14);
+  --gs-backdrop: rgba(0, 0, 0, 0.55); --gs-shadow: rgba(0, 0, 0, 0.6);
+}
+.overlay[data-gs-theme='vscode-light'] {
+  --gs-bg: #ffffff; --gs-panel: #f3f3f3; --gs-raise: #e8e8e8;
+  --gs-border: #cecece; --gs-border-soft: #e8e8e8;
+  --gs-fg: #1e1e1e; --gs-fg-muted: #333333; --gs-fg-dim: #616161; --gs-fg-faint: #767676; --gs-fg-fainter: #a0a0a0;
+  --gs-accent: #005fb8; --gs-accent-bg: rgba(0, 95, 184, 0.1); --gs-accent-border: rgba(0, 95, 184, 0.45);
+  --gs-add: #10793f; --gs-del: #b5200d; --gs-warn: #855b00; --gs-info: #005fb8;
+  --gs-add-bg: rgba(16, 121, 63, 0.12); --gs-del-bg: rgba(181, 32, 13, 0.12);
+  --gs-warn-bg: rgba(133, 91, 0, 0.12); --gs-info-bg: rgba(0, 95, 184, 0.12);
+  --gs-add-line: rgba(155, 185, 85, 0.22); --gs-del-line: rgba(255, 0, 0, 0.13);
+  --gs-add-word: rgba(155, 185, 85, 0.45); --gs-del-word: rgba(255, 0, 0, 0.3);
+  --gs-hunk: rgba(0, 95, 184, 0.07); --gs-neutral-bg: rgba(97, 97, 97, 0.12);
+  --gs-backdrop: rgba(0, 0, 0, 0.25); --gs-shadow: rgba(0, 0, 0, 0.18);
+}
+
+/* Cyberpunk — neon on deep violet; the light variant keeps the magenta/cyan pair
+   over a near-white ground so the theme survives a bright room. */
+.overlay[data-gs-theme='cyberpunk-dark'] {
+  --gs-bg: #0b0417; --gs-panel: #14082a; --gs-raise: #1f0d3d;
+  --gs-border: #3a1f6b; --gs-border-soft: #26124a;
+  --gs-fg: #f0e6ff; --gs-fg-muted: #d5c2f5; --gs-fg-dim: #a98fd6; --gs-fg-faint: #7d64a8; --gs-fg-fainter: #56427a;
+  --gs-accent: #00f0ff; --gs-on-accent: #0b0417; --gs-accent-bg: rgba(0, 240, 255, 0.14); --gs-accent-border: rgba(0, 240, 255, 0.5);
+  --gs-add: #39ff88; --gs-del: #ff2e88; --gs-warn: #ffcc00; --gs-info: #00f0ff;
+  --gs-add-bg: rgba(57, 255, 136, 0.14); --gs-del-bg: rgba(255, 46, 136, 0.14);
+  --gs-warn-bg: rgba(255, 204, 0, 0.14); --gs-info-bg: rgba(0, 240, 255, 0.14);
+  --gs-add-line: rgba(57, 255, 136, 0.12); --gs-del-line: rgba(255, 46, 136, 0.12);
+  --gs-add-word: rgba(57, 255, 136, 0.34); --gs-del-word: rgba(255, 46, 136, 0.34);
+  --gs-hunk: rgba(0, 240, 255, 0.1); --gs-neutral-bg: rgba(169, 143, 214, 0.16);
+  --gs-backdrop: rgba(6, 2, 14, 0.68); --gs-shadow: rgba(0, 240, 255, 0.14);
+}
+.overlay[data-gs-theme='cyberpunk-light'] {
+  --gs-bg: #fdfbff; --gs-panel: #f4eeff; --gs-raise: #e9dfff;
+  --gs-border: #c9b3f0; --gs-border-soft: #e0d2f7;
+  --gs-fg: #1a0b2e; --gs-fg-muted: #33195c; --gs-fg-dim: #6b4ba0; --gs-fg-faint: #8f74bd; --gs-fg-fainter: #b9a5d6;
+  --gs-accent: #00a6b8; --gs-accent-bg: rgba(0, 166, 184, 0.12); --gs-accent-border: rgba(0, 166, 184, 0.5);
+  --gs-add: #00875a; --gs-del: #d6006e; --gs-warn: #b37a00; --gs-info: #00a6b8;
+  --gs-add-bg: rgba(0, 135, 90, 0.12); --gs-del-bg: rgba(214, 0, 110, 0.12);
+  --gs-warn-bg: rgba(179, 122, 0, 0.12); --gs-info-bg: rgba(0, 166, 184, 0.12);
+  --gs-add-line: rgba(0, 200, 130, 0.14); --gs-del-line: rgba(255, 46, 136, 0.12);
+  --gs-add-word: rgba(0, 200, 130, 0.34); --gs-del-word: rgba(255, 46, 136, 0.3);
+  --gs-hunk: rgba(0, 166, 184, 0.08); --gs-neutral-bg: rgba(107, 75, 160, 0.12);
+  --gs-backdrop: rgba(26, 11, 46, 0.28); --gs-shadow: rgba(26, 11, 46, 0.16);
+}
+
+/* One — Atom's One Dark / One Light. */
+.overlay[data-gs-theme='one-dark'] {
+  --gs-bg: #282c34; --gs-panel: #21252b; --gs-raise: #2c313a;
+  --gs-border: #3e4451; --gs-border-soft: #2c313a;
+  --gs-fg: #abb2bf; --gs-fg-muted: #b6bdca; --gs-fg-dim: #7f848e; --gs-fg-faint: #636d83; --gs-fg-fainter: #4b5263;
+  --gs-accent: #61afef; --gs-accent-bg: rgba(97, 175, 239, 0.14); --gs-accent-border: rgba(97, 175, 239, 0.55);
+  --gs-add: #98c379; --gs-del: #e06c75; --gs-warn: #e5c07b; --gs-info: #56b6c2;
+  --gs-add-bg: rgba(152, 195, 121, 0.16); --gs-del-bg: rgba(224, 108, 117, 0.16);
+  --gs-warn-bg: rgba(229, 192, 123, 0.16); --gs-info-bg: rgba(86, 182, 194, 0.16);
+  --gs-add-line: rgba(152, 195, 121, 0.14); --gs-del-line: rgba(224, 108, 117, 0.14);
+  --gs-add-word: rgba(152, 195, 121, 0.38); --gs-del-word: rgba(224, 108, 117, 0.38);
+  --gs-hunk: rgba(97, 175, 239, 0.1); --gs-neutral-bg: rgba(127, 132, 142, 0.18);
+  --gs-backdrop: rgba(23, 26, 33, 0.6); --gs-shadow: rgba(15, 17, 21, 0.55);
+}
+.overlay[data-gs-theme='one-light'] {
+  --gs-bg: #fafafa; --gs-panel: #f0f0f0; --gs-raise: #e5e5e6;
+  --gs-border: #d4d4d4; --gs-border-soft: #e5e5e6;
+  --gs-fg: #383a42; --gs-fg-muted: #4a4c53; --gs-fg-dim: #696c77; --gs-fg-faint: #909196; --gs-fg-fainter: #b8b9bd;
+  --gs-accent: #4078f2; --gs-accent-bg: rgba(64, 120, 242, 0.1); --gs-accent-border: rgba(64, 120, 242, 0.45);
+  --gs-add: #50a14f; --gs-del: #e45649; --gs-warn: #c18401; --gs-info: #0184bc;
+  --gs-add-bg: rgba(80, 161, 79, 0.12); --gs-del-bg: rgba(228, 86, 73, 0.12);
+  --gs-warn-bg: rgba(193, 132, 1, 0.12); --gs-info-bg: rgba(1, 132, 188, 0.12);
+  --gs-add-line: rgba(80, 161, 79, 0.14); --gs-del-line: rgba(228, 86, 73, 0.13);
+  --gs-add-word: rgba(80, 161, 79, 0.34); --gs-del-word: rgba(228, 86, 73, 0.32);
+  --gs-hunk: rgba(64, 120, 242, 0.07); --gs-neutral-bg: rgba(105, 108, 119, 0.12);
+  --gs-backdrop: rgba(56, 58, 66, 0.26); --gs-shadow: rgba(56, 58, 66, 0.18);
+}
+
+/* Solarized — Ethan Schoonover's fixed sixteen, both official grounds. */
+.overlay[data-gs-theme='solarized-dark'] {
+  --gs-bg: #002b36; --gs-panel: #073642; --gs-raise: #0a4553;
+  --gs-border: #0f5666; --gs-border-soft: #073642;
+  --gs-fg: #93a1a1; --gs-fg-muted: #839496; --gs-fg-dim: #657b83; --gs-fg-faint: #586e75; --gs-fg-fainter: #45636b;
+  --gs-accent: #268bd2; --gs-accent-bg: rgba(38, 139, 210, 0.16); --gs-accent-border: rgba(38, 139, 210, 0.55);
+  --gs-add: #859900; --gs-del: #dc322f; --gs-warn: #b58900; --gs-info: #2aa198;
+  --gs-add-bg: rgba(133, 153, 0, 0.2); --gs-del-bg: rgba(220, 50, 47, 0.18);
+  --gs-warn-bg: rgba(181, 137, 0, 0.18); --gs-info-bg: rgba(42, 161, 152, 0.18);
+  --gs-add-line: rgba(133, 153, 0, 0.16); --gs-del-line: rgba(220, 50, 47, 0.15);
+  --gs-add-word: rgba(133, 153, 0, 0.4); --gs-del-word: rgba(220, 50, 47, 0.38);
+  --gs-hunk: rgba(38, 139, 210, 0.12); --gs-neutral-bg: rgba(101, 123, 131, 0.2);
+  --gs-backdrop: rgba(0, 20, 26, 0.62); --gs-shadow: rgba(0, 20, 26, 0.55);
+}
+.overlay[data-gs-theme='solarized-light'] {
+  --gs-bg: #fdf6e3; --gs-panel: #eee8d5; --gs-raise: #e3ddca;
+  --gs-border: #d5cfbb; --gs-border-soft: #eee8d5;
+  --gs-fg: #586e75; --gs-fg-muted: #657b83; --gs-fg-dim: #839496; --gs-fg-faint: #93a1a1; --gs-fg-fainter: #b5b0a0;
+  --gs-accent: #268bd2; --gs-accent-bg: rgba(38, 139, 210, 0.12); --gs-accent-border: rgba(38, 139, 210, 0.45);
+  --gs-add: #6c7c00; --gs-del: #cb2825; --gs-warn: #9a7400; --gs-info: #21867f;
+  --gs-add-bg: rgba(133, 153, 0, 0.18); --gs-del-bg: rgba(220, 50, 47, 0.14);
+  --gs-warn-bg: rgba(181, 137, 0, 0.16); --gs-info-bg: rgba(42, 161, 152, 0.14);
+  --gs-add-line: rgba(133, 153, 0, 0.16); --gs-del-line: rgba(220, 50, 47, 0.12);
+  --gs-add-word: rgba(133, 153, 0, 0.38); --gs-del-word: rgba(220, 50, 47, 0.3);
+  --gs-hunk: rgba(38, 139, 210, 0.08); --gs-neutral-bg: rgba(88, 110, 117, 0.14);
+  --gs-backdrop: rgba(88, 110, 117, 0.26); --gs-shadow: rgba(88, 110, 117, 0.2);
+}
+
+/* Nord — Polar Night for dark, Snow Storm for light. Nord's aurora greens and
+   reds are tuned for a dark ground, so the light variant darkens the diff pair
+   rather than washing it out. */
+.overlay[data-gs-theme='nord-dark'] {
+  --gs-bg: #2e3440; --gs-panel: #3b4252; --gs-raise: #434c5e;
+  --gs-border: #4c566a; --gs-border-soft: #3b4252;
+  --gs-fg: #eceff4; --gs-fg-muted: #d8dee9; --gs-fg-dim: #9aa5b8; --gs-fg-faint: #7b88a1; --gs-fg-fainter: #5d6a82;
+  --gs-accent: #88c0d0; --gs-on-accent: #2e3440; --gs-accent-bg: rgba(136, 192, 208, 0.14); --gs-accent-border: rgba(136, 192, 208, 0.55);
+  --gs-add: #a3be8c; --gs-del: #bf616a; --gs-warn: #ebcb8b; --gs-info: #81a1c1;
+  --gs-add-bg: rgba(163, 190, 140, 0.16); --gs-del-bg: rgba(191, 97, 106, 0.18);
+  --gs-warn-bg: rgba(235, 203, 139, 0.16); --gs-info-bg: rgba(129, 161, 193, 0.16);
+  --gs-add-line: rgba(163, 190, 140, 0.14); --gs-del-line: rgba(191, 97, 106, 0.15);
+  --gs-add-word: rgba(163, 190, 140, 0.38); --gs-del-word: rgba(191, 97, 106, 0.4);
+  --gs-hunk: rgba(136, 192, 208, 0.1); --gs-neutral-bg: rgba(154, 165, 184, 0.16);
+  --gs-backdrop: rgba(29, 35, 45, 0.62); --gs-shadow: rgba(20, 25, 33, 0.55);
+}
+.overlay[data-gs-theme='nord-light'] {
+  --gs-bg: #eceff4; --gs-panel: #e5e9f0; --gs-raise: #d8dee9;
+  --gs-border: #c3cbd8; --gs-border-soft: #dfe4ec;
+  --gs-fg: #2e3440; --gs-fg-muted: #3b4252; --gs-fg-dim: #4c566a; --gs-fg-faint: #6b7689; --gs-fg-fainter: #9aa4b5;
+  --gs-accent: #5e81ac; --gs-accent-bg: rgba(94, 129, 172, 0.12); --gs-accent-border: rgba(94, 129, 172, 0.5);
+  --gs-add: #5e7d47; --gs-del: #a5424c; --gs-warn: #97701f; --gs-info: #4c7a8c;
+  --gs-add-bg: rgba(94, 125, 71, 0.14); --gs-del-bg: rgba(165, 66, 76, 0.13);
+  --gs-warn-bg: rgba(151, 112, 31, 0.14); --gs-info-bg: rgba(76, 122, 140, 0.13);
+  --gs-add-line: rgba(94, 125, 71, 0.14); --gs-del-line: rgba(165, 66, 76, 0.12);
+  --gs-add-word: rgba(94, 125, 71, 0.34); --gs-del-word: rgba(165, 66, 76, 0.32);
+  --gs-hunk: rgba(94, 129, 172, 0.09); --gs-neutral-bg: rgba(76, 86, 106, 0.13);
+  --gs-backdrop: rgba(46, 52, 64, 0.26); --gs-shadow: rgba(46, 52, 64, 0.18);
+}

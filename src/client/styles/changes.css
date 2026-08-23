@@ -1,0 +1,504 @@
+/* File tree column. A peer of the commit pane and the diff, never their parent:
+   each of the three scrolls on its own and keeps its full height. */
+.treeCol {
+  flex: 0 1 auto; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 0;
+  width: 28%; min-width: var(--gs-min-tree); max-width: 400px;
+  background: var(--gs-surface);
+}
+
+/* file tree */
+.treeWrap {
+  flex: 1; box-sizing: border-box;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+}
+/* Two items, not five: the count and one group of buttons. The pane drags down
+   to 170px, so the row does have to wrap — but it wraps between the count and
+   the group, never inside it. Wrapping the buttons individually is what left a
+   lone "Collapse all" stranded on a second row under a right-aligned
+   "Expand all". `space-between` then aligns whichever way the row broke. */
+.treeTools {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  justify-content: space-between;
+  flex: none;
+  min-height: 37px; box-sizing: border-box;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+/* Wraps only when the group alone cannot fit the pane — five controls do not
+   go into 170px by any arrangement, and a clipped button is worse than a
+   second row. Above ~250px this never fires. */
+.treeActions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+/* The root tick sits in the same column the rows read down, so it is pulled out
+   of the toolbar's gutter to the pane edge rather than aligned to the label. */
+.treeLead { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.treeLabel {
+  flex: none;
+  white-space: nowrap;
+  color: var(--gs-fg-dim); font-size: var(--gs-t-dense);
+}
+/* The file filter, revealed under the tools rather than squeezed into them:
+   the pane drags down to 170px, where the tick, the count and two icon buttons
+   already own the row. It costs a row only while it is being used. */
+.treeFilter {
+  position: relative;
+  flex: none;
+  display: flex; align-items: center;
+  padding: 6px var(--gs-gutter-pane);
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.treeFilterInput {
+  flex: 1 1 auto; min-width: 0;
+  height: var(--gs-h-compact); box-sizing: border-box;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--gs-border-soft); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense);
+  outline: none;
+}
+.treeFilterInput:focus { border-color: var(--gs-accent); }
+.treeFilterInput::placeholder { color: var(--gs-fg-faint); }
+/* Inside the field's right padding, so clearing does not move the field or
+   change its width as the button comes and goes. */
+.treeFilterClear {
+  position: absolute; right: calc(var(--gs-gutter-pane) + 6px);
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  padding: 0;
+  border: 0; border-radius: var(--gs-r-pill);
+  background: transparent; color: var(--gs-fg-faint);
+  font-size: var(--gs-t-ui); line-height: 1;
+  cursor: pointer;
+}
+.treeFilterClear:hover { color: var(--gs-fg); }
+.tree {
+  flex: 1; min-height: 0;
+  margin: 0; padding: 6px 0 16px;
+  overflow: auto; list-style: none;
+}
+/* The list's stand-in while the view's file list is in flight: centred and
+   quiet, never a claim about how many changes exist. */
+.treeEmpty {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gs-fg-faint); font-size: var(--gs-t-ui);
+}
+/* Nested lists are NOT .tree: only the root list scrolls, otherwise every level
+   would grow its own scrollbar. */
+.treeSub {
+  position: relative;
+  margin: 0; padding: 0;
+  list-style: none;
+}
+/* One hairline per nesting level at the parent's chevron column, so a deep tree
+   reads as a tree rather than a ragged left edge. The offset comes from the row
+   that owns the level (see TREE_RAIL_OFFSET). */
+.treeSub::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: var(--gs-rail, 0);
+  width: 1px;
+  background: var(--gs-border-soft);
+}
+.treeDirLi { position: relative; }
+.treeDir {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; width: 100%;
+  padding: 4px 12px 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--gs-fg-dim);
+  font-family: inherit;
+  font-size: var(--gs-t-dense); font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.treeDir:hover { background: var(--gs-panel); color: var(--gs-fg-muted); }
+.treeDirActive { color: var(--gs-fg-muted); }
+.chevron {
+  flex: none;
+  display: inline-block;
+  width: 10px;
+  color: var(--gs-fg-fainter);
+  font-size: var(--gs-t-meta);
+  transition: transform 120ms ease;
+}
+.chevronOpen { transform: rotate(90deg); }
+.treeDirName {
+  flex: 1; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.treeDirCount {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: var(--gs-t-meta); font-weight: 600; line-height: 16px;
+}
+.treeDirCounts { flex: none; font-size: var(--gs-t-meta); font-variant-numeric: tabular-nums; }
+.file {
+  display: flex; align-items: center; gap: 8px;
+  box-sizing: border-box; width: 100%;
+  padding: 5px 14px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--gs-fg-muted);
+  font-family: inherit;
+  font-size: var(--gs-t-dense);
+  text-align: left;
+  cursor: pointer;
+}
+.file:hover { background: var(--gs-panel); }
+.fileActive {
+  background: var(--gs-panel);
+  border-left-color: var(--gs-accent);
+  color: var(--gs-fg);
+}
+
+.fileStatus {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  font-weight: 700; font-size: var(--gs-t-meta); line-height: 1;
+}
+.stAdded, .stUntracked { color: var(--gs-add); background: var(--gs-add-bg); }
+.stDeleted { color: var(--gs-del); background: var(--gs-del-bg); }
+.stModified { color: var(--gs-warn); background: var(--gs-warn-bg); }
+.stRenamed { color: var(--gs-info); background: var(--gs-info-bg); }
+
+.filePath { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fileBinary {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--gs-neutral-bg);
+  color: var(--gs-fg-dim);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+}
+.fileCounts { flex: none; font-size: var(--gs-t-meta); font-variant-numeric: tabular-nums; }
+.fileCountAdd { color: var(--gs-add); }
+.fileCountDel { color: var(--gs-del); }
+
+/* diff pane */
+/* A column, so a header can sit above the scrolled diff instead of inside it.
+   `overflow: auto` stays as the outer guard — the rename line and the
+   side-by-side pane are also children here, and one of them growing must
+   scroll rather than be clipped. */
+.diffPane {
+  flex: 1 1 0; min-width: var(--gs-min-diff);
+  display: flex; flex-direction: column;
+  overflow: auto; background: var(--gs-surface);
+}
+/* The unified view: its own header and its own scroller, filling whatever the
+   pane has left after a rename line. */
+.diffWrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; width: 100%; }
+.diffScroll { flex: 1 1 0; min-height: 0; overflow: auto; outline: none; }
+/* The walk's controls. Right-aligned and quiet: they belong to the diff, and
+   the diff is what the reader came for. Same shape as `.sideNav` in the
+   side-by-side pane, because it is the same control. */
+.diffNav {
+  flex: none;
+  display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+  padding: 3px 12px 3px 0;
+  border-bottom: 1px solid var(--gs-border-soft);
+}
+.diffNav .blockBtn { padding-inline: 6px; line-height: 0; }
+/* The pre is as wide as its longest line (`max-content`) and at least the pane
+   (`min-width: 100%`). Each row then stretches to that width, so add/delete
+   tints survive horizontal scroll instead of stopping at the viewport edge. */
+.diffPre {
+  display: flex; flex-direction: column;
+  margin: 0; padding: 8px 0 16px;
+  min-width: 100%; width: max-content;
+  /* GitHub's blob stack — Cascadia ligatures and a 16px leading were why this
+     read as a terminal dump instead of a pull-request diff. */
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
+.renameLine {
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-info);
+  font-size: var(--gs-t-dense);
+}
+/* The old path is literal content, not prose: give it the body colour so it
+   reads louder than the sentence around it. */
+.renameLine code { color: var(--gs-fg); }
+
+/* Each line: [old#][new#][sign][code]. Stretch, don't baseline — empty line-number
+   cells plus nested syntax spans used to inflate the row into prose leading. */
+.line {
+  display: flex; align-items: stretch;
+  width: max-content; min-width: 100%;
+  min-height: 20px; line-height: 20px;
+  white-space: nowrap;
+}
+.lnOld, .lnNew {
+  flex: none;
+  box-sizing: border-box;
+  width: 3.2em;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--gs-fg-fainter);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.line:hover .lnOld, .line:hover .lnNew { color: var(--gs-fg-dim); }
+/* No rule down the right edge: GitHub carries the +/- as the first glyph of the
+   code cell and draws nothing between the columns. The rule that used to be
+   here cut every tinted row in half, which is most of why a full-file addition
+   read as two stacked green bands rather than one block of new code. */
+.gutter {
+  flex: none;
+  width: 1.4em;
+  text-align: center;
+  user-select: none;
+}
+.code { flex: 1 0 auto; white-space: pre; padding: 0 16px 0 10px; }
+
+.lineAdd { background: var(--gs-add-line); }
+.lineDel { background: var(--gs-del-line); }
+.lineAdd .lnOld, .lineAdd .lnNew, .lineAdd .gutter { background: var(--gs-add-num, var(--gs-add-line)); }
+.lineDel .lnOld, .lineDel .lnNew, .lineDel .gutter { background: var(--gs-del-num, var(--gs-del-line)); }
+.lineContext { color: var(--gs-fg-muted); }
+/* GitHub's hunk header is quiet: a faint accent wash on the row, muted grey
+   text, and the saturated blue confined to the number cells. It used to run the
+   accent colour across the whole line, which made every hunk boundary shout
+   louder than the code it introduces. */
+.lineHunk { background: var(--gs-hunk); }
+.lineHunk .code { color: var(--gs-fg-dim); }
+.lineHunk .lnOld, .lineHunk .lnNew, .lineHunk .gutter { background: var(--gs-hunk-num, var(--gs-hunk)); }
+.signAdd { color: var(--gs-add); }
+.signDel { color: var(--gs-del); }
+
+.wordAdd { background: var(--gs-add-word); border-radius: 2px; }
+.wordDel { background: var(--gs-del-word); border-radius: 2px; }
+
+/* Side-by-side diff pane. One grid holds EVERY row's four cells — a per-row
+   grid would let the column boundary drift with each row's content, and a
+   fixed split would clip long lines. Equal 1fr code tracks keep the two
+   columns identically wide however wide the widest line is, and the whole pane
+   (this view's single shared vertical scroll) carries the horizontal one. */
+/* The pane is a HEADER plus a scroller, not one wide column: the tab row
+   carries Save/Revert, and a row sized to the widest line of code pushes them
+   off the right edge of a long file — reachable only by scrolling sideways,
+   which is not where anyone looks for a toolbar. Only `.sideScroll` scrolls;
+   the tabs and the notices above it stay put on both axes. */
+.sidePane { display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100%; }
+/* Vertical scrolling belongs to the pane; horizontal belongs to each column,
+   which is what lets the divider mean something. A single scroller for both
+   axes would tie the two sides' horizontal position together and size the
+   whole grid to the widest line in the file. */
+.sideScroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.sideCols { display: flex; align-items: stretch; min-height: 100%; }
+/* `min-width: 0` is what lets a flex column be narrower than its content —
+   without it the column refuses to shrink and the divider stops moving. */
+.sideCol { flex: 0 0 auto; min-width: 0; overflow-x: auto; }
+.sideColRight { flex: 1 1 0; }
+.sideColGrid {
+  display: grid;
+  grid-template-columns: 3.2em 1fr;
+  align-content: start;
+  padding: 8px 0 16px;
+  min-width: 100%; width: max-content;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: var(--gs-t-dense); line-height: 20px; font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  tab-size: 4;
+}
+/* The blame gutter, on the working-tree column only. Fixed width so the code
+   beside it does not shift line to line, and clipped rather than wrapped: a
+   gutter row that grew to two lines would break the alignment the whole
+   side-by-side view rests on. */
+.sideColGridBlame { grid-template-columns: 13em 3.2em 1fr; }
+.blameCell {
+  box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  border-right: 1px solid var(--gs-border-soft);
+  color: var(--gs-fg-faint);
+  font-size: var(--gs-t-meta);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  user-select: none;
+}
+.sideTabs {
+  z-index: 5;
+  display: flex; gap: 16px;
+  flex: none;
+  padding: 6px 16px 0;
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+}
+.sideTab {
+  position: relative;
+  padding: 2px 0 5px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--gs-t-meta); line-height: 16px; font-weight: 500;
+  color: var(--gs-fg-dim);
+  cursor: pointer;
+}
+.sideTab::after {
+  content: '';
+  position: absolute; right: 0; bottom: 1px; left: 0;
+  height: 2px; border-radius: 2px;
+  background: transparent;
+}
+.sideTabActive { color: var(--gs-accent); }
+.sideTabActive::after { background: var(--gs-accent); }
+.sideNotice {
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  color: var(--gs-info);
+  font-size: var(--gs-t-dense);
+}
+.sideNum {
+  box-sizing: border-box;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--gs-fg-fainter);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.sideNumAdd { background: var(--gs-add-num, var(--gs-add-line)); }
+.sideNumDel { background: var(--gs-del-num, var(--gs-del-line)); }
+.sideCode { white-space: pre; padding: 0 16px 0 10px; min-height: 20px; }
+/* Stands in for the rows outside the window, so the scrollbar is the length of
+   the FILE rather than of whatever is currently rendered. Spans every column,
+   including the blame gutter's. */
+.sideSpacer { grid-column: 1 / -1; }
+/* The same, for the unified view's flex column. `flex: none` so it is exactly
+   the height it claims rather than one stretched by its siblings. */
+.diffSpacer { flex: none; }
+.sideCodeSame { color: var(--gs-fg-muted); }
+.sideCodeAdd { background: var(--gs-add-line); }
+.sideCodeDel { background: var(--gs-del-line); }
+/* The block affordance outlines one WHOLE changed region, not every row. The
+   number cell owns the outer left edge, the code cell the right, and only the
+   first/last present cells add horizontal edges. One-sided changes paint no
+   cage in the empty opposite pane. `.sideCellBlock` positions the action bar. */
+.sideCellBlock { position: relative; }
+.sideNum.sideBlockHot { box-shadow: inset 1px 0 var(--gs-accent); }
+.sideCode.sideBlockHot { box-shadow: inset -1px 0 var(--gs-accent); }
+.sideNum.sideBlockHot.sideBlockHotFirst { box-shadow: inset 1px 0 var(--gs-accent), inset 0 1px var(--gs-accent); }
+.sideCode.sideBlockHot.sideBlockHotFirst { box-shadow: inset -1px 0 var(--gs-accent), inset 0 1px var(--gs-accent); }
+.sideNum.sideBlockHot.sideBlockHotLast { box-shadow: inset 1px 0 var(--gs-accent), inset 0 -1px var(--gs-accent); }
+.sideCode.sideBlockHot.sideBlockHotLast { box-shadow: inset -1px 0 var(--gs-accent), inset 0 -1px var(--gs-accent); }
+.sideNum.sideBlockHot.sideBlockHotFirst.sideBlockHotLast { box-shadow: inset 1px 0 var(--gs-accent), inset 0 1px var(--gs-accent), inset 0 -1px var(--gs-accent); }
+.sideCode.sideBlockHot.sideBlockHotFirst.sideBlockHotLast { box-shadow: inset -1px 0 var(--gs-accent), inset 0 1px var(--gs-accent), inset 0 -1px var(--gs-accent); }
+
+/* The hovered block's actions, floating on the row above the block. It lives
+   INSIDE the block's first code cell, so it travels with the column and the
+   scroll, and it only ever covers context — never the change it acts on. The
+   surface and shadow are what keep it readable over code. */
+.blockBar {
+  position: absolute; left: 0; z-index: 4;
+  display: flex; gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-r-control);
+  background: var(--gs-surface-2, var(--gs-bg));
+  box-shadow: 0 4px 14px var(--gs-shadow);
+  white-space: nowrap;
+}
+.blockBtn {
+  padding: 0 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-pill);
+  background: var(--gs-bg); color: var(--gs-fg-dim);
+  font-family: inherit; font-size: var(--gs-t-meta); line-height: 16px;
+  cursor: pointer;
+}
+.blockBtn:hover:not(:disabled) { color: var(--gs-fg); border-color: var(--gs-accent); }
+.blockBtn:disabled { opacity: 0.45; cursor: default; }
+/* The roll-back button stays red at rest, not only on hover: it is the one
+   action in the bar that cannot be undone, and arriving under the pointer is
+   not what should make that visible. */
+.blockBtnDanger { color: var(--gs-del); border-color: var(--gs-del-bg, var(--gs-border)); }
+.blockBtnDanger:hover:not(:disabled) { color: var(--gs-del); border-color: var(--gs-del); }
+
+/* The editable right column. The working-tree column is readable but visibly
+   a text surface before editing is armed; the tab row carries the arm/save
+   cluster at its right end. */
+.sideArmable { cursor: text; }
+
+/* An editable buffer says so — the one thing a rendered code pane cannot say
+   by itself.
+
+   Nothing about monospaced text on a background looks like a field. In the
+   Files tab the editor is live the moment the file opens, so without a mark
+   the reader finds out whether they may type by typing — and finds out they
+   may not the same way, on a pane that silently swallows it. The rule runs
+   the full height of the editor's leading edge: dim while nothing is focused
+   (present, not loud — it sits beside code someone came to read), full accent
+   once the caret is actually inside, which doubles as "this pane has the
+   keyboard".
+
+   Driven by an attribute the component sets from the same boolean that
+   configures `EditorState.readOnly`, so the rule cannot appear on a pane that
+   would refuse the keystroke. `pointer-events: none` because the bar overlays
+   the gutter's first two pixels, and a click there must still reach the
+   view. */
+.cmHost { position: relative; }
+.cmHost[data-editable]::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--gs-accent);
+  opacity: 0.32;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+.cmHost[data-editable]:focus-within::before { opacity: 1; }
+/* The change nav takes the free space, so it and `.sideActions` after it sit
+   together at the right end. Only the FIRST auto margin absorbs anything —
+   the one on `.sideActions` then has nothing left to take, which is what
+   keeps the two groups adjacent rather than pushed to opposite ends. */
+.sideNav { margin-left: auto; display: flex; gap: 4px; align-items: center; padding: 2px 0 5px; }
+.sideNav .blockBtn { padding-inline: 6px; line-height: 0; }
+.sideNavCount { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); white-space: nowrap; }
+.sideEditBlockActions { margin-left: auto; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
+.sideActions { margin-left: auto; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
+.sideActionsAdjacent { margin-left: 0; }
+/* Save gains the accent only once there is something to save: the button's
+   whole enabled state is the dirty flag, and colour says it sooner than the
+   pointer does. */
+.sideSaveReady { color: var(--gs-accent); border-color: var(--gs-accent); }
+
+/* The reload-or-overwrite banner (§4) and the failed-save banner: a warning
+   strip under the tabs carrying its own actions, so the decision it asks for
+   is one click away rather than a sentence away. */
+.sideBanner {
+  flex: none;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-del-bg, transparent);
+  color: var(--gs-del);
+  font-size: var(--gs-t-dense);
+}
+.sideBannerTitle { font-weight: 600; }
+.sideBannerActs { display: flex; gap: 4px; }
+
+/* The editor grid item that positions the textarea. It spans exactly the
+   buffer's rows of the fourth column; the textarea fills it absolutely. */
+.sideEditCell { position: relative; }
+
+
+/* No syntax-tint classes here: Shiki resolves a real TextMate theme and emits a
+   hex per token, so the panel writes colour inline. A four-class approximation
+   painted identifiers, types and punctuation all one colour, which is what made
+   the diff look unhighlighted next to GitHub's. */
+
+.empty { padding: 32px 24px; color: var(--gs-fg-faint); font-size: var(--gs-t-ui); }

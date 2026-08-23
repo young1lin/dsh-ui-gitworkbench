@@ -1,0 +1,179 @@
+/* ============================ write operations ============================ */
+
+/* Sync bar: fetch / pull / push, with the divergence they act on. A chrome bar
+   like the others, so it takes the drawer gutter and not a gutter of its own. */
+.syncBar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  background: var(--gs-surface-2);
+  font-size: var(--gs-t-dense);
+  color: var(--gs-fg-dim);
+}
+.syncUpstream {
+  max-width: 260px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--gs-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.syncLevel { color: var(--gs-fg-faint); }
+.syncSpacer { flex: 1 1 auto; }
+.btn:disabled, .treeIcon:disabled, .miniBtn:disabled, .refButton:disabled, .funnelButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* A control disabled ONLY by an operation too young to report keeps its full
+   strength. Every tick stages through git, and fading the whole sync row for
+   the ~150ms that takes was a blink, not feedback — nobody can act inside it.
+   The click is still refused from the first frame; see `op-feedback.ts`. */
+.btn[data-quiet]:disabled, .refButton[data-quiet]:disabled { opacity: 1; }
+
+/* Outcome of the last operation. Pre-wrap because git's own message rides along
+   under the explanation, and it arrives with its newlines. */
+.opBanner {
+  flex: none;
+  padding: 8px var(--gs-gutter);
+  border-bottom: 1px solid var(--gs-border-soft);
+  font-size: var(--gs-t-dense); line-height: 18px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text;
+}
+.opBannerOk { background: var(--gs-add-bg); color: var(--gs-add); }
+.opBannerBad { background: var(--gs-del-bg); color: var(--gs-del); }
+
+/* A file row and its stage toggle. The row keeps its own indent padding, so the
+   toggle trails it rather than displacing the tree's left edge. */
+.fileLi { display: flex; align-items: stretch; }
+.fileLi .file { flex: 1 1 auto; min-width: 0; }
+/* Roll back, in the same 22px slot the tick occupies on the other side — the
+   row already has two gutters, and a third would eat the name.
+   It holds its width at all times and only fades in on hover or keyboard
+   focus: revealing it by `display` would re-flow the name column under the
+   pointer, and a destructive control that shifts the row as it appears is one
+   the pointer arrives at by accident. */
+.fileDiscard {
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--gs-fg-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.fileLi:hover .fileDiscard, .fileDiscard:focus-visible { opacity: 1; }
+/* Red on hover, and only on hover. Standing red would make every row of a
+   working tree look like a warning; arriving under the pointer is where the
+   colour has something to say. */
+.fileDiscard:hover { color: var(--gs-del); }
+.fileDiscard:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: -2px; border-radius: var(--gs-r-control); }
+/* Directory rows need the same two-slot row as files, but their subtree list
+   has to stay a child of the <li> — hence a wrapper around just the row. */
+.treeRow { display: flex; align-items: stretch; }
+.treeRow .treeDir { flex: 1 1 auto; min-width: 0; }
+
+/* ---- the commit tick ----
+ *
+ * The drawer presents a commit the way IDEA does: a set of ticks, not a staging
+ * area. A tick is `git add` the moment it is clicked, so the tree and
+ * `git status` can never disagree.
+ *
+ * The column does NOT indent with the tree. Depth already costs room in a pane
+ * that drags to 170px, and a straight column down the left edge is what makes
+ * "what am I about to commit" readable in one glance — which is why the ticks
+ * exist. Its width is TREE_CHECK_W; the row indents start after it. */
+.checkBox {
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.checkMark {
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box;
+  width: 14px; height: 14px;
+  border: 1px solid var(--gs-fg-faint); border-radius: 3px;
+  background: var(--gs-bg);
+  color: transparent;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.checkBox:hover .checkMark { border-color: var(--gs-accent); }
+.checkBox:focus-visible { outline: none; }
+.checkBox:focus-visible .checkMark { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+/* Ticked and half-ticked share a filled box: both mean "some of this is going
+   into the commit", and the glyph inside says which. */
+.checkMarkOn, .checkMarkPartial {
+  border-color: var(--gs-accent);
+  background: var(--gs-accent);
+  color: var(--gs-on-accent);
+}
+
+/* Commit box: pinned under the tree, so the message stays reachable however far
+   the file list scrolls. */
+.commitBox {
+  flex: none;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px var(--gs-gutter-pane) 10px;
+  border-top: 1px solid var(--gs-border);
+  background: var(--gs-surface-2);
+}
+.commitMessage {
+  width: 100%; box-sizing: border-box;
+  min-height: 46px; max-height: 160px;
+  padding: 6px 8px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-control);
+  background: var(--gs-bg); color: var(--gs-fg);
+  font-family: inherit; font-size: var(--gs-t-dense); line-height: 18px;
+  resize: vertical;
+  outline: none;
+}
+.commitMessage:focus { border-color: var(--gs-accent-border); }
+.commitMessage::placeholder { color: var(--gs-fg-faint); }
+.commitRow { display: flex; align-items: center; gap: 8px; }
+.commitAmend {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--gs-fg-dim); font-size: var(--gs-t-meta);
+  cursor: pointer;
+}
+.commitAmend input { accent-color: var(--gs-accent); cursor: pointer; }
+.commitStaged { margin-left: auto; color: var(--gs-fg-faint); font-size: var(--gs-t-meta); }
+/* The commit box's one standing instruction: tick to stage, then commit. A
+   constant quiet line at the top — the blocker banner that appeared only when
+   the index was empty read as an error, and arrived after the confusion it
+   explains. */
+.commitLead { margin: 0; color: var(--gs-fg-faint); font-size: var(--gs-t-meta); line-height: 15px; }
+
+/* Commit is the one PRIMARY action in the drawer, and the only control that
+   gets a solid fill. As a quiet outlined button it sat at the same weight as
+   Expand all and disappeared into the row — the button that writes history
+   should not look like the button that folds a directory. */
+.commitBtn {
+  flex: none;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 92px;
+  height: var(--gs-h-control);
+  padding: 0 16px;
+  border: 1px solid transparent; border-radius: var(--gs-r-control);
+  background: var(--gs-accent); color: var(--gs-on-accent);
+  font-family: inherit; font-size: var(--gs-t-ui); font-weight: 600; line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+.commitBtn:hover:not(:disabled) { filter: brightness(1.1); }
+.commitBtn:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 2px; }
+/* Disabled keeps the shape and loses the weight: the button stays findable, so
+   "nothing is staged yet" reads as a state rather than as a missing feature. */
+.commitBtn:disabled {
+  background: var(--gs-raise); color: var(--gs-fg-faint);
+  border-color: var(--gs-border);
+  cursor: default;
+}

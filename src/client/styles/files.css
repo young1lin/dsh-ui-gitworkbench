@@ -1,0 +1,111 @@
+/* Files tab: the repository browser's tree, and the pane that opens a file.
+   Modifier rules stay BELOW the base rule they narrow — a modifier declared
+   first loses the cascade, which the drawer-chrome test checks for. */
+.fbTree {
+  flex: none;
+  min-width: var(--gs-min-tree);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  overflow: auto;
+  background: var(--gs-surface-2);
+}
+.fbSearch {
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg);
+  background: var(--gs-surface);
+  border: 1px solid var(--gs-border);
+  border-radius: 4px;
+}
+.fbSearch:focus { outline: none; border-color: var(--gs-accent); }
+.fbNote { flex: none; font-size: var(--gs-t-meta); color: var(--gs-fg-dim); padding: 2px 4px; }
+.fbList { list-style: none; margin: 0; padding: 0; }
+.fbRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 6px 2px 4px;
+  font: inherit;
+  font-size: var(--gs-t-dense);
+  color: var(--gs-fg-dim);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fbRow:hover { background: var(--gs-hover); }
+.fbRowActive { background: var(--gs-selected); color: var(--gs-fg); }
+.fbDirName { overflow: hidden; text-overflow: ellipsis; }
+.fbFileName { overflow: hidden; text-overflow: ellipsis; }
+.fbMain {
+  flex: 1 1 0;
+  min-width: var(--gs-min-diff);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--gs-surface);
+}
+.fbHeader {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--gs-border);
+}
+.fbPath {
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 0;
+}
+/* The editor scrolls inside this, so the header and the notices above stay
+   put — the same reason the side pane's toolbar is pinned. */
+.fbBody { flex: 1 1 0; min-height: 0; overflow: auto; padding: 4px 8px; }
+
+/* The commit behind the picked blame line. A strip rather than a floating
+   popup: it never covers the code it is about, and it survives a scroll. */
+.fbCommit {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-dim);
+  background: var(--gs-surface-2);
+  border-bottom: 1px solid var(--gs-border);
+}
+.fbCommitLine { flex: none; color: var(--gs-fg-faint); font-variant-numeric: tabular-nums; }
+.fbCommitWho { flex: none; color: var(--gs-fg); font-weight: 600; }
+.fbCommitWhen { flex: none; font-variant-numeric: tabular-nums; }
+.fbCommitHash { flex: none; font-family: inherit; color: var(--gs-fg-faint); }
+.fbCommitWhat {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gs-fg);
+}
+.fbCommitHint { color: var(--gs-fg-faint); }
+.fbMore {
+  display: block;
+  padding: 2px 6px 4px 4px;
+  font-size: var(--gs-t-meta);
+  color: var(--gs-fg-faint);
+  font-style: italic;
+}

@@ -1,12 +1,11 @@
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { COLOR_MODES, DEFAULT_APPEARANCE, DSH_DARK_ATTR, THEME_FAMILIES, hostSchemeDark, isAppearance, resolveTheme } from '../src/client/themes.ts'
+import { panelCssSource } from './helpers/panel-css.ts'
 
 /** The stylesheet as code, comments stripped. This repo's scanning guards
  *  have been fooled by prose in comments before (AGENTS.md): a token that is
  *  "declared" only inside a comment reads as present to a raw-text scan. */
-const css = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.module.css', import.meta.url)), 'utf8')
+const css = panelCssSource()
   .replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** Palette names the stylesheet actually defines, read from its selectors. */
