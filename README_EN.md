@@ -6,7 +6,8 @@ An out-of-tree Web UI plugin for [dsh (DeepSeek Harness)](https://github.com/dee
 
 Every session header gets a small status card showing the current branch, ahead/behind counts, and added/deleted lines. Click it and a workbench panel slides in from the right with everything about the session worktree's changes:
 
-- **Changes** — a collapsible file tree beside per-file diffs: dual line numbers, word-level highlights, Shiki syntax coloring. A magnifier in the toolbar filters the list by space-separated keywords (smart case); hovering a row reveals a roll-back button that takes that one file to its committed state (IDEA's Rollback) behind a dialog that states the real consequence.
+- **Changes** — a collapsible file tree beside full-context, side-by-side per-file diffs with dual line numbers, word-level highlights, Shiki syntax coloring, and an editable right column. A magnifier filters the tree by space-separated keywords (smart case); hovering a file reveals IDEA-style Rollback behind a consequence-specific dialog. The diff header keeps the current hunk and `current / total` visible: Unstaged offers Stage / Revert even in Edit mode, while Staged offers Unstage for the current hunk or the whole file.
+- **Files** — a searchable repository tree with editable CodeMirror file views, image previews, and per-line blame information.
 - **History** — commits, file tree, and diff in three panes; scrolling to the bottom loads the next page automatically. Rows carry the author, the hover card the exact time; an IDEA-style filter (a `user:` / `path:` / `after:` query grammar plus an authors / date / paths funnel) compiles into `git log` arguments and matches over all history, with an All-branches option.
 - **Compare** — diff any two branches against each other.
 - **Commit & sync** — ticking a file in the tree is a real `git add` / `git restore --staged`; with the commit box and the fetch / pull / push bar, a full commit-and-push never leaves the panel.

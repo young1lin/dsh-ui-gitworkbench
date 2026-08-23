@@ -2,6 +2,19 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.12] - 2026-08-23
+
+### Fixed
+
+- **The Staged pane now leaves an obvious way back after everything is staged.** Unstaging was technically possible before: clearing a file or directory tick unstaged that selection, and hovering a staged hunk revealed Unstage hunk. Both routes depended on a gesture the user already had to know, while the fixed header mounted hunk actions only in Edit mode, so an empty Unstaged pane looked irreversible. The Staged header now keeps the current hunk and `change current / total` visible: a one-hunk file shows **Unstage file**, while a multi-hunk file shows both **Unstage hunk / Unstage file**. Clicking a hunk or pressing F7 / Shift+F7 selects it and draws one continuous outline. Whole-file unstage uses the same stale-`diffSha`-checked patch path and returns the content to Unstaged.
+- **Entering Edit no longer removes Stage / Revert.** Edit mode keeps a fixed current-hunk toolbar and explicit hunk navigation. An unsaved buffer leaves Git hunk actions in place but disabled with an explanation, while Save / Discard edits remain available. This prevents both a disappearing escape route and applying an old diff selection to unsaved text.
+- **Refreshing a long diff no longer reuses the previous document's virtual scroll height.** Window state is keyed by diff identity, so switching files or layers and reloading after an operation cannot leave the new content padded to stale row counts.
+- **The first change block's action bar is no longer clipped by the top edge**, including files that change from line one. Hunk hover now draws one continuous perimeter instead of a blue box around every row.
+
+### Internal
+
+- Split the 10,000-plus-line `GitWorkbenchPanel.tsx` into focused change-tree, diff, history, controls, and glyph modules. Styles now live by feature under `src/client/styles/*.css`, still inlined through one CSS Module at build time, so runtime keeps one class map and one `<style>` element with no extra requests. AST and CSS structure guards cap orchestrator regrowth and protect the fixed-hunk-action and single-style contracts.
+
 ## [0.1.11] - 2026-08-21
 
 ### Fixed

@@ -6,7 +6,8 @@
 
 每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，右侧滑出一张工作台面板，当前 worktree 的改动一览无余：
 
-- **变更**：可折叠的文件树，配逐文件 diff——双列行号、词级高亮、Shiki 语法着色；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；
+- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；
+- **文件**：仓库目录树与可编辑文件查看器，支持搜索、图片预览、CodeMirror 编辑和 blame 行信息；
 - **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
 - **对比**：任选两个分支互相比较；
 - **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；
@@ -88,6 +89,7 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 | 状态卡绑定标记（树形图标；徽标文字与分支重名时省略）+ 头部 worktree 选择器 | ✅ | `python scripts/verify_worktree_ui.py`：6 步 UI 探针（绑定标记、头部路径、选择器切换、折叠/选中回归） |
 | 历史过滤（作者 / 日期 / 路径下推 `git log`、「全部分支」、日历与三态路径树） | ✅ | `python scripts/verify_history_feature.py`：11 步 UI + host 探针全过（中文作者、All-branches、日历选界、目录吸收文件勾选、诚实空态） |
 | 单文件撤回（Rollback）与文件列表关键字过滤 | ✅ | 对 live app 实测：撤回弹窗措辞随 host 实时推导的后果变化、取消不动手、执行后 fixture 回静息态；过滤框多词 AND、忽略折叠、根勾选只动可见行 |
+| 变更块导航与 Staged 恢复出口 | ✅ | `tests/edit-hunk-actions.test.ts` + scratch fixture live probe：Staged 常驻 Unstage file，多块另有 Unstage hunk；操作后回到 Unstaged，页面无错误 |
 | 客户端半被类型检查 | ✅ | `tsconfig.client.json` 进了 `bundle`/`typecheck`；曾故意写坏一处，确认报 `TS2322` |
 | 主题 7 族 × 亮暗 + 跟随系统明暗 | ✅ | `tests/theme-palettes.test.ts` 把 `themes.ts` 与 `.module.css` 互扣（两个方向都验过会红）；`lib/client.js` 含全部 14 套调色板 |
 | 背景图 / 自定义 CSS 的项目+全局存储 | ✅ | 对**构建产物** `lib/index.js` 跑 styleGet/styleSet 全流程（临时 HOME，18/18 PASS）：读写、项目优先、越界钳制、恶意 image 拒绝、清空删记录、非仓库拒绝、两作用域并发写不互相覆盖 |
@@ -139,11 +141,13 @@ export function apply(ctx) {
 - **拿 worktree 路径**：`useSessions(state => state.byId[sessionId]?.cwd)`——会话摘要自带 `cwd`。
 - **数据刷新**：挂载时拉一次 + 面板打开时轮询（空闲 15s、agent 运行中加密到 3s——运行中的会话正在改文件，等满 15s 看到的就是旧闻）+ 手动刷新按钮。**面板关着时另有一条便宜的绑定探针**（见 §6.0d）：只在 agent 运行中开表，走不 spawn git 的 `sessionWorktree`，发现绑定变了才补一次 `worktreeStatus`。
 
-### 2.3 组件与样式（`src/client/GitWorkbenchPanel.tsx` + `.module.css`）
+### 2.3 组件与样式（`GitWorkbenchPanel.tsx` + 功能组件 + `styles/*.css`）
 
 - **外壳**：面板是一张四边留白的卡片（`--gs-inset`，14px 圆角、投影），最大化按钮切到满屏。**三条边可拖**：卡片左缘（`MIN_DRAWER_WIDTH`）、提交列表与文件树之间、文件树与 diff 之间。三处共用 `useHorizontalDrag`（pointer capture + `pointercancel`）。窗格上界由 `applyPane` 现场量出来算：`面板宽 - 邻窗格宽 - MIN_DIFF_WIDTH`，diff 是唯一不能折行的窗格，所以它的下限是硬的。宽度与主题存 localStorage。
 - **布局**：变更页 = **文件树 + 逐文件 diff** 两栏；历史页 = **提交列表 + 文件树 + diff** 三栏并列（GitHub Desktop / JetBrains git log 的做法），各自独立滚动，因此没有可折叠的东西要解释。翻页是滚动哨兵（IntersectionObserver），不是按钮。
+- **逐块操作**：`DiffViews.tsx` 用完整上下文 side rows 把连续增删行归成块；点击代码块或按 F7 / Shift+F7 更新显式 current block，头部固定按钮始终作用于这一个块。Unstaged 提供 Stage / Revert，Staged 提供 Unstage hunk / file；整文件 Unstage 在点击时才收集所有变化行，并沿用 `diffSha` 过期检查。Edit 模式改用 working-tree 真实行号计算 CodeMirror 的 dense 滚动位置，dirty buffer 只禁用 Git 区块操作，不隐藏按钮。
 - diff 渲染：`renderDiff(segment)` 把统一 diff 逐行分类，渲染成 `[老行号][新行号][+/-槽][代码]` 的 flex 行；行号从 `@@ -a,b +c,d @@` 解析并随行递增。
+- **样式装载**：`GitWorkbenchPanel.module.css` 只是一张清单，按功能 `@import` `styles/*.css`；构建在 CSS Modules 作用域化之前内联它们，运行时仍是一张类名表和一个 `<style>`，不是十次网络或十个 style 标签。
 - **配色**：面板自带调色板，不走 dsh 主题 token——diff 需要 增/删/词级/语法 四组颜色，dsh 没有定义。**所有颜色都过 `--gs-*` token**，字面色只出现在 `.overlay[data-gs-theme='<family>-<mode>']` 的调色板块里；换主题＝换一组 token，别的什么都不动。**只有状态卡（在 dsh 原生 chrome 里）保留 `--dsw-*` token**。
   - 主题族与解析逻辑在 `src/client/themes.ts`（不 import CSS/React，因此可被测试直接加载）：GitHub / IntelliJ IDEA / VS Code / One / Solarized / Nord / Cyberpunk，各带亮暗两套。
   - 明暗默认 `system` = 跟随操作系统（`matchMedia('(prefers-color-scheme: dark)')`，挂载期间持续跟随）；显式选亮/暗则完全覆盖。
@@ -191,55 +195,51 @@ export function apply(ctx) {
 
 ```
 harness-worktree/
-  package.json              dsh.client(web) 声明 + exports + peerDeps（@deepseek-ai:* 用 "*"，运行时由 profile 提供）
-  .npmrc                    auto-install-peers=false（关键！见 §6.5）
-  tsconfig.json             tsc 构建【宿主半】用（含 stage-3 装饰器 + ambient shim）
-  tsconfig.client.json      仅类型检查【客户端半】（tsdown 用 dts:false、rolldown 不检查，没有这个 config 就完全没人查 src/client）
-  tsdown.config.ts          tsdown 构建【客户端半】用（closure-factory bundle + CSS Modules 插件）
-  vitest.config.ts          排除 .agents/**（worktree 是整仓副本，否则同一套测试被收集多遍）
+  package.json              dsh.client(web) + exports + 显式兼容范围的 optional peer（运行时由 profile 提供）
+  .npmrc                    auto-install-peers=false（关键！见 §6.5 / §6.14）
+  tsconfig.json             tsc 构建【宿主半】（stage-3 装饰器 + ambient shim）
+  tsconfig.client.json      仅类型检查【客户端半】（rolldown 本身不做类型检查）
+  tsdown.config.ts          客户端 closure-factory bundle + CSS Modules 构建
+  vitest.config.ts          排除 .agents/**，避免 worktree 副本重复收集测试
   src/
-    index.ts                宿主半：GitWorkbenchService（TypertRemoteService + @Remote：stats/fileDiff/commits/authors/repoTree/compareRefs/commitStats/worktree*/style*/syncStatus/stage/unstage/discardPlan/discardFile/commit/fetch/pull/push）+ defineTool 三工具
-    atomic-json.ts          崩溃安全的 JSON 写入（tmp+rename + Windows EPERM 退避），绑定文件与样式文件共用
-    commit-cache.ts         内容寻址缓存：commit hash 指向不可变内容，只需容量上限、不需失效
-    git-ops.ts              写操作的 argv 构造 + stderr 归类（纯函数、不 spawn）——见 §2.5
-    git-log.ts              `--pretty` 日志与 porcelain 状态头的解析（纯函数）
-    log-filter.ts           历史过滤条件 → `git log` 参数的编译 + 裸日期展开为全天（纯函数，§2.6）
-    shortlog.ts             作者名单：`git shortlog -sne` 输出解析、按活跃度排序截断（纯函数）
-    discard-ops.ts          单文件撤回的计划推导（全树 status → restore/delete 计划 + 路径防线，纯函数，§2.5）
-    style-store.ts          背景图 + 自定义 CSS 的两作用域存储与校验（~/.dsh/gitworkbench-style.json）
-    worktree.ts             worktree 纯逻辑：绑定文件读写（tmp+rename 原子、EPERM 重试）、名称/分支/目录推导、porcelain 解析、`isRefName`
-    types/dsh-shim.d.ts     ambient 声明：让 tsc 在没装 @deepseek-ai/* 时也能编译（cordis/subprocess 的宽松类型）
-    types/dsh-client-shim.d.ts  同上，客户端侧（CSS Modules + client-runtime/ui-slots）；**故意宽松**，只查本插件自己的代码，不复述 harness 的类型
+    index.ts                GitWorkbenchService + 27 个 @Remote + worktree 三个 agent 工具
+                            stats/fileDiff/fileSides/applyBlocks/writeChecked/blame/fileImage/commitStats/
+                            commits/authors/repoTree/compareRefs/sessionWorktree/worktreeEnter/worktreeExit/
+                            worktreeStatus/styleGet/styleSet/syncStatus/stage/unstage/discardPlan/discardFile/
+                            commit/fetch/pull/push
+    atomic-json.ts          崩溃安全 JSON 写入（tmp+rename + Windows EPERM 退避）
+    apply-blocks.ts         hunk patch 选择、正反向 apply 与 stale diff 防线
+    blame.ts                porcelain blame 解析与路径/提交信息
+    commit-cache.ts         commit hash 内容寻址 LRU
+    discard-ops.ts          IDEA Rollback 的计划推导与路径防线
+    fs-remove.ts            受工作区边界保护的文件删除
+    git-log.ts/log-filter.ts/shortlog.ts  历史解析、过滤参数与作者名单
+    git-ops.ts              写操作 argv + stderr 归类（纯函数，不 spawn）
+    image-sniff.ts          图片类型嗅探与读取上限
+    patch-model.ts          Git patch 解析、行选择与重发射
+    side-guard.ts           side diff / write 的路径与 stale-sha 校验
+    style-store.ts          项目/全局外观存储
+    worktree.ts             worktree 绑定、名称/分支/porcelain 纯逻辑
+    write-checked.ts        编辑保存的编码、mtime/hash 与原子写校验
+    types/*.d.ts            宿主/客户端 ambient shim
     client/
-      index.ts              客户端半：注册会话头插槽（fetchStats/fetchFileDiff/fetchWorktreeStatus 等 RPC 回调）
-      GitWorkbenchPanel.tsx     状态卡（树形图标绑定标记）+ 面板（三栏历史 + diff + 头部 worktree 选择器 + 齿轮挂设置弹层 + 拖拽改宽 + 勾选/提交/同步条）
-      GitWorkbenchPanel.module.css  调色板（7 族 × 亮/暗）+ 全部布局
-      stage-tree.ts         勾选状态推导 + 乐观勾选的 overlay/对账/聚批（§2.5，纯函数）
-      diff-model.ts         统一 diff 行解析 + 词级变更区间（纯函数）
-      commit-graph.ts       提交图的泳道分配（纯函数）
-      worktree-view.ts      worktree/分支列表的展示推导（纯函数）
-      log-filter-query.ts   过滤输入框语法（user:/path:/after:/before: → 条件对象 + chips，纯函数）
-      commit-filter.ts      悬浮卡的精确时间渲染（`%cI` → 查看者时区，纯函数）
-      dir-tree.ts           路径选择器的目录树聚合（ls-tree 平铺 → 目录 + 文件叶子，纯函数）
-      path-select.ts        三态勾选树语义（勾目录吸收子文件、拆分级联、半选态，纯函数）
-      calendar.ts           自绘日历的月格推导（纯函数，全主题 token 化）
-      active-file.ts        过滤后点开提交的默认选中文件排序（已有选中 > 精确点名 > 目录之下 > 首个，纯函数）
-      file-filter.ts        文件列表关键字过滤（多词 AND、逐词智能大小写，纯函数）
-      highlight.ts          Shiki 封装：扩展名→语法、主题映射、语法包按需加载
-      op-feedback.ts        写操作按钮反馈的时序常量（忙碌提示、过短操作不禁用）
-      themes.ts             主题模型：族列表、明暗解析、两作用域样式解析、localStorage 值校验（无 CSS/React 依赖，便于测试）
-      locales.ts            zh / en 两份词典
-  tests/                    vitest：worktree-bindings（存储/原子写/重试）、worktree-derive（名称/分支/porcelain）、ref-name、git-ops（argv/归类）、git-log、commit-cache、style-store、style-resolve、theme-palettes（族×调色板互扣）、stage-tree（勾选模型）、worktree-view、commit-graph、diff-regression（diff 模型/词级区间/Shiki/CSS 不变量）、drawer-chrome（状态卡与面板的结构性扫描）、op-feedback、status-parse（porcelain/numstat 解析、二进制嗅探、截断与上限——fixture 场景目录 TESTS.md 的单测化）、log-filter（条件编译/裸日期展开）、log-filter-query（输入语法/chips）、shortlog、dir-tree、path-select（三态勾选）、calendar、commit-filter（精确时间渲染）、active-file（默认选中排序）、file-filter（关键字过滤）、discard-ops（撤回计划推导 + 危险拼法扫描）
-  scripts/
-    probe_worktree.py       宿主 RPC 探针：scratch 仓库全流程 + 真仓库冒烟 + 再进入分支复用
-    verify_worktree_ui.py   UI 探针：状态卡标记/头部路径/选择器切换/折叠回归 6 步（经真实页面 RPC 回放）
-    llm_smoke.py            真实 LLM 冒烟：让模型在会话里调 worktree_enter/exit，看目录出现/消失
-    verify_turn_refresh.py  UI 探针：抽屉关着时回合结束自动刷新状态卡（0.1.2 的刷新链路）
-    verify_history_feature.py  UI+host 探针：历史过滤两半（条件下推 + 输入框/漏斗/诚实空态）11 步
-    （五个 .py 探针为本地集成脚本：需连真实 dsh 实例与 scratch 仓库，内嵌本机路径——已 gitignore，不入库、不随包发布）
-  cordis.patch.yml          一行 insert，把宿主 entry 挂进 web profile
-  README.md                 本文件
-  README_EN.md              英文版（面向使用者与维护者；深度细节仍以本文为准）
+      index.ts              注册会话头插槽并桥接 RPC 回调
+      GitWorkbenchPanel.tsx 状态卡与抽屉的状态编排；业务视图下沉到叶组件
+      ChangesFileTree.tsx   变更树、过滤、勾选与提交区
+      CommitHistory.tsx     历史列表、车道图、筛选与分页
+      DiffViews.tsx         unified/side diff、块操作、虚拟窗口与编辑态
+      WorkbenchControls.tsx 同步条、设置、来源选择器与反馈
+      FileBrowser.tsx/CodeEditor.tsx/ImageView.tsx  文件页、编辑器与图片预览
+      PaneDivider.tsx + *Glyph.tsx  拖拽分隔条与共享图标
+      git-workbench-types.ts       面板组件/RPC 共享类型
+      row-window.ts/use-row-window.ts  视口窗口纯规则与 React 桥接
+      styles/*.css          按功能分片；由 GitWorkbenchPanel.module.css 构建期汇成一个 style
+      *.ts                  勾选、diff、导航、缓存、过滤、主题等 React/CSS-free 纯规则
+  tests/*.test.ts           单元、结构扫描、性能边界、泄漏与回归守卫（按领域与源模块对应）
+  scripts/*.py              本地 live/UI/性能探针与辅助器（需真实 dsh/scratch；gitignore，不随包发布）
+  cordis.patch.yml          宿主 entry 的 profile 挂载声明
+  README.md / README_EN.md  中文深度交接文档 / 英文使用与维护说明
+  CHANGELOG.md / CHANGELOG_EN.md  双语发布记录
 ```
 
 ---
@@ -274,7 +274,7 @@ dsh plugin --profile web add <仓库根目录>
 # `dsh plugin add` 自动带上补丁，--patch 仅在 profile 于该声明存在之前加入时需要）
 dsh web --patch <仓库根目录>/cordis.patch.yml
 
-# 便携交付：tarball 自足——prepack 现场构建 lib/，files 白名单只带 lib/src/文档/补丁
+# 便携交付：tarball 自足——prepack 现场构建 lib/；白名单带 lib/src、安装脚本、双语文档、AGENTS、LICENSE 与补丁
 npm pack
 dsh plugin --profile web add <tgz 路径>
 ```

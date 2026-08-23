@@ -2,6 +2,19 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.12] - 2026-08-23
+
+### 修复
+
+- **全部暂存之后，Staged 页终于有了看得见的退路**。此前取消暂存并非不能做：清掉左侧文件/目录勾选可以整项 Unstage，悬浮 Staged 里的变更块也会出现 Unstage hunk；但两条路都藏在用户必须事先知道的手势里，固定头部又只在编辑模式挂区块按钮，于是「全部 Stage」后的空白 Unstaged 页看起来像不可逆。现在 Staged 头部常驻当前块与 `change current / total`：单块文件直接显示 **Unstage file**，多块文件同时显示 **Unstage hunk / Unstage file**；点击或 F7 / Shift+F7 会切换并完整描边当前块。整文件操作仍走同一条带 `diffSha` 过期保护的 patch 路径，成功后内容回到 Unstaged。
+- **进入 Edit 后不再丢掉 Stage / Revert**。编辑模式保留固定的当前块工具栏与显式块导航；buffer 尚未保存时，Git 区块按钮留在原位但禁用，并说明先保存或放弃编辑，Save / Discard edits 仍然可用。这样按钮不会在最需要确认去向时突然消失，也不会把未保存的编辑和旧 diff 混在一次 Git 操作里。
+- **长 diff 刷新后不再沿用上一份文档的虚拟滚动高度**。窗口状态以 diff identity 为键；切换文件、切换 Staged / Unstaged 或操作后重载时，旧行数不能再把新内容撑出一大片空白。
+- **第一块变更的工具条不再被顶边裁掉**，Stage / Revert / Unstage 在文件第一行开始变化时也完整可点；块悬浮改画一圈连续外框，不再给每一行各画一格蓝色“梯子”。
+
+### 内部
+
+- 将过万行的 `GitWorkbenchPanel.tsx` 按变更树、diff、历史、控制区与图标拆成职责单一的组件；样式按功能拆到 `src/client/styles/*.css`，入口仍由一个 CSS Module 在构建期内联，因此运行时仍只有一张类名表和一个 `<style>`，没有多次加载或额外请求。AST / CSS 结构守卫限制编排文件回涨，并验证固定区块操作与单一样式契约。
+
 ## [0.1.11] - 2026-08-21
 
 ### 修复
