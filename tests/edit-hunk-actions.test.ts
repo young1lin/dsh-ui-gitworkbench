@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { transform } from 'lightningcss'
 import * as ts from 'typescript'
 
 const text = readFileSync(fileURLToPath(new URL('../src/client/DiffViews.tsx', import.meta.url)), 'utf8')
 const ast = ts.createSourceFile('DiffViews.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const changesCss = readFileSync(fileURLToPath(new URL('../src/client/styles/changes.css', import.meta.url)))
+const builtCss = transform({ filename: 'changes.css', code: changesCss, minify: true }).code.toString()
 
 function collect<T extends ts.Node>(matches: (node: ts.Node) => node is T): T[] {
   const out: T[] = []
@@ -69,6 +72,13 @@ describe('persistent hunk toolbar wiring', () => {
     const classAttr = span?.openingElement.attributes.properties.find(property =>
       ts.isJsxAttribute(property) && property.name.getText(ast) === 'className')
     expect(classAttr?.getText(ast)).toContain('sideCurrentBlockActions')
+    const header = ancestor(span!, (node): node is ts.JsxElement => {
+      if (!ts.isJsxElement(node)) return false
+      return node.openingElement.attributes.properties.some(property =>
+        ts.isJsxAttribute(property) && property.name.getText(ast) === 'className'
+        && property.getText(ast).includes('sideTabs'))
+    })
+    expect(header, 'current-block actions must stay in the fixed sideTabs header').not.toBeNull()
 
     const gates: string[] = []
     let at: ts.Node | undefined = buttons!.parent
@@ -80,8 +90,18 @@ describe('persistent hunk toolbar wiring', () => {
   })
 
   it('keeps dirty state in the disabled rule rather than the visibility rule', () => {
-    expect(variable('barDisabled').initializer?.getText(ast)).toContain('dirty')
+    expect(variable('barDisabled').initializer?.getText(ast)).toBe('blockActionsDisabled(dirty, pendingBlock)')
     expect(call('currentActionBlock').arguments.map(argument => argument.getText(ast))).not.toContain('dirty')
+  })
+
+  it('keeps the destructive target identical to the persistent outline', () => {
+    const outlines = collect((node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'current'
+      && node.initializer?.getText(ast).includes('row.block') === true)
+    expect(outlines).toHaveLength(3)
+    for (const outline of outlines) {
+      expect(outline.initializer?.getText(ast)).toBe('row.block >= 0 && row.block === currentBlock')
+    }
   })
 
   it('offers a fixed whole-file exit from the staged layer', () => {
@@ -92,5 +112,18 @@ describe('persistent hunk toolbar wiring', () => {
     const button = ancestor(unstageAll!, ts.isJsxElement)
     expect(button?.openingElement.tagName.getText(ast)).toBe('button')
     expect(button?.getText(ast)).toContain("t('fileUnstage')")
+    expect(button?.openingElement.attributes.getText(ast)).toContain('disabled={barDisabled}')
+    const gates: string[] = []
+    let at: ts.Node | undefined = unstageAll!.parent
+    while (at !== undefined) {
+      if (ts.isConditionalExpression(at)) gates.push(at.condition.getText(ast))
+      at = at.parent
+    }
+    expect(gates).toContain("layer === 'staged'")
+  })
+
+  it('wraps fixed recovery actions instead of pushing them out of a narrow pane', () => {
+    expect(builtCss).toMatch(/\.sideTabs\{[^}]*flex-wrap:wrap/)
+    expect(builtCss).toMatch(/\.sideCurrentBlockActions\{[^}]*flex-wrap:wrap/)
   })
 })

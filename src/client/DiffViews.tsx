@@ -257,7 +257,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
     const block = stepBlockIndex(totalBlocks, current, direction)
     if (block === null) return
     const tops = layer === 'unstaged' && edit.armed ? editorBlockTops : alignedBlockTops
-    const target = tops.find(entry => entry.block === block)
+    const target = tops[block]
     if (target !== undefined && scrollRef.current !== null) scrollRef.current.scrollTop = scrollTopFor(target.top)
     setBlockSelection({ key: rowWindowKey, block })
   }
@@ -876,7 +876,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
                 const k = leftWin.start + kk
                 const { row, i } = entry
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const current = row.block >= 0 && row.block === currentBlock
                 const hotClass = blockHotClass(rows, i, 'left', current)
                 return (
                   <Fragment key={`l${i}`}>
@@ -896,7 +896,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const current = row.block >= 0 && row.block === currentBlock
                 const hotClass = blockHotClass(rows, i, 'left', current)
                 // The block's action bar rides in this column only for a row
                 // with no right-hand side — a pure deletion, where the right
@@ -935,7 +935,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const current = row.block >= 0 && row.block === currentBlock
                 const hotClass = blockHotClass(rows, i, 'right', current)
                 const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
                 return (

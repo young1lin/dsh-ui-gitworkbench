@@ -331,8 +331,8 @@
 }
 .sideTabs {
   z-index: 5;
-  display: flex; gap: 16px;
-  flex: none;
+  display: flex; column-gap: 16px; row-gap: 0; align-items: flex-start;
+  flex: none; flex-wrap: wrap;
   padding: 6px 16px 0;
   border-bottom: 1px solid var(--gs-border-soft);
   background: var(--gs-surface-2);
@@ -468,7 +468,7 @@
 .sideNav { margin-left: auto; display: flex; gap: 4px; align-items: center; padding: 2px 0 5px; }
 .sideNav .blockBtn { padding-inline: 6px; line-height: 0; }
 .sideNavCount { color: var(--gs-fg-faint); font-size: var(--gs-t-meta); white-space: nowrap; }
-.sideCurrentBlockActions { margin-left: 4px; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
+.sideCurrentBlockActions { margin-left: 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
 .sideActions { margin-left: auto; display: flex; gap: 4px; align-items: flex-start; padding: 2px 0 5px; }
 .sideActionsAdjacent { margin-left: 0; }
 /* Save gains the accent only once there is something to save: the button's
