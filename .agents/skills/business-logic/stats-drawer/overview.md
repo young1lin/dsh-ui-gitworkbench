@@ -6,7 +6,7 @@
 
 ## Quick Index
 - Core entry: `src/client/index.ts` 的 `apply(ctx)` → `ctx.slots.inject('conversation.session.header.actions', ...)`
-- Core service: `GitWorkbenchPanel.tsx`（约 3400 行：Chip + Drawer + 三页签）
+- Core service: `GitWorkbenchPanel.tsx`（面板状态编排）+ `DiffViews.tsx` / `ChangesFileTree.tsx` / `CommitHistory.tsx` / `WorkbenchControls.tsx`（功能渲染）
 - Core state: 宿主 `~/.dsh/gitworkbench-style.json`（背景/CSS）、localStorage（宽度/主题）
 - Most-changed spots: `GitWorkbenchPanel.tsx`、`GitWorkbenchPanel.module.css`（14 套调色板）
 - High-risk spots: 轮询不得重置 UI 状态（展开/选中）；CSS 栈序与同优先级修饰类（见 Potential Pitfalls）；diff 容量上限截断
@@ -53,9 +53,9 @@ flowchart LR
 - 用户 CSS 抓手是 `data-gs-part` 稳定属性（CSS Modules 哈希类名外部选不中）
 
 ## Code Location
-`GitWorkbenchPanel`（面板）、`parseRows/gutterSides`（diff-model）、`samePath/viewedPath/showsPending/badgeRepeatsBranch/splitPath/branchOfWorktree`（worktree-view，纯函数、不 import React/CSS 才可测）、`resolveTheme/effectiveBackground/effectiveCss`（themes）、`sanitizeEntry/IMAGE_PATTERN`（style-store，image 只收 base64 data: URL）、`CommitPayloadCache`（commit-hash 内容寻址 LRU）、`parseLog`（git-log，`--pretty=format:` 解析）
-逐处变更：`client/diff-nav.ts`（`stepToBlock` 环形前后跳 + `anchorFor`/`anchorFrom`/`scrollTopFor`）+ pane 头部两个人字形按钮与计数（F7 / Shift+F7）;块位置**从 DOM 量**（每个代码格已带 `data-block`）而非从行模型算——模型知道哪些行变了，不知道它们在页面上第几像素。仅读视图开放：armed 时左列是 index 侧 dense、右列是行数已经发散的 buffer,滚到某块只会让两列各自显示不相干的代码
-结构不变量守卫：`tests/drawer-chrome.test.ts`（按钮词汇表/修饰类序/省略规则/quiet 标记/showsPending 单点）、`tests/diff-regression.test.ts`（栈序/设置浮层/图标按钮/diff 行高）
+`GitWorkbenchPanel`（面板状态编排）、`DiffViews`（diff / CodeMirror / 区块操作）、`ChangesFileTree`（变更树）、`CommitHistory`（历史与过滤）、`WorkbenchControls`（面板控制）、`parseRows/gutterSides`（diff-model）、`samePath/viewedPath/showsPending/badgeRepeatsBranch/splitPath/branchOfWorktree`（worktree-view，纯函数、不 import React/CSS 才可测）、`resolveTheme/effectiveBackground/effectiveCss`（themes）、`sanitizeEntry/IMAGE_PATTERN`（style-store，image 只收 base64 data: URL）、`CommitPayloadCache`（commit-hash 内容寻址 LRU）、`parseLog`（git-log，`--pretty=format:` 解析）
+逐处变更：`client/diff-nav.ts` 管两套几何。History/Compare 的 unified diff 用 `stepToBlock` + `anchorFor`/`anchorFrom`/`scrollTopFor` 按视口环形前后跳；working-tree side pane 用 `stepBlockIndex` 按显式 current block 前后跳，阅读模式从固定行高的 aligned rows 推导块顶，编辑模式从 working-tree 真实行号推导 CodeMirror dense 行的块顶。点击差异块会选中它，当前块画完整外框；选择以 diff identity 为键，刷新后不复用旧块号。pane 头部常驻 F7 / Shift+F7 与 `current / total`：Unstaged 提供 Stage/Revert hunk，Staged 提供 Unstage hunk，多块文件另有 Unstage file（同一 stale-sha patch 路径一次选齐所有块）；buffer dirty 时区块按钮保持可见但禁用，Save/Discard edits 仍可用
+结构不变量守卫：`tests/drawer-chrome.test.ts`（按钮词汇表/修饰类序/省略规则/quiet 标记/showsPending 单点）、`tests/diff-regression.test.ts`（栈序/设置浮层/图标按钮/diff 行高）、`tests/edit-hunk-actions.test.ts`（两层 current block、固定 Stage/Revert/Unstage 出口与 dirty 禁用分层）
 
 ## Database（状态文件）
 `~/.dsh/gitworkbench-style.json`：`{v:1, global, projects{repoRoot}}`，项目优先；背景图整条取项目、CSS 两作用域叠加（global 前 project 后）

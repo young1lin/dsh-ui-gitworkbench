@@ -58,6 +58,20 @@ export interface BlockTop {
   readonly top: number
 }
 
+/** The change nearest a viewport position, used to retain the reader's place
+ * when the right diff grid becomes a dense editor. */
+export function blockNearestTo(anchors: readonly BlockTop[], top: number): BlockTop | null {
+  let nearest: BlockTop | null = null
+  let distance = Number.POSITIVE_INFINITY
+  for (const anchor of anchors) {
+    const next = Math.abs(anchor.top - top)
+    if (next >= distance) continue
+    nearest = anchor
+    distance = next
+  }
+  return nearest
+}
+
 /**
  * The content position that counts as "where the reader is".
  *
@@ -114,6 +128,13 @@ export function anchorFrom(
     if (landed !== undefined) return landed.top
   }
   return anchorFor(scrollTop)
+}
+
+/** The adjacent explicit editor selection, wrapping at both ends. */
+export function stepBlockIndex(totalBlocks: number, currentBlock: number, direction: 1 | -1): number | null {
+  if (totalBlocks <= 0) return null
+  const current = Number.isInteger(currentBlock) && currentBlock >= 0 && currentBlock < totalBlocks ? currentBlock : 0
+  return (current + direction + totalBlocks) % totalBlocks
 }
 
 /**
@@ -221,6 +242,44 @@ export function blockTopsFromRows(
     if (!Number.isInteger(block) || block < 0 || seen.has(block)) continue
     seen.add(block)
     tops.push({ block, top: offset + i * rowH })
+  }
+  return tops
+}
+
+/**
+ * Place change blocks in one dense side of an aligned diff.
+ *
+ * Edit mode removes alignment holes: the working-tree CodeMirror has one row
+ * per real right-side line. A deletion-only block has no line on that side, so
+ * it sits at the following line's insertion point, or just after the final
+ * present line when the deletion reaches EOF.
+ */
+export function blockTopsFromSideRows(
+  rows: readonly import('./side-rows.ts').SideRow[],
+  side: 'left' | 'right',
+  rowH: number,
+  offset = 0,
+): readonly BlockTop[] {
+  const nextLine: Array<number | undefined> = new Array(rows.length)
+  let following: number | undefined
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const cell = rows[i]![side]
+    if (cell !== null) following = cell.line
+    nextLine[i] = following
+  }
+
+  const tops: BlockTop[] = []
+  const seen = new Set<number>()
+  let previous = 0
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!
+    const cell = row[side]
+    if (row.block >= 0 && !seen.has(row.block)) {
+      seen.add(row.block)
+      const line = cell?.line ?? nextLine[i] ?? previous + 1
+      tops.push({ block: row.block, top: offset + Math.max(0, line - 1) * rowH })
+    }
+    if (cell !== null) previous = cell.line
   }
   return tops
 }

@@ -28,7 +28,7 @@ export type WorkbenchKey =
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory'
   | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
-  | 'prevChange' | 'nextChange' | 'prevChangeHint' | 'nextChangeHint' | 'changeCount'
+  | 'prevChange' | 'nextChange' | 'prevChangeHint' | 'nextChangeHint' | 'changeCount' | 'changePosition'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
@@ -62,7 +62,7 @@ export type WorkbenchKey =
   | 'discardAction' | 'discardTitle' | 'discardConfirm' | 'discardCancel'
   | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
   // side-by-side block actions: the three buttons and the roll-back confirmation's wording
-  | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'blockDiscardBody' | 'blockDiscardBodyDelete'
+  | 'blockStage' | 'blockDiscard' | 'blockUnstage' | 'fileUnstage' | 'blockActionsDirty' | 'blockDiscardBody' | 'blockDiscardBodyDelete'
   // side-by-side editing: arm the editor, save, revert, the stale/conflict
   // banner, the CRLF refusal notice, and the unsaved-changes prompt that
   // guards every gesture dropping the buffer (tab, file, close)
@@ -171,6 +171,7 @@ export const zh: Record<WorkbenchKey, string> = {
   prevChangeHint: '上一处变更（Shift+F7）',
   nextChangeHint: '下一处变更（F7）',
   changeCount: '变更 {n} 处',
+  changePosition: '第 {current} / {total} 处变更',
   loadingDiff: '加载 diff…',
   noTextDiff: '无文本差异',
   // The side-by-side pane's layer tabs: unstaged is index→worktree, staged is
@@ -267,9 +268,11 @@ export const zh: Record<WorkbenchKey, string> = {
   discardBodyUnrename: '撤销重命名：{path} 改回 {previousPath}，改名期间的内容改动一并丢弃。',
   // One BLOCK, not the whole file: the side pane's roll-back states exactly
   // which lines leave and that the working-tree file is rewritten to do it.
-  blockStage: '暂存这块',
-  blockDiscard: '撤回这块',
-  blockUnstage: '取消暂存这块',
+  blockStage: '暂存此变更块',
+  blockDiscard: '恢复此变更块',
+  blockUnstage: '取消暂存此变更块',
+  fileUnstage: '取消暂存整个文件',
+  blockActionsDirty: '请先保存或放弃编辑器修改，再操作当前变更块',
   blockDiscardBody: '{path} 的这一块改动（{added} 行新增、{deleted} 行删除）将被撤回，工作区文件随之改写，无法找回。',
   // The untracked case: the file's whole content is the one block, so rolling
   // the block back reverse-applies the new-file patch and DELETES the file —
@@ -408,6 +411,7 @@ export const en: Record<WorkbenchKey, string> = {
   prevChangeHint: 'Previous change (Shift+F7)',
   nextChangeHint: 'Next change (F7)',
   changeCount: 'changes: {n}',
+  changePosition: 'change {current} / {total}',
   loadingDiff: 'Loading diff…',
   noTextDiff: 'No text changes',
   tabUnstaged: 'Unstaged',
@@ -489,9 +493,11 @@ export const en: Record<WorkbenchKey, string> = {
   discardBodyUnrename: 'Undo the rename: {path} goes back to {previousPath}, and content changed along the way is lost.',
   // One BLOCK, not the whole file: the side pane's roll-back states exactly
   // which lines leave and that the working-tree file is rewritten to do it.
-  blockStage: 'Stage block',
-  blockDiscard: 'Roll back block',
-  blockUnstage: 'Unstage block',
+  blockStage: 'Stage hunk',
+  blockDiscard: 'Revert hunk',
+  blockUnstage: 'Unstage hunk',
+  fileUnstage: 'Unstage file',
+  blockActionsDirty: 'Save or discard editor changes before operating on this hunk.',
   blockDiscardBody: 'This block of {path} ({added} added, {deleted} deleted lines) is rolled back and the working-tree file rewritten to do it. This cannot be undone.',
   // The untracked case: the file's whole content is the one block, so rolling
   // the block back reverse-applies the new-file patch and DELETES the file —

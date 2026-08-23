@@ -174,6 +174,17 @@ export function blockLines(rows: readonly SideRow[], block: number): readonly nu
   return [...indices].sort((a, b) => a - b)
 }
 
+/** Every changed hunk-line index, for a whole-layer Stage/Unstage action. */
+export function allBlockLines(rows: readonly SideRow[]): readonly number[] {
+  const indices = new Set<number>()
+  for (const row of rows) {
+    if (row.block < 0) continue
+    if (row.leftIndex !== -1) indices.add(row.leftIndex)
+    if (row.rightIndex !== -1) indices.add(row.rightIndex)
+  }
+  return [...indices].sort((a, b) => a - b)
+}
+
 /**
  * How many change blocks the rows hold.
  *
@@ -201,11 +212,19 @@ export function blockEdge(rows: readonly SideRow[], index: number, side: 'left' 
   return after ? 'middle' : 'last'
 }
 
-/** The only unambiguous block action while editing: a one-block diff. The
- * buffer may diverge from git after typing, so the component keeps the buttons
- * visible but disables them through its dirty guard. */
-export function editorActionBlock(totalBlocks: number, editing: boolean): number | null {
-  return editing && totalBlocks === 1 ? 0 : null
+/** The selected Git block exposed by the fixed pane toolbar. Visibility is
+ * independent of buffer dirtiness: the component keeps actions mounted and
+ * disables unsafe ones. A refreshed diff may carry fewer blocks, so an invalid
+ * selection safely falls back to the first one. */
+export function currentActionBlock(totalBlocks: number, actionsVisible: boolean, selectedBlock: number): number | null {
+  if (!actionsVisible || totalBlocks <= 0) return null
+  return Number.isInteger(selectedBlock) && selectedBlock >= 0 && selectedBlock < totalBlocks ? selectedBlock : 0
+}
+
+/** Git hunk operations wait for a clean editor buffer and for the prior Git
+ * operation to settle. This rule disables controls; it never hides them. */
+export function blockActionsDisabled(dirty: boolean, pendingBlock: number | null): boolean {
+  return dirty || pendingBlock !== null
 }
 
 /**
@@ -286,6 +305,18 @@ export function blockTally(rows: readonly SideRow[], block: number): { readonly 
   let deleted = 0
   for (const row of rows) {
     if (row.block !== block) continue
+    if (row.left !== null) deleted += 1
+    if (row.right !== null) added += 1
+  }
+  return { added, deleted }
+}
+
+/** Whole-layer tallies, paired with {@link allBlockLines}. */
+export function allBlockTally(rows: readonly SideRow[]): { readonly added: number; readonly deleted: number } {
+  let added = 0
+  let deleted = 0
+  for (const row of rows) {
+    if (row.block < 0) continue
     if (row.left !== null) deleted += 1
     if (row.right !== null) added += 1
   }

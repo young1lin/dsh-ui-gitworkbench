@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { emitPatch, parsePatch } from '../src/patch-model.ts'
-import { alignRows, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, editorActionBlock, needsFirstBlockClearance, sideBodyState } from '../src/client/side-rows.ts'
+import { alignRows, allBlockLines, allBlockTally, blockActionsDisabled, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, currentActionBlock, needsFirstBlockClearance, sideBodyState } from '../src/client/side-rows.ts'
 
 /** Join with LF and keep the trailing newline git's own output carries. */
 function diff(...lines: string[]): string {
@@ -249,6 +249,14 @@ describe('blockLines', () => {
       ' five',
     ))
   })
+
+  it('selects every changed line when unstaging the whole file', () => {
+    const file = parsePatch(TWO_RUNS)!
+    const lines = allBlockLines(alignRows(file))
+    expect(lines).toEqual([1, 2, 4, 5])
+    const selected = new Set(lines)
+    expect(emitPatch(file, (_hunk, line) => selected.has(line))).toBe(TWO_RUNS)
+  })
 })
 
 describe('blockTally', () => {
@@ -265,6 +273,10 @@ describe('blockTally', () => {
 
   it('counts a whole new file as additions', () => {
     expect(blockTally(alignRows(parsePatch(NEW_FILE)!), 0)).toEqual({ added: 2, deleted: 0 })
+  })
+
+  it('totals every block when unstaging the whole file', () => {
+    expect(allBlockTally(alignRows(parsePatch(TWO_RUNS)!))).toEqual({ added: 2, deleted: 2 })
   })
 
   it('holds zeros for an id no row carries', () => {
@@ -314,15 +326,31 @@ describe('blockEdge', () => {
   })
 })
 
-describe('editorActionBlock', () => {
-  it('keeps the sole git block actionable after Edit is armed', () => {
-    expect(editorActionBlock(1, true)).toBe(0)
+describe('currentActionBlock', () => {
+  it('keeps the selected hunk actionable in read and edit views', () => {
+    expect(currentActionBlock(1, true, 0)).toBe(0)
+    expect(currentActionBlock(3, true, 2)).toBe(2)
   })
 
-  it('does not guess between blocks or offer editor actions while reading', () => {
-    expect(editorActionBlock(0, true)).toBeNull()
-    expect(editorActionBlock(2, true)).toBeNull()
-    expect(editorActionBlock(1, false)).toBeNull()
+  it('falls back to the first block when a refreshed selection is out of range', () => {
+    expect(currentActionBlock(2, true, -1)).toBe(0)
+    expect(currentActionBlock(2, true, 2)).toBe(0)
+  })
+
+  it('offers no action without a block or when the body is hidden', () => {
+    expect(currentActionBlock(0, true, 0)).toBeNull()
+    expect(currentActionBlock(1, false, 0)).toBeNull()
+  })
+})
+
+describe('blockActionsDisabled', () => {
+  it('keeps clean idle hunk actions enabled', () => {
+    expect(blockActionsDisabled(false, null)).toBe(false)
+  })
+
+  it('disables without hiding for dirty buffers and pending Git operations', () => {
+    expect(blockActionsDisabled(true, null)).toBe(true)
+    expect(blockActionsDisabled(false, 1)).toBe(true)
   })
 })
 

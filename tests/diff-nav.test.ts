@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  NAV_PEEK_PX, anchorFor, anchorFrom, blockTopsFromRows, countBlocks, scrollTopFor, stepToBlock, unifiedBlocks,
+  NAV_PEEK_PX, anchorFor, anchorFrom, blockNearestTo, blockTopsFromRows, blockTopsFromSideRows, countBlocks, scrollTopFor, stepBlockIndex, stepToBlock, unifiedBlocks,
   type BlockTop, type NavMemory, type RowKind,
 } from '../src/client/diff-nav.ts'
+import type { SideRow } from '../src/client/side-rows.ts'
 
 /** Three changes, well apart, the way they sit in a long file. */
 const ANCHORS: readonly BlockTop[] = [
@@ -210,6 +211,32 @@ describe('countBlocks', () => {
   })
 })
 
+describe('stepBlockIndex', () => {
+  it('walks the explicit editor selection one block at a time', () => {
+    expect(stepBlockIndex(3, 0, 1)).toBe(1)
+    expect(stepBlockIndex(3, 1, 1)).toBe(2)
+    expect(stepBlockIndex(3, 1, -1)).toBe(0)
+  })
+
+  it('wraps and returns null only for an empty diff', () => {
+    expect(stepBlockIndex(3, 2, 1)).toBe(0)
+    expect(stepBlockIndex(3, 0, -1)).toBe(2)
+    expect(stepBlockIndex(0, 0, 1)).toBeNull()
+  })
+})
+
+describe('blockNearestTo', () => {
+  it('picks the hunk nearest the editor viewport', () => {
+    expect(blockNearestTo(ANCHORS, 100)?.block).toBe(0)
+    expect(blockNearestTo(ANCHORS, 1000)?.block).toBe(1)
+    expect(blockNearestTo(ANCHORS, 8000)?.block).toBe(2)
+  })
+
+  it('answers null when the diff has no blocks', () => {
+    expect(blockNearestTo([], 100)).toBeNull()
+  })
+})
+
 describe('blockTopsFromRows', () => {
   it('places each block at its first row', () => {
     // Rows 2-3 are one block, rows 6-7 another; -1 is a row in neither.
@@ -246,5 +273,28 @@ describe('blockTopsFromRows', () => {
     for (const { block, top } of blockTopsFromRows(blocks, rowH)) {
       expect(top).toBe(blocks.indexOf(block) * rowH)
     }
+  })
+})
+
+describe('blockTopsFromSideRows', () => {
+  const rows: readonly SideRow[] = [
+    { kind: 'same', left: { line: 1, text: 'a' }, right: { line: 1, text: 'a' }, leftIndex: 0, rightIndex: 0, block: -1 },
+    { kind: 'del', left: { line: 2, text: 'gone' }, right: null, leftIndex: 1, rightIndex: -1, block: 0 },
+    { kind: 'same', left: { line: 3, text: 'b' }, right: { line: 2, text: 'b' }, leftIndex: 2, rightIndex: 2, block: -1 },
+    { kind: 'change', left: { line: 4, text: 'old' }, right: { line: 3, text: 'new' }, leftIndex: 3, rightIndex: 4, block: 1 },
+  ]
+
+  it('anchors editor navigation to working-tree line numbers', () => {
+    expect(blockTopsFromSideRows(rows, 'right', 20, 5)).toEqual([
+      { block: 0, top: 25 },
+      { block: 1, top: 45 },
+    ])
+  })
+
+  it('uses the present side when a deletion leaves no working-tree line', () => {
+    expect(blockTopsFromSideRows(rows, 'left', 20)).toEqual([
+      { block: 0, top: 20 },
+      { block: 1, top: 60 },
+    ])
   })
 })

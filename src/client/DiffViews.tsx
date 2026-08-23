@@ -5,8 +5,8 @@ import {
 
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
-import { alignRows, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, editorActionBlock, needsFirstBlockClearance, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
-import { blockTopsFromRows, countBlocks, unifiedBlocks } from './diff-nav.ts'
+import { alignRows, allBlockLines, allBlockTally, blockActionsDisabled, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, currentActionBlock, needsFirstBlockClearance, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
+import { anchorFor, blockNearestTo, blockTopsFromRows, blockTopsFromSideRows, countBlocks, scrollTopFor, stepBlockIndex, unifiedBlocks } from './diff-nav.ts'
 import { DIFF_GRID_PAD_TOP, DIFF_ROW_H } from './row-window.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import {
@@ -244,19 +244,23 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   const colsRef = useRef<HTMLDivElement>(null)
   /** The pane's one vertical scroller — what "next change" moves. */
   const scrollRef = useRef<HTMLDivElement>(null)
-  /** Where the rows are, filled in below once they exist. A ref, because the
-   *  walk is set up here and the rows are decided further down; reading it
-   *  only when a key is pressed is what lets the two live apart. */
-  const rowsForNav = useRef<readonly number[]>([])
-  const blockBarClearanceForNav = useRef(0)
-  const { goToChange } = useChangeNav(
-    scrollRef,
-    // Derived, not measured: the pane renders only the rows near the viewport
-    // now, so the block being walked to usually has no element at all.
-    useCallback(() => blockTopsFromRows(
-      rowsForNav.current, DIFF_ROW_H, DIFF_GRID_PAD_TOP + blockBarClearanceForNav.current,
-    ), []),
-  )
+  /** The block currently addressed by the fixed editor toolbar. Navigation and
+   *  a direct click both update it; a refreshed diff is normalized by
+   *  currentActionBlock before any Git action may use it. */
+  const [blockSelection, setBlockSelection] = useState({ key: '', block: 0 })
+  /** Side-pane navigation follows an explicit current hunk: the fixed action
+   *  buttons and the counter must target the same block even after wheel
+   *  scrolling. Read mode uses aligned-row geometry; Edit uses dense right-side
+   *  line geometry. Both are memoized below and read only on a navigation key. */
+  const goToChange = (direction: 1 | -1): void => {
+    const current = blockSelection.key === rowWindowKey ? blockSelection.block : 0
+    const block = stepBlockIndex(totalBlocks, current, direction)
+    if (block === null) return
+    const tops = layer === 'unstaged' && edit.armed ? editorBlockTops : alignedBlockTops
+    const target = tops.find(entry => entry.block === block)
+    if (target !== undefined && scrollRef.current !== null) scrollRef.current.scrollTop = scrollTopFor(target.top)
+    setBlockSelection({ key: rowWindowKey, block })
+  }
 
   const [sides, setSides] = useState<FileSides | null>(null)
   // Set when the RPC itself failed — most plausibly a host half older than
@@ -352,7 +356,15 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   // that space INSIDE each column. This depends on row shape, not hover, so the
   // pointer cannot trigger a layout jump.
   const blockBarClearance = needsFirstBlockClearance(rows) ? BLOCK_BAR_CLEARANCE : 0
-  blockBarClearanceForNav.current = blockBarClearance
+  const navOffset = DIFF_GRID_PAD_TOP + blockBarClearance
+  const alignedBlockTops = useMemo(
+    () => blockTopsFromRows(rows.map(row => row.block), DIFF_ROW_H, navOffset),
+    [rows, navOffset],
+  )
+  const editorBlockTops = useMemo(
+    () => blockTopsFromSideRows(rows, 'right', DIFF_ROW_H, navOffset),
+    [rows, navOffset],
+  )
   // Highlight each column as one file — a row is not a program, and lexing
   // fragments is what made the unified view paint keywords as plain text.
   //
@@ -446,8 +458,6 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   // right side is a buffer, and the left side is then the index side DENSE,
   // one row per index line rather than one per aligned row.
   const leftWin = useRowWindow(scrollRef, leftRows.length, rowWindowKey)
-  // Kept current for the change walk set up at the top of this component.
-  rowsForNav.current = useMemo(() => rows.map(row => row.block), [rows])
 
   // Arming drops the caret straight into the buffer: the click that armed the
   // editor said "I want to type here", and a second click to focus is a tax.
@@ -455,8 +465,10 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   /** Arm the editor from the payload on screen; the unstaged tab, and only
    *  for a payload `editableSides` accepts — armEdit itself refuses the rest,
    *  so even a stray call cannot put CRLF text into the buffer. */
-  const arm = (): void => {
+  const arm = (block?: number): void => {
     if (sides === null || layer !== 'unstaged' || !editableSides(sides)) return
+    const viewport = scrollRef.current === null ? 0 : anchorFor(scrollRef.current.scrollTop)
+    setBlockSelection({ key: rowWindowKey, block: block ?? blockNearestTo(alignedBlockTops, viewport)?.block ?? 0 })
     setEdit(prev => armEdit(prev, sides))
   }
 
@@ -585,6 +597,13 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
     setHotBlock(prev => (prev === id ? prev : id))
   }
 
+  const onBodySelect = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const hit = (event.target as Element).closest('[data-block]')
+    if (hit === null) return
+    const block = Number(hit.getAttribute('data-block'))
+    if (Number.isInteger(block) && block >= 0) setBlockSelection({ key: rowWindowKey, block })
+  }
+
   /**
    * Run one block action with the coordinates of the diff on screen.
    *
@@ -608,6 +627,24 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
       return
     }
     setPendingBlock(block)
+    try {
+      await onBlockAction(mode, ask)
+    } finally {
+      setPendingBlock(null)
+    }
+  }
+
+  /** Unstage the complete staged layer with the same stale-sha checked patch
+   * path as a hunk action. The scan happens only on this explicit click. */
+  const runAllBlocks = async (mode: 'unstage'): Promise<void> => {
+    if (sides === null) return
+    const ask: BlockAsk = {
+      path, layer, diffSha: sides.diffSha,
+      lines: allBlockLines(rows),
+      ...allBlockTally(rows),
+      wholeFile: false,
+    }
+    setPendingBlock(-1)
     try {
       await onBlockAction(mode, ask)
     } finally {
@@ -639,26 +676,26 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
   const bodyState = sideBodyState(rows, editable)
-  // Change navigation is offered only for the read view. While armed, the left
-  // column is dense and the right buffer can have a different line count.
-  const changes = bodyState.kind === 'rows' ? totalBlocks : 0
-  // Once Edit replaces the right diff grid with CodeMirror, line-hover mapping
-  // is intentionally gone. A single-block diff is still unambiguous, so keep
-  // that block's Stage/Rollback controls in the fixed pane header.
-  const editorBlock = editorActionBlock(totalBlocks, bodyState.kind === 'editor')
+  // The fixed toolbar exists for both layers: unstaged offers Stage/Revert,
+  // staged offers Unstage. Edit changes geometry and disabled state, not the
+  // existence of the escape route.
+  const changes = bodyState.kind === 'empty' ? 0 : totalBlocks
+  const selectedBlock = blockSelection.key === rowWindowKey ? blockSelection.block : 0
+  const currentBlock = currentActionBlock(totalBlocks, bodyState.kind !== 'empty', selectedBlock)
   // The hovered block's first row hosts the action bar; a del-only block has
   // no right cell, so its bar rides the left one instead. In the editor
   // layout the left column is dense, so the bar rides its first left row.
   const hotFirst = hotBlock === null ? -1 : rows.findIndex(row => row.block === hotBlock)
   const hotFirstLeft = hotBlock === null ? -1 : leftRows.findIndex(entry => entry.row.block === hotBlock)
-  // Dirty buffer, no block actions: a patch computed from the loaded diff
-  // would land on top of edits the patch knows nothing about.
-  const barDisabled = pendingBlock !== null || dirty
+  // Dirty buffer, disabled block actions: a patch computed from the loaded
+  // diff would land on top of edits the patch knows nothing about.
+  const barDisabled = blockActionsDisabled(dirty, pendingBlock)
   const blockButtons = (block: number): ReactNode => layer === 'staged' ? (
     <button
       type="button"
       className={css.blockBtn}
       disabled={barDisabled}
+      title={dirty ? t('blockActionsDirty') : undefined}
       onClick={() => { void runBlock('unstage', block) }}
     >{t('blockUnstage')}</button>
   ) : (
@@ -667,12 +704,14 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
         type="button"
         className={css.blockBtn}
         disabled={barDisabled}
+        title={dirty ? t('blockActionsDirty') : undefined}
         onClick={() => { void runBlock('stage', block) }}
       >{t('blockStage')}</button>
       <button
         type="button"
         className={`${css.blockBtn} ${css.blockBtnDanger}`}
         disabled={barDisabled}
+        title={dirty ? t('blockActionsDirty') : undefined}
         onClick={() => { void runBlock('discard', block) }}
       >{t('blockDiscard')}</button>
     </>
@@ -690,7 +729,8 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
     if ((event.target as Element).closest('button') !== null) return
     const selection = window.getSelection()
     if (selection !== null && !selection.isCollapsed) return
-    arm()
+    const block = Number(event.currentTarget.dataset.block)
+    arm(Number.isInteger(block) && block >= 0 ? block : undefined)
   }
   return (
     /* `tabIndex={-1}` is what makes F7 reachable. The handler below is on
@@ -733,11 +773,23 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               aria-label={t('nextChange')}
               onClick={() => { goToChange(1) }}
             ><NavGlyph of="next" /></button>
-            <span className={css.sideNavCount}>{t('changeCount', { n: changes })}</span>
+            <span className={css.sideNavCount}>{currentBlock === null
+              ? t('changeCount', { n: changes })
+              : t('changePosition', { current: currentBlock + 1, total: changes })}</span>
           </span>
         ) : null}
-        {editorBlock !== null ? (
-          <span className={css.sideEditBlockActions}>{blockButtons(editorBlock)}</span>
+        {currentBlock !== null ? (
+          <span className={css.sideCurrentBlockActions}>
+            {layer !== 'staged' || totalBlocks > 1 ? blockButtons(currentBlock) : null}
+            {layer === 'staged' ? (
+              <button
+                type="button"
+                className={css.blockBtn}
+                disabled={barDisabled}
+                onClick={() => { void runAllBlocks('unstage') }}
+              >{t('fileUnstage')}</button>
+            ) : null}
+          </span>
         ) : null}
         {/* Editing arms explicitly and saves explicitly — the two halves of
             "never per keystroke". Save enables only while dirty; Revert drops
@@ -746,7 +798,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
             notice below says why rather than leaving a button that does
             nothing. */}
         {layer === 'unstaged' ? (
-          <span className={`${css.sideActions}${editorBlock !== null ? ` ${css.sideActionsAdjacent}` : ''}`}>
+          <span className={`${css.sideActions}${currentBlock !== null ? ` ${css.sideActionsAdjacent}` : ''}`}>
             {edit.armed ? (
               <>
                 <button
@@ -763,7 +815,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
                 >{t('fileRevert')}</button>
               </>
             ) : armable ? (
-              <button type="button" className={css.blockBtn} onClick={arm}>{t('editFile')}</button>
+              <button type="button" className={css.blockBtn} onClick={() => arm()}>{t('editFile')}</button>
             ) : null}
           </span>
         ) : null}
@@ -808,6 +860,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
         ref={colsRef}
         className={css.sideCols}
         onMouseOver={onBodyHover}
+        onMouseDown={onBodySelect}
         onMouseLeave={() => { setHotBlock(null) }}
       >
         <div className={css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
@@ -823,7 +876,8 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
                 const k = leftWin.start + kk
                 const { row, i } = entry
                 const hot = hotBlock !== null && row.block === hotBlock
-                const hotClass = blockHotClass(rows, i, 'left', hot)
+                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const hotClass = blockHotClass(rows, i, 'left', current)
                 return (
                   <Fragment key={`l${i}`}>
                     <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left!.line}</span>
@@ -842,7 +896,8 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const hotClass = blockHotClass(rows, i, 'left', hot)
+                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const hotClass = blockHotClass(rows, i, 'left', current)
                 // The block's action bar rides in this column only for a row
                 // with no right-hand side — a pure deletion, where the right
                 // column has no cell to hang it on.
@@ -880,7 +935,8 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const hotClass = blockHotClass(rows, i, 'right', hot)
+                const current = row.block >= 0 && row.block === (hotBlock ?? currentBlock)
+                const hotClass = blockHotClass(rows, i, 'right', current)
                 const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
                 return (
                   <Fragment key={i}>

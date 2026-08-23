@@ -22,8 +22,8 @@ import { anchorFrom, scrollTopFor, stepToBlock, type BlockTop, type NavMemory } 
 
 /** What a pane needs to offer the walk. */
 export interface ChangeNav {
-  /** Move to the next (1) or previous (-1) change, wrapping at both ends. */
-  readonly goToChange: (direction: 1 | -1) => void
+  /** Move to the next (1) or previous (-1) change and report its block id. */
+  readonly goToChange: (direction: 1 | -1) => number | null
 }
 
 /**
@@ -76,17 +76,18 @@ export function useChangeNav(
     return tops
   }
 
-  const goToChange = (direction: 1 | -1): void => {
+  const goToChange = (direction: 1 | -1): number | null => {
     const scroller = scrollRef.current
-    if (scroller === null) return
+    if (scroller === null) return null
     const measured = tops === undefined ? blockTops() : tops()
     const target = stepToBlock(measured, anchorFrom(measured, scroller.scrollTop, navMemory.current), direction)
-    if (target === null) return
+    if (target === null) return null
     scroller.scrollTop = scrollTopFor(target.top)
     // Read back rather than storing what was asked for: the browser clamps at
     // the end of the content, and the clamped value is what the next press
     // compares against to tell "still here" from "the reader scrolled".
     navMemory.current = { block: target.block, scrollTop: scroller.scrollTop }
+    return target.block
   }
 
   return { goToChange }
