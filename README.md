@@ -386,6 +386,27 @@ git 靠「一删除 + 一新增」的配对才认得出改名；pathspec 只放�
 
 排版有个坑：`@codemirror/search` 用一个 `<br>` 分隔「查找行」和「替换行」，而 Blink **不给 flex 容器里的 `<br>` 生成盒子**——`flex-basis: 100%`、`width: 100%`、`min-width: 100%` 三种写法都在跑起来的应用上试过，替换框一律留在查找行上，样式全对、只是少了一次换行。面板因此保持行内流：控件写成 `inline-flex` 原子，行距用每个控件的下外边距承担，面板下内边距按这个边距扣掉；`scripts/verify_search_panel.py` 在真实抽屉里量这套版式。库自带的那套值全是字面量（`#f5f5f5` 的条、`linear-gradient` 的按钮、`1px solid silver` 的输入框、`#ffff0054` 的命中、外加一个不指定字体族的 `font-size: 70%`），一个都不跟主题走，必须逐条盖掉；`tests/cm-search-theme.test.ts` 按名字守着这份清单。
 
+### 6.19 探针按类名选元素要用「后缀匹配」，读状态前要先把鼠标挪开
+
+CSS Modules 的类名带每次构建都变的哈希前缀（`T3TXCq_file`），所以 Playwright 里
+只能按局部名匹配。但 `[class*="file"]` 太松：它同时选中 `fileLi`、`filePath`、
+`fileStatus`、`fileCountAdd`，第一版 `verify_vocabulary.py` 因此量到了外层
+`<li>`，报告「树行没有圆角」——而圆角就在里面那个 `<button>` 上。按后缀判断才准：
+
+```js
+const local = (name) => [...document.querySelectorAll('[class]')]
+    .filter(el => [...el.classList].some(c => c === name || c.endsWith('_' + name)));
+```
+
+第二个坑在特异度上：`.file:hover` 是 (0,2,0)，裸修饰符 `.fileActive` 只有
+(0,1,0)，悬停规则必然赢。Playwright 点完一行，指针就停在那行上，`getComputedStyle`
+读回来的是**悬停态**，于是选中态的强调色底会被读成中性的 `--gs-raise`。读状态前
+先 `page.mouse.move(4, 4)`。抽屉里所有选中行都是这个行为：指针压上去时底色让位给
+悬停，强调色文字、600 字重和左侧强调边仍在，选中依然读得出来。
+
+还有一条：规则写在子元素上时要读子元素。`.calWeek` 的 11px 写在 `.calWeek span`
+上，读容器拿到的是从面板继承来的 12px，看起来像漂移。
+
 
 ---
 

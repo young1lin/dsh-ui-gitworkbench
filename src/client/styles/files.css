@@ -21,7 +21,7 @@
   color: var(--gs-fg);
   background: var(--gs-surface);
   border: 1px solid var(--gs-border);
-  border-radius: 4px;
+  border-radius: var(--gs-r-control);
 }
 .fbSearch:focus { outline: none; border-color: var(--gs-accent); }
 .fbNote { flex: none; font-size: var(--gs-t-meta); color: var(--gs-fg-dim); padding: 2px 4px; }
@@ -38,7 +38,7 @@
   text-align: left;
   background: none;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--gs-r-control);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

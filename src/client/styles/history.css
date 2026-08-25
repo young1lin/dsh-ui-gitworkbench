@@ -208,7 +208,7 @@
   min-width: 0;
 }
 .commit:hover { background: var(--gs-raise); }
-.commitActive { border-color: var(--gs-accent-border); background: var(--gs-accent-bg); }
+/* .commitActive: see the shared selected-state rule in controls.css. */
 /* Pushed to the right end of the row, and never squeezed: the subject is what
    gives way when the pane narrows, because it is the part with an ellipsis to
    give. */

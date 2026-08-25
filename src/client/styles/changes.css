@@ -107,6 +107,7 @@
   box-sizing: border-box; width: 100%;
   padding: 4px 12px 4px 8px;
   border: 0;
+  border-radius: var(--gs-r-control);
   background: transparent;
   color: var(--gs-fg-dim);
   font-family: inherit;
@@ -114,7 +115,7 @@
   text-align: left;
   cursor: pointer;
 }
-.treeDir:hover { background: var(--gs-panel); color: var(--gs-fg-muted); }
+.treeDir:hover { background: var(--gs-raise); color: var(--gs-fg-muted); }
 .treeDirActive { color: var(--gs-fg-muted); }
 .chevron {
   flex: none;
@@ -132,7 +133,7 @@
 .treeDirCount {
   flex: none;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--gs-r-pill);
   background: var(--gs-neutral-bg);
   color: var(--gs-fg-dim);
   font-size: var(--gs-t-meta); font-weight: 600; line-height: 16px;
@@ -144,6 +145,7 @@
   padding: 5px 14px;
   border: 0;
   border-left: 2px solid transparent;
+  border-radius: var(--gs-r-control);
   background: transparent;
   color: var(--gs-fg-muted);
   font-family: inherit;
@@ -151,18 +153,14 @@
   text-align: left;
   cursor: pointer;
 }
-.file:hover { background: var(--gs-panel); }
-.fileActive {
-  background: var(--gs-panel);
-  border-left-color: var(--gs-accent);
-  color: var(--gs-fg);
-}
+.file:hover { background: var(--gs-raise); }
+/* .fileActive: see the shared selected-state rule in controls.css. */
 
 .fileStatus {
   flex: none;
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px;
-  border-radius: 5px;
+  border-radius: var(--gs-r-control);
   font-weight: 700; font-size: var(--gs-t-meta); line-height: 1;
 }
 .stAdded, .stUntracked { color: var(--gs-add); background: var(--gs-add-bg); }
@@ -174,7 +172,7 @@
 .fileBinary {
   flex: none;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--gs-r-control);
   background: var(--gs-neutral-bg);
   color: var(--gs-fg-dim);
   font-size: 9px; font-weight: 700; letter-spacing: 0.06em;

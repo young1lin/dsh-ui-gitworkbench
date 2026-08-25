@@ -82,12 +82,19 @@
    because it has to win against the grouped rule above by source order. */
 .scopeBtn { flex: 1 1 0; }
 
-/* The single "this one is selected" idiom. Three different ones — accent chip,
-   bordered panel, left accent bar — used to mean the same thing in one drawer.
-   `.fbRow.fbRowActive` is qualified because `files.css` is imported after this
-   one: a bare `.fbRowActive` here would sit above the base it is applied over
-   and lose the tie. */
+/* The single "this one is selected" idiom: accent text, in an accent tint,
+   inside an accent border. Everything that can be the chosen one is here — a
+   tree leaf, a commit, a ref, a palette, a segment, a funnel tab, a date
+   bound, a preset — because the drawer had reached three spellings of one
+   meaning (this chip, a filled panel, a left accent bar) and showed two of
+   them at once whenever the Changes tree sat beside the history.
+
+   A modifier applied as `${css.base} ${css.mod}` carries the SAME specificity
+   as its base, so source order decides. Every base named here is declared
+   above this rule; `.fbRow.fbRowActive` is the one exception and is written
+   qualified, because `files.css` is imported after this file. */
 .scopeBtnActive, .miniBtnPrimary, .segmentActive, .refRowActive, .paletteRowActive,
+.fileActive, .commitActive, .funnelTabActive, .funnelBoundBtnActive, .funnelPresetActive,
 .fbRow.fbRowActive {
   border-color: var(--gs-accent-border);
   background: var(--gs-accent-bg);
@@ -129,10 +136,10 @@
 /* Publishing a branch that exists nowhere else is the one moment this bar has a
    primary action, so it gets the solid fill Commit uses — and only then. */
 .btnPrimary {
-  border-color: var(--gs-accent); background: var(--gs-accent); color: var(--gs-on-accent, #fff);
+  border-color: var(--gs-accent); background: var(--gs-accent); color: var(--gs-on-accent);
   font-weight: 600;
 }
-.btnPrimary:hover:not(:disabled) { background: var(--gs-accent); color: var(--gs-on-accent, #fff); border-color: var(--gs-accent); }
+.btnPrimary:hover:not(:disabled) { background: var(--gs-accent); color: var(--gs-on-accent); border-color: var(--gs-accent); }
 
 /* The count riding inside Pull / Push. Reads as part of the label rather than a
    badge stuck on it: same colour, tabular, just set apart by a hairline. */
@@ -169,7 +176,7 @@
   background: var(--gs-border);
   background-clip: padding-box;
   border: 3px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--gs-r-pill);
 }
 .drawer ::-webkit-scrollbar-thumb:hover { background: var(--gs-fg-faint); background-clip: padding-box; }
 
@@ -223,7 +230,7 @@
    `.btn` wherever either rule sits, which is the failure the drawer already
    shipped once. */
 .btn.btnDanger {
-  border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff);
+  border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent);
   font-weight: 600;
 }
-.btn.btnDanger:hover:not(:disabled) { border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent, #fff); }
+.btn.btnDanger:hover:not(:disabled) { border-color: var(--gs-del); background: var(--gs-del); color: var(--gs-on-accent); }

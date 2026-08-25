@@ -41,8 +41,9 @@
 
   /* Radii. Four values, each with one job; nothing else may invent a fifth. */
   --gs-r-pill: 999px;    /* drawer chrome: header actions, ref chips, triggers */
-  --gs-r-control: 8px;   /* controls inside a panel or pane; inputs; badges */
-  --gs-r-surface: 12px;  /* rows, popovers, panes */
+  --gs-r-control: 8px;   /* controls inside a panel or pane; inputs; badges;
+                            and the dense list rows a tree or a picker is made of */
+  --gs-r-surface: 12px;  /* the tall card rows, popovers and panes they sit in */
   --gs-r-drawer: 14px;   /* the drawer and its companion card */
 
   /* Type — dsh's --dsw-font-* ladder, which tops out at 11px for meta text. */
@@ -215,7 +216,7 @@
   display: inline-flex; align-items: center; gap: 6px;
   padding: 2px 10px;
   border: 1px solid var(--gs-accent-border);
-  border-radius: 999px;
+  border-radius: var(--gs-r-pill);
   background: var(--gs-accent-bg);
   color: var(--gs-accent);
   font-weight: 600;
@@ -271,7 +272,7 @@
 .headerView {
   flex: none;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--gs-r-pill);
   background: var(--gs-neutral-bg);
   color: var(--gs-fg-muted);
   font-size: var(--gs-t-meta);
@@ -279,7 +280,7 @@
 }
 .headerDetached {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--gs-r-pill);
   background: var(--gs-warn-bg);
   color: var(--gs-warn);
   font-size: var(--gs-t-meta);

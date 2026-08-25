@@ -10,7 +10,7 @@
  *    at four heights and three radii in the first place: each new control was
  *    added by copying a neighbouring rule and adjusting it.
  */
-import { globSync, readFileSync } from 'node:fs'
+import { globSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { panelCssSource } from './helpers/panel-css.ts'
@@ -426,5 +426,263 @@ describe('every --gs token that is spent is minted somewhere', () => {
     expect([...css.matchAll(/(--gs-[a-z0-9-]+)\s*:/g)].length,
       'tokens minted by the stylesheet').toBeGreaterThan(20)
     expect(clientSources.length, 'client sources read').toBeGreaterThan(10)
+  })
+})
+
+/**
+ * ONE VOCABULARY, AND THE DRIFT AROUND IT.
+ *
+ * The button rules above watch the controls that already joined the shared
+ * rule. What they cannot see is what grows beside it: a list row spelling its
+ * own 3px radius, a popover control at 22px where the drawer has exactly two
+ * heights, a hover written `--gs-panel` where every other hover is
+ * `--gs-raise`, a selected state hand-copied instead of joined. None of that
+ * shows in review — the rule is there, the value is plausible, and only two
+ * panes open side by side say that they disagree. The drawer reached seven
+ * list-row types with four radii, three hover colours and three selected
+ * idioms exactly this way.
+ *
+ * So the whole stylesheet is read declaration by declaration, and every
+ * exception is written down WITH ITS REASON and asserted to still match
+ * something — an exception that stops matching is drift that got fixed and
+ * documentation that stayed.
+ *
+ * `environment.css` is deliberately not read: the session-header card lives in
+ * dsh chrome and keeps dsh's own `--dsw-*` tokens (see that file's header).
+ */
+describe('the drawer keeps one vocabulary', () => {
+  const STYLE_DIR = fileURLToPath(new URL('../src/client/styles/', import.meta.url))
+  const SHEETS = readdirSync(STYLE_DIR)
+    .filter(name => name.endsWith('.css') && name !== 'environment.css')
+
+  interface Decl {
+    /** `file.css:line`, so a failure names the source rather than an offset. */
+    readonly at: string
+    readonly selector: string
+    readonly prop: string
+    readonly value: string
+    /** The whole rule, for the checks that need a sibling declaration. */
+    readonly body: string
+  }
+
+  /** Comments blanked rather than removed, so `file:line` still points at the
+   *  source. A scan in this repo has twice been satisfied by the prose that
+   *  explains the thing it was looking for. */
+  function blankComments(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, comment => comment.replace(/[^\n]/g, ' '))
+  }
+
+  const ALL: readonly Decl[] = SHEETS.flatMap((file) => {
+    const source = blankComments(readFileSync(STYLE_DIR + file, 'utf8'))
+    const out: Decl[] = []
+    let cursor = 0
+    let start = 0
+    while (cursor < source.length) {
+      const char = source[cursor]
+      if (char === '{') {
+        const selector = source.slice(start, cursor).replace(/\s+/g, ' ').trim()
+        let depth = 1
+        let end = cursor + 1
+        while (end < source.length && depth > 0) {
+          if (source[end] === '{') depth++
+          else if (source[end] === '}') depth--
+          end++
+        }
+        // `@keyframes` nests blocks of its own and names no drawer control.
+        if (!selector.startsWith('@')) {
+          const bodyAt = cursor + 1
+          const body = source.slice(bodyAt, end - 1)
+          for (const match of body.matchAll(/(-{0,2}[a-zA-Z][-a-zA-Z]*)\s*:\s*([^;]+)/g)) {
+            const prop = match[1]!
+            if (prop.startsWith('--')) continue
+            const line = source.slice(0, bodyAt + match.index).split('\n').length
+            out.push({ at: `${file}:${line}`, selector, prop, value: match[2]!.trim(), body })
+          }
+        }
+        cursor = end
+        start = end
+      } else if (char === '}' || char === ';') {
+        cursor++
+        start = cursor
+      } else cursor++
+    }
+    return out
+  })
+
+  /** An exception is a selector plus the reason it is one. Every entry is
+   *  asserted to still match a rule, so a stale one fails instead of rotting. */
+  interface Exception { readonly selector: string, readonly why: string }
+
+  function allow<T extends { readonly selector: string }>(
+    items: readonly T[], exceptions: readonly Exception[], label: string,
+  ): readonly T[] {
+    const wanted = new Set(exceptions.map(entry => entry.selector))
+    const seen = new Set<string>()
+    const left: T[] = []
+    for (const item of items) {
+      if (wanted.has(item.selector)) seen.add(item.selector)
+      else left.push(item)
+    }
+    expect([...wanted].filter(selector => !seen.has(selector)),
+      `${label}: exceptions that no longer match anything`).toEqual([])
+    return left
+  }
+
+  /** One class, hovering: `.fbRow:hover`. Not `.a .b:hover`, not a compound,
+   *  not `:hover:not(:disabled)` — each of those is a row seen through
+   *  something else, and takes its shape from that something else. */
+  const ROW_HOVER = /^\.\w+:hover$/
+  const px = (value: string): number => Number.parseFloat(value)
+  const sizeIn = (body: string, prop: 'width' | 'height'): number | undefined => {
+    const match = new RegExp(`(?:^|[\\s;])${prop}\\s*:\\s*(-?[\\d.]+)px`).exec(body)
+    return match ? Number.parseFloat(match[1]!) : undefined
+  }
+
+  it('reads the whole drawer, or the checks below mean nothing', () => {
+    expect(SHEETS.length, 'stylesheets read').toBeGreaterThan(6)
+    expect(SHEETS, 'dsh chrome is not the drawer').not.toContain('environment.css')
+    expect(ALL.length, 'declarations parsed').toBeGreaterThan(500)
+    expect(new Set(ALL.map(decl => decl.selector)).size, 'rules parsed').toBeGreaterThan(150)
+    // The parser must not swallow a nested block whole, and must not hand a
+    // keyframe step back as a rule of its own.
+    expect(ALL.some(decl => decl.selector.startsWith('@'))).toBe(false)
+    expect(ALL.some(decl => decl.selector === 'from')).toBe(false)
+  })
+
+  it('rounds every corner from the radius scale', () => {
+    // A literal radius means the box is smaller than the smallest control the
+    // scale has a number for, and at that size the radius is part of a glyph
+    // rather than a shape the eye compares across panes. Anything with a
+    // control's dimensions takes a token — a badge included, which is what
+    // `--gs-r-control` already names.
+    const literals = ALL.filter(decl =>
+      decl.prop === 'border-radius' && !decl.value.includes('var(--gs-r-') && px(decl.value) !== 0)
+    const glyphs = new Set(literals.filter(decl =>
+      (sizeIn(decl.body, 'width') ?? 99) <= 14 || (sizeIn(decl.body, 'height') ?? 99) <= 14))
+    const rest = allow(literals.filter(decl => !glyphs.has(decl)), [
+      { selector: '.wordAdd', why: 'a tint behind a run of text, sized by the text' },
+      { selector: '.wordDel', why: 'a tint behind a run of text, sized by the text' },
+    ], 'radius')
+    expect(rest.map(decl => `${decl.at} ${decl.selector} { border-radius: ${decl.value} }`)).toEqual([])
+  })
+
+  it('gives every row that fills on hover a corner to fill to', () => {
+    // The literal scan above only sees a corner that was WRITTEN DOWN. The
+    // Changes tree had none at all: its rows took a full-width square fill on
+    // hover and when selected, one pane away from a Files tree whose rows were
+    // rounded — two lists of the same thing, disagreeing.
+    //
+    // Asked of the row family only: a bare class, hovering. A button VARIANT
+    // (`.btnPrimary:hover:not(:disabled)`) gets its radius from the base class
+    // sitting beside it in the markup, which this stylesheet cannot show.
+    const rounded = new Set<string>()
+    for (const decl of ALL) {
+      if (decl.prop !== 'border-radius') continue
+      for (const part of decl.selector.split(',')) rounded.add(part.trim())
+    }
+    const rows = ALL.filter(decl =>
+      (decl.prop === 'background' || decl.prop === 'background-color')
+      && !/^(?:transparent|none)$/.test(decl.value)
+      && decl.selector.split(',').every(part => ROW_HOVER.test(part.trim())))
+    const square = rows.filter(decl => decl.selector.split(',')
+      .some(part => !rounded.has(part.trim().replace(':hover', ''))))
+    expect([...new Set(square.map(decl => `${decl.at} ${decl.selector}`))],
+      'rows that fill on hover but declare no radius').toEqual([])
+    expect(rows.length, 'row hovers found').toBeGreaterThan(5)
+  })
+
+  it('sizes every piece of type from the type scale', () => {
+    // The scale starts at `--gs-t-meta`, 11px. Below that a number is a glyph —
+    // a caret, a tick, the 8px worktree dot — and not type anybody reads.
+    const literals = ALL.filter(decl =>
+      decl.prop === 'font-size' && !decl.value.includes('var(--gs-t-'))
+    const typeSized = literals.filter(decl => !(px(decl.value) < 11))
+    expect(typeSized.map(decl => `${decl.at} ${decl.selector} { font-size: ${decl.value} }`)).toEqual([])
+  })
+
+  it('stands every control at one of the two heights', () => {
+    // 28px for drawer chrome, 24px inside a panel or pane. A literal in that
+    // band is a control that was sized by eye: the funnel popover reached
+    // 20 / 22 / 26px that way, inside one 320px box, beside controls at 24.
+    const band = ALL.filter(decl =>
+      decl.prop === 'height' && /^\d+(?:\.\d+)?px$/.test(decl.value)
+      && px(decl.value) >= 18 && px(decl.value) <= 30)
+    const notControls = new Set(band.filter((decl) => {
+      const width = sizeIn(decl.body, 'width')
+      // A square is a badge or a swatch; a 3px sliver is a bar or a grab handle.
+      return width !== undefined && (width === px(decl.value) || width <= 4)
+    }))
+    const rest = allow(band.filter(decl => !notControls.has(decl)), [
+      { selector: '.segmentChip', why: 'a colour swatch naming a mode, stretched by the segment it fills' },
+    ], 'control height')
+    expect(rest.map(decl => `${decl.at} ${decl.selector} { height: ${decl.value} }`)).toEqual([])
+  })
+
+  it('gives every neutral hover the same one colour', () => {
+    // `--gs-raise` is the drawer's "the pointer is here" lift. A hover that
+    // paints a STATE — a warn tint on Pull, an accent on a picker — is saying
+    // something else and keeps its own colour; a hover that only lifts the row
+    // has to be the same lift everywhere, or two panes disagree about what a
+    // pointer looks like.
+    const SEMANTIC = /var\(--gs-(?:accent|add|del|warn|info|neutral|fg-)/
+    const hovers = ALL.filter(decl =>
+      /:hover(?![-\w])/.test(decl.selector)
+      && (decl.prop === 'background' || decl.prop === 'background-color')
+      && !/^(?:transparent|none)$/.test(decl.value)
+      && !SEMANTIC.test(decl.value))
+    const wrong = hovers.filter(decl => decl.value !== 'var(--gs-raise)')
+    expect(wrong.map(decl => `${decl.at} ${decl.selector} { ${decl.prop}: ${decl.value} }`)).toEqual([])
+    expect(hovers.length, 'neutral hovers found').toBeGreaterThan(5)
+  })
+
+  it('says "this one is selected" exactly one way', () => {
+    // Accent text, inside an accent tint, inside an accent border. It was three
+    // idioms — chip, filled panel, left accent bar — for one meaning, and the
+    // drawer showed two of them at once whenever the Changes tree sat beside
+    // the history.
+    const IDIOM = ['var(--gs-accent-bg)', 'var(--gs-accent-border)', 'var(--gs-accent)']
+    const bodies = new Map<string, string>()
+    for (const decl of ALL) bodies.set(decl.selector, decl.body)
+    const spellsIt = [...bodies].map(([selector, body]) => ({ selector, body }))
+      .filter(rule => IDIOM.every(token => rule.body.includes(token)))
+
+    // The rule that IS the selected state is the one whose every selector is a
+    // modifier. Read that way rather than by name, so a member added later is
+    // covered without anyone remembering to update this file.
+    const isModifier = (selector: string): boolean => selector.split(',')
+      .every(part => /(?:Active|Primary)$/.test(part.trim().split('.').pop() ?? ''))
+    const selected = spellsIt.filter(rule => isModifier(rule.selector))
+    expect(selected.map(rule => rule.selector), 'the selected state should live in one rule')
+      .toHaveLength(1)
+    const shared = new Set(selected[0]!.selector.split(',').map(part => part.trim()))
+
+    // The same chip also says WHERE YOU ARE, which is a different sentence and
+    // a legitimate second reader of the idiom — but only for a ref, and only
+    // where the ref is the subject rather than one of several choices.
+    allow(spellsIt.filter(rule => !isModifier(rule.selector)), [
+      { selector: '.headerBranch', why: 'names the branch the drawer is open on' },
+      { selector: '.commitRef', why: 'names a ref that points at this commit' },
+      { selector: '.refButton.headerPicker', why: 'the trigger that opens the worktree the header names' },
+    ], 'the accent chip')
+
+    // Every selected-state modifier joins that rule, or names the different
+    // idiom it wears and why that idiom is not a selection.
+    const OTHER_IDIOMS: readonly Exception[] = [
+      { selector: '.tabActive', why: 'a tab: accent label over an accent underline, not a chip' },
+      { selector: '.tabActive::after', why: 'the underline itself' },
+      { selector: '.sideTabActive', why: 'the same tab idiom in the side pane' },
+      { selector: '.sideTabActive::after', why: 'the underline itself' },
+      { selector: '.funnelButton.funnelButtonActive', why: 'a trigger reporting that its panel holds criteria' },
+      { selector: '.treeDirActive', why: 'an ancestor hint — the folder CONTAINING the open file, not a selection' },
+      { selector: '.resizerActive::after', why: 'active means being dragged' },
+      { selector: '.paneDividerActive::after', why: 'active means being dragged' },
+      { selector: '.paneDividerY.paneDividerActive::after', why: 'active means being dragged' },
+    ]
+    const modifiers = ALL.filter(decl =>
+      /\.\w+Active(?![\w-])/.test(decl.selector)
+      && decl.selector !== selected[0]!.selector && !shared.has(decl.selector))
+    const rest = allow(modifiers, OTHER_IDIOMS, 'selected state')
+    expect([...new Set(rest.map(decl => `${decl.at} ${decl.selector}`))],
+      'hand-spelled selected states').toEqual([])
   })
 })
