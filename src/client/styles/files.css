@@ -44,8 +44,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fbRow:hover { background: var(--gs-hover); }
-.fbRowActive { background: var(--gs-selected); color: var(--gs-fg); }
+.fbRow:hover { background: var(--gs-raise); }
+/* .fbRowActive: see the shared selected-state rule in controls.css. It is
+   written there qualified, because this file is imported after that one and a
+   bare modifier declared above its base loses the cascade. */
 .fbDirName { overflow: hidden; text-overflow: ellipsis; }
 .fbFileName { overflow: hidden; text-overflow: ellipsis; }
 .fbMain {

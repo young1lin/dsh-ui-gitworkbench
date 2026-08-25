@@ -34,6 +34,7 @@ import { search, searchKeymap } from '@codemirror/search'
 import css from './GitWorkbenchPanel.module.css'
 import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
 import { bufferDiff } from './cm-diff.ts'
+import { SEARCH_PANEL_THEME } from './cm-search-theme.ts'
 import { lineTokenRanges } from './cm-tokens.ts'
 import type { HighlightRun } from './highlight.ts'
 import type { BlameLine } from './GitWorkbenchPanel.tsx'
@@ -271,7 +272,7 @@ const paneTheme = EditorView.theme({
     border: 'none',
     paddingRight: '8px',
   },
-  '.cm-activeLine': { backgroundColor: 'var(--gs-hover)' },
+  '.cm-activeLine': { backgroundColor: 'var(--gs-raise)' },
   // Same tints the diff columns use, so a line the reader just typed reads as
   // the same kind of thing as a line git already knows about.
   '.cm-gwChanged': { backgroundColor: 'var(--gs-add-line)' },
@@ -295,6 +296,9 @@ const paneTheme = EditorView.theme({
     whiteSpace: 'nowrap',
     cursor: 'pointer',
   },
+  // Ctrl/Cmd+F. Spread rather than written here so a test can read the spec
+  // without loading React and a CSS Module; see `cm-search-theme.ts`.
+  ...SEARCH_PANEL_THEME,
 })
 
 export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {

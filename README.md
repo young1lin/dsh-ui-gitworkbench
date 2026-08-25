@@ -381,6 +381,12 @@ git 靠「一删除 + 一新增」的配对才认得出改名；pathspec 只放�
 ### 6.17 抽屉内新增模态层的 CSS 必须写 `.drawer > .xxx`，裸类会被压住
 `.drawer > *:not(.resizer) { position: relative; z-index: 1 }`（布局需要）给了每个直接子元素 position 与层叠秩，裸类声明的 `position: absolute` 会输给它——遮罩被当作最后一个 flex 项排进抽屉底部的一条缝里，样式全对、位置全错、还不报错。模态遮罩一律写成 `.drawer > .confirmScrim` 这种带父作用域的选择器；`tests/drawer-chrome.test.ts` 有断言守着这条作用域与层叠秩。
 
+### 6.18 CodeMirror 自带的界面只能在 `EditorView.theme` 里改，且查找面板不能用 flex 排版
+`.cm-*` 是全局类名，写进 `.module.css` 会被 CSS Modules 哈希掉，选不中；改动一律走 TS 里的 `EditorView.theme`（`paneTheme` 与 `cm-search-theme.ts`）。这样写仍然吃得到调色板：面板挂在 `.overlay` 里，`var(--gs-*)` 照常解析。层叠也不用操心——`EditorView` 把 base theme 排在最前面挂载，同特异度下普通 theme 规则赢。
+
+排版有个坑：`@codemirror/search` 用一个 `<br>` 分隔「查找行」和「替换行」，而 Blink **不给 flex 容器里的 `<br>` 生成盒子**——`flex-basis: 100%`、`width: 100%`、`min-width: 100%` 三种写法都在跑起来的应用上试过，替换框一律留在查找行上，样式全对、只是少了一次换行。面板因此保持行内流：控件写成 `inline-flex` 原子，行距用每个控件的下外边距承担，面板下内边距按这个边距扣掉；`scripts/verify_search_panel.py` 在真实抽屉里量这套版式。库自带的那套值全是字面量（`#f5f5f5` 的条、`linear-gradient` 的按钮、`1px solid silver` 的输入框、`#ffff0054` 的命中、外加一个不指定字体族的 `font-size: 70%`），一个都不跟主题走，必须逐条盖掉；`tests/cm-search-theme.test.ts` 按名字守着这份清单。
+
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）

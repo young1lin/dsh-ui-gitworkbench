@@ -47,7 +47,7 @@
   font-family: inherit; font-size: var(--gs-t-dense); line-height: 20px;
   cursor: pointer;
 }
-.filterChipRemove:hover { color: var(--gs-danger, var(--gs-fg)); }
+.filterChipRemove:hover { color: var(--gs-del); }
 .filterClear {
   border: none; background: transparent;
   padding: 2px 4px;
@@ -233,7 +233,7 @@
   font-family: inherit; font-size: var(--gs-t-dense); line-height: 1;
   cursor: pointer;
 }
-.funnelBoundClear:hover { color: var(--gs-danger, var(--gs-fg)); }
+.funnelBoundClear:hover { color: var(--gs-del); }
 
 .funnelSearch {
   flex: none;

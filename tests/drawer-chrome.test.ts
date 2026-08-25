@@ -10,7 +10,7 @@
  *    at four heights and three radii in the first place: each new control was
  *    added by copying a neighbouring rule and adjusting it.
  */
-import { readFileSync } from 'node:fs'
+import { globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { panelCssSource } from './helpers/panel-css.ts'
@@ -348,5 +348,83 @@ describe('a refresh does not blank what it is about to replace', () => {
     const inline = [...code.matchAll(/loading[^\n]*&&[^\n]*files\.length === 0/g)]
     expect(inline.map(m => m[0]), 'the rule belongs in showsPending alone').toEqual([])
     expect(code, 'and the panel must actually call it').toMatch(/showsPending\(/)
+  })
+})
+
+/**
+ * A token that is spent but never minted.
+ *
+ * `var(--gs-nope)` is not an error anywhere: the declaration is dropped at
+ * computed-value time and the property falls back to its initial value, so a
+ * hover renders with no hover, an active row with no fill, and nothing in the
+ * build, the type-check or the browser console says a word. The drawer shipped
+ * exactly that for `--gs-hover` and `--gs-selected` — named in three rules,
+ * defined in none.
+ *
+ * So both ends are read: everything the drawer MINTS (per-palette declarations
+ * in the stylesheet, plus the handful the panel sets inline as a style object)
+ * against everything it SPENDS (the stylesheet, and the CodeMirror themes,
+ * which are TypeScript because `.cm-*` are global class names a CSS Module
+ * would hash away).
+ */
+describe('every --gs token that is spent is minted somewhere', () => {
+  const clientSources = globSync('../src/client/**/*.{ts,tsx}', { cwd: fileURLToPath(new URL('.', import.meta.url)) })
+    .map(rel => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8'))
+
+  /** Declared in the stylesheet, or handed to an element as an inline custom
+   *  property. The panel names those through a constant (`const RAIL_VAR =
+   *  '--gs-rail'`), so any bare `'--gs-…'` string literal in client code is a
+   *  mint; a `var(--gs-…)` inside a longer string is not, and does not match. */
+  function minted(): Set<string> {
+    const names = new Set<string>()
+    for (const m of css.matchAll(/(--gs-[a-z0-9-]+)\s*:/g)) names.add(m[1]!)
+    for (const source of clientSources) {
+      for (const m of source.matchAll(/['"`](--gs-[a-z0-9-]+)['"`]/g)) names.add(m[1]!)
+    }
+    return names
+  }
+
+  /** Every `var(--gs-…)`, including the first argument of a fallback pair —
+   *  `var(--gs-a, var(--gs-b))` still resolves `--gs-a` first. A name built at
+   *  runtime (`var(--gs-graph-${lane % 6})`) names no single token and is
+   *  skipped; the family it indexes is covered by the rules that read it. */
+  function varsIn(text: string): string[] {
+    return [...text.matchAll(/var\(\s*(--gs-[a-z0-9-]+)(.?)/g)]
+      .filter(m => m[2] !== '$')
+      .map(m => m[1]!)
+  }
+
+  /** Every use, kept as a pair so the sanity check below can see that each
+   *  half was really read — a total over the union cannot. */
+  function spent(): Array<readonly [string, string]> {
+    const uses: Array<readonly [string, string]> = []
+    const scan = (text: string, where: string): void => {
+      for (const name of varsIn(text)) uses.push([name, where] as const)
+    }
+    scan(css, 'the stylesheet')
+    clientSources.forEach((source, i) => scan(source, `client source ${i}`))
+    return uses
+  }
+
+  it('leaves no rule painting with a token nothing defines', () => {
+    const have = minted()
+    const first = new Map<string, string>()
+    for (const [name, where] of spent()) if (!first.has(name)) first.set(name, where)
+    const orphans = [...first].filter(([name]) => !have.has(name))
+    expect(orphans.map(([name, where]) => `${name} (${where})`), 'undefined tokens').toEqual([])
+  })
+
+  it('reads both halves for that to mean anything', () => {
+    // Per HALF, not over the union: an empty result is how a source scan fails,
+    // and a guard blinded on one half still sees plenty through the other —
+    // it would then report no orphans, forever, for the wrong reason.
+    const uses = spent()
+    const fromSheet = uses.filter(([, where]) => where === 'the stylesheet')
+    const fromThemes = uses.filter(([, where]) => where.startsWith('client source'))
+    expect(new Set(fromSheet.map(([name]) => name)).size, 'tokens spent by the stylesheet').toBeGreaterThan(20)
+    expect(fromThemes.length, 'tokens spent by the CodeMirror themes').toBeGreaterThan(5)
+    expect([...css.matchAll(/(--gs-[a-z0-9-]+)\s*:/g)].length,
+      'tokens minted by the stylesheet').toBeGreaterThan(20)
+    expect(clientSources.length, 'client sources read').toBeGreaterThan(10)
   })
 })

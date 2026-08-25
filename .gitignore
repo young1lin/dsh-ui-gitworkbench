@@ -68,3 +68,4 @@ scripts/make_realcode_fixture.py
 scripts/mutate_token_cache.py
 scripts/verify_paint_window.py
 scripts/verify_second_open.py
+scripts/verify_search_panel.py

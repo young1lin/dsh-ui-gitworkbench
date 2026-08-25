@@ -83,8 +83,12 @@
 .scopeBtn { flex: 1 1 0; }
 
 /* The single "this one is selected" idiom. Three different ones — accent chip,
-   bordered panel, left accent bar — used to mean the same thing in one drawer. */
-.scopeBtnActive, .miniBtnPrimary, .segmentActive, .refRowActive, .paletteRowActive {
+   bordered panel, left accent bar — used to mean the same thing in one drawer.
+   `.fbRow.fbRowActive` is qualified because `files.css` is imported after this
+   one: a bare `.fbRowActive` here would sit above the base it is applied over
+   and lose the tie. */
+.scopeBtnActive, .miniBtnPrimary, .segmentActive, .refRowActive, .paletteRowActive,
+.fbRow.fbRowActive {
   border-color: var(--gs-accent-border);
   background: var(--gs-accent-bg);
   color: var(--gs-accent);
