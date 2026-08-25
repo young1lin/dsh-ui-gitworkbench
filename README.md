@@ -93,6 +93,9 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 | 客户端半被类型检查 | ✅ | `tsconfig.client.json` 进了 `bundle`/`typecheck`；曾故意写坏一处，确认报 `TS2322` |
 | 主题 7 族 × 亮暗 + 跟随系统明暗 | ✅ | `tests/theme-palettes.test.ts` 把 `themes.ts` 与 `.module.css` 互扣（两个方向都验过会红）；`lib/client.js` 含全部 14 套调色板 |
 | 背景图 / 自定义 CSS 的项目+全局存储 | ✅ | 对**构建产物** `lib/index.js` 跑 styleGet/styleSet 全流程（临时 HOME，18/18 PASS）：读写、项目优先、越界钳制、恶意 image 拒绝、清空删记录、非仓库拒绝、两作用域并发写不互相覆盖 |
+| Ctrl/Cmd+F 查找面板穿抽屉的控件，并报 `当前 / 总数` | ✅ | `python scripts/verify_search_panel.py`：24 项实机检查（条随调色板重绘、控件同高同圆角、命中底色非库自带、窄窗格回流、计数随 Enter 前进） |
+| 抽屉视觉词汇表单一（圆角 / 字号 / 控件高度 / 悬停 / 选中） | ✅ | `tests/drawer-chrome.test.ts` 逐条声明扫描全表，六个变异全红；`python scripts/verify_vocabulary.py` 实机复核（18 个筛选控件同高、17 处小字同号、树行圆角与选中 chip） |
+| 行号槽不再把代码压在底下 | ✅ | `python scripts/verify_gutter.py`：窗格拖窄后横向滚动 400px，63 行钻到槽下，槽有自身底色且向左溢出；可编辑轨条仍在槽之上 |
 
 **已知边界**：状态卡挂在 `conversation.session.header.actions` 插槽，只有**打开了会话（会话头渲染）**时才挂载。无头自动化里若没真正打开会话，状态卡不会出现——这是预期行为，手动在 UI 里开一个会话即可看到。
 

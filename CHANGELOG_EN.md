@@ -2,6 +2,21 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.13] - 2026-08-25
+
+### Added
+
+- **The find panel counts.** Ctrl/Cmd+F now shows `3/128` beside the search field — which match you are on, and how many there are. Without it, a query that matched nothing and a query whose matches are all below the fold looked identical. Counting walks the whole document, so it never happens on the keystroke path: the walk waits until the typing stops, on the same idle the syntax coloring and the live diff tint use, and it stops at 5,000 matches, past which the total reads `5000+`. Match positions are kept, so moving between matches with Enter is a binary search rather than a second walk. Measured against this repository's own client sources, a full count costs 3–5ms at 300 lines, 9–11ms at 2,000, 12ms at 4,000, and 60ms at 20,000 — `SIDE_LINE_CAP`, the ceiling the pane will load.
+
+### Fixed
+
+- **The Ctrl/Cmd+F panel no longer arrives in the library's grey shell.** Every value `@codemirror/search` dresses its panel with is a literal: a `#f5f5f5` strip, buttons on a grey gradient, `1px solid silver` fields, `#ffff0054` matches, and a `font-size: 70%` that names no font family. None of them follow a palette, so on eleven of the drawer's fourteen themes Ctrl+F opened a light-grey slab of native form controls on top of a dark pane. The panel now wears the drawer's own controls — the same height, radius, type size, hover and focus ring — and takes its match colors from the palette.
+- **The line-number gutter no longer prints the code through itself.** CodeMirror pins the gutter with an inline `position: sticky`, so the numbers hold the pane's left edge while the code scrolls sideways underneath them; the library ships an opaque fill there for exactly that reason, and the drawer had overridden it to transparent, leaving numbers and code painted on top of each other. The gutter now carries the pane's ground color, and bleeds left far enough to cover the pane's own left padding.
+
+### Changed
+
+- **One way to draw each thing.** Seven kinds of list row had four answers for a corner, two hover colors and three spellings of "this one is selected", and the History filter popover held controls at 20 / 22 / 26px next to a row of controls at 24. Dense list rows now share one radius, neutral hovers share one color, selection is one rule (accent text in an accent tint inside an accent border), and every control in the filter popover stands at the standard in-pane height. The Changes tree's directory and file rows had no corner at all, so their hover and selection fills ran square into the pane edge — they now match the Files tree.
+
 ## [0.1.12] - 2026-08-23
 
 ### Fixed
