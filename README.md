@@ -431,6 +431,32 @@ gutter 一变不透明就把它埋了。二是探针查不了这件事：`elemen
 box-shadow 的命中测试，行号左边那个点照样报 `.cm-line`，只能截图看像素，或者直接
 读 `getComputedStyle(...).boxShadow`。`scripts/verify_gutter.py` 走的是后者。
 
+### 6.21 探针「什么都没测到」的三种样子，都不长得像失败
+
+探针最贵的失败不是断言变红，是它根本没走到要测的那一步，然后一路 PASS 或者报一个
+和真实原因无关的超时。三条都是在实机上撞出来的：
+
+**一、会话列表默认是折叠的。** 侧边栏按 workspace 分组，全新的无头上下文拿到的
+`dsh.workspace.view.v5` 里 `groupExpansion` 是空对象——每个组都收着，会话行**根本不在
+DOM 里**。`page.get_by_text('会话标题')` 于是永远找不到，再怎么等也没用。要先把
+`[class*="projectRow"][aria-expanded="false"]` 一个个点开。这条会伪装成
+`Locator.click: Timeout 30000ms exceeded` 卡在 `cardBranch` 上，看起来像抽屉没渲染。
+
+**二、Changes 侧不点「编辑」就没有编辑器。** 未武装时 diff 右列渲染的是 `<span>`
+（`DiffViews.tsx`），CodeMirror 只在 `layer === 'unstaged' && edit.armed` 时挂载。
+探针点开一个改动文件就去找 `.cm-gutters`，找不到是**对的**——但如果把这种情况写成
+`SKIP`，那一整段就永远不会被验，而它看起来一直是绿的。要么点「编辑」把它武装起来，
+要么把「未武装时不该有编辑器」写成一条真断言。
+
+**三、挑文件别用 `.first`。** fixture-01 的第一个改动文件是 PNG，二进制文件走的是
+「无文本差异」分支：没有分栏、没有「编辑」按钮、没有编辑器。用 `.first` 拿到它，
+报出来的是「分栏视图没有编辑按钮」——一个从来不存在的 bug。按扩展名挑一个文本文件。
+
+还有一条量级的：**把窗格「拖窄到一定要横向滚动」不能写死像素**。`320px` 在 Files 侧
+够窄，在 Changes 右列比最长的行还宽，于是 `scrollLeft` 停在 0，那一段测的是「没滚动
+所以没有重叠」——不是「没有 bug」。按 gutter 自身宽度加一条缝算目标宽度，再
+`scrollLeft = scrollWidth` 滚到底，重叠就一定发生在最坏处。
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）
