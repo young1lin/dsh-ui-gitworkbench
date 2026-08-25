@@ -34,7 +34,7 @@ git diff --name-only --staged   # or: git diff --name-only <base>
 2. **Touched a pure module** (`stage-tree.ts`, `diff-model.ts`, `git-ops.ts`, `worktree.ts`, `atomic-json.ts`, `style-store.ts`, `themes.ts`, `commit-cache.ts`, `git-log.ts`, `worktree-view.ts`, `commit-graph.ts`, `op-feedback.ts`)? Run its test file directly: `npx vitest run tests/<module>.test.ts`.
 3. **Touched `GitWorkbenchPanel.tsx` or `.module.css`**: run the structural guards: `npx vitest run tests/drawer-chrome.test.ts tests/diff-regression.test.ts tests/theme-palettes.test.ts`. These scan source text; a styling change they do not know about should ADD an assertion, not bypass the run.
 4. **Touched the host half**: `npm run bundle` must exit 0 (tsc transpiles the stage-3 `@Remote` decorators — a syntax error here only surfaces at build).
-5. **Claiming release readiness**: add `npm test` (15 files / 224 tests, ~2.5s — cheap enough to stop agonizing) and `npm pack --dry-run` (35-file whitelist, 498.0 kB packed; a file-count drift means the `files` list broke). `npm pack` triggers `prepack` → `bundle:publish`, which rebuilds `lib/client.js` WITHOUT a sourcemap — run `pnpm exec tsdown` afterwards to get the dev build back.
+5. **Claiming release readiness**: add `npm test` (61 files / 868 tests, ~15s — cheap enough to stop agonizing) and `npm pack --dry-run` (110 files, 1.0 MB packed at 0.1.13; `files` ships all of `src`, so the count moves with the module count — a jump that does not match one means the list broke). Counts go stale: `(Get-ChildItem tests -Filter *.test.ts).Count` and the pack's own `total files` line are the commands behind these numbers. `npm pack` triggers `prepack` → `bundle:publish`, which rebuilds `lib/client.js` WITHOUT a sourcemap — run `pnpm exec tsdown` afterwards to get the dev build back.
 
 ## Step 3 — guards that must never be skipped
 
@@ -45,9 +45,11 @@ git diff --name-only --staged   # or: git diff --name-only <base>
 ## Step 4 — commit discipline
 
 Conventional prefix, lowercase subject, body explains **why**, ends with:
-`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+a `Co-Authored-By:` trailer per model that actually worked on the change, ranked by token usage — never a fixed name (AGENTS.md). `git log` shows the spellings in use.
 Other agents may have uncommitted work: `git status` first, commit with `git commit --only <paths>`, never sweep.
 
-## The realistic sync note
+## Publishing, and the sync note
 
-This repo has **no git remote**: pre-push/post-merge hooks never fire. Knowledge-base sync is manual: `uv run --script .agents/skills/business-logic/.scripts/auto_sync.py manual` (or `--staged`), then normalize CRLF to LF on the touched .md files before committing.
+The remote is `origin` = github.com/young1lin/dsh-ui-gitworkbench, and publishing is TAG-DRIVEN: push `vX.Y.Z` and `.github/workflows/publish.yml` publishes to npm via Trusted Publishing (OIDC, no NPM_TOKEN anywhere). The workflow re-runs typecheck, tests and the build itself, so a red tag fails the publish rather than shipping. Pushing the tag is the irreversible step: an npm version cannot be republished.
+
+Knowledge-base sync is manual: `uv run --script .agents/skills/business-logic/.scripts/auto_sync.py manual` (or `--staged`), then normalize CRLF to LF on the touched .md files before committing.
