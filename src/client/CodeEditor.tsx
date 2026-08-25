@@ -29,7 +29,7 @@ import { Compartment, EditorState, Facet, StateEffect, StateField, type Extensio
 import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
-import { search, searchKeymap } from '@codemirror/search'
+import { getSearchQuery, search, searchKeymap, searchPanelOpen, type SearchQuery } from '@codemirror/search'
 
 import css from './GitWorkbenchPanel.module.css'
 import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
@@ -37,6 +37,7 @@ import { bufferDiff } from './cm-diff.ts'
 import { SEARCH_PANEL_THEME } from './cm-search-theme.ts'
 import { lineTokenRanges } from './cm-tokens.ts'
 import type { HighlightRun } from './highlight.ts'
+import { EMPTY_INDEX, formatCount, indexMatches, ordinalAt, type MatchIndex } from './search-count.ts'
 import type { BlameLine } from './GitWorkbenchPanel.tsx'
 
 /**
@@ -140,6 +141,111 @@ abstract class IdleLayer implements PluginValue {
 
   protected abstract build(view: EditorView): DecorationSet
 }
+
+/**
+ * `3/128` beside the find field.
+ *
+ * `@codemirror/search` ships no count, which leaves the reader unable to tell
+ * a query that found nothing from one whose matches are all below the fold.
+ * The library exports no panel class to subclass either, so the label is put
+ * INTO the panel it already builds — one span, mounted after the search field
+ * and removed with the plugin.
+ *
+ * Counting walks the document, so it never happens on the keystroke path: the
+ * walk is deferred by the same idle the paint layers use, and it stops at
+ * `MATCH_CAP`. Moving between matches touches no document at all — the offsets
+ * are kept, and the ordinal is a binary search over them.
+ *
+ * While a new count is pending the previous number stays up rather than
+ * blanking. A query grows a character at a time, so the number it replaces is
+ * a near neighbour of the one arriving; blanking instead would collapse the
+ * span and shuffle the buttons beside it on every keystroke.
+ */
+class SearchCount implements PluginValue {
+  private index: MatchIndex = EMPTY_INDEX
+  private spec: string | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private readonly label = document.createElement('span')
+
+  constructor(private readonly view: EditorView) {
+    this.label.className = 'cm-gwSearchCount'
+    // The count changes without the reader moving focus, which is exactly what
+    // a live region is for.
+    this.label.setAttribute('aria-live', 'polite')
+    this.sync(view, true)
+  }
+
+  update(update: ViewUpdate): void {
+    if (!searchPanelOpen(update.state)) {
+      // Closed, or never opened. Forget the query so reopening recounts rather
+      // than showing a number for a document that has since been edited.
+      this.spec = undefined
+      this.index = EMPTY_INDEX
+      this.label.remove()
+      return
+    }
+    this.sync(update.view, update.docChanged)
+  }
+
+  /** A view is destroyed on every file switch; a timer that outlives one is a
+   *  leak that also writes into a panel nobody is looking at. */
+  destroy(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer)
+    this.timer = undefined
+    this.label.remove()
+  }
+
+  private sync(view: EditorView, docChanged: boolean): void {
+    this.mount(view)
+    const spec = specOf(getSearchQuery(view.state))
+    if (docChanged || spec !== this.spec) {
+      this.spec = spec
+      this.defer()
+    }
+    this.paint(view)
+  }
+
+  private mount(view: EditorView): void {
+    const panel = view.dom.querySelector('.cm-panel.cm-search')
+    if (panel === null || this.label.parentElement === panel) return
+    // Beside the field it is about, rather than at the end of a row whose
+    // width the checkboxes decide.
+    const field = panel.querySelector('input[name="search"]')
+    if (field === null) panel.append(this.label)
+    else field.after(this.label)
+  }
+
+  private defer(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer)
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      const query = getSearchQuery(this.view.state)
+      this.index = query.valid
+        ? indexMatches(query.getCursor(this.view.state.doc))
+        : EMPTY_INDEX
+      this.paint(this.view)
+    }, REPAINT_IDLE_MS)
+  }
+
+  private paint(view: EditorView): void {
+    // An empty or unparseable query has nothing to report, and `0/0` under a
+    // field the reader has not typed in yet is noise.
+    if (!getSearchQuery(view.state).valid) {
+      this.label.textContent = ''
+      return
+    }
+    const at = view.state.selection.main.from
+    this.label.textContent = formatCount(this.index, ordinalAt(this.index, at))
+  }
+}
+
+/** What decides the match set. `replace` is part of the query and changes none
+ *  of it, so a recount on every keystroke in the replace field is waste. */
+function specOf(query: SearchQuery): string {
+  return [query.search, query.caseSensitive, query.regexp, query.wholeWord, query.literal].join('\u0000')
+}
+
+const searchCount = ViewPlugin.fromClass(SearchCount)
 
 /** The lines the view is about to show, 0-based and half-open. */
 function viewportLines(view: EditorView): { from: number; to: number } {
@@ -377,6 +483,7 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
       lineNumbers(),
       history(),
       search({ top: true }),
+      searchCount,
       highlightActiveLine(),
       paintCompartment.of(paintFacet.of(paint)),
       painter,

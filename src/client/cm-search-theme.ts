@@ -107,6 +107,24 @@ export const SEARCH_PANEL_THEME: ThemeSpec = {
   [`${PANEL} .cm-textfield::placeholder`]: { color: 'var(--gs-fg-faint)' },
   [`${PANEL} .cm-textfield:focus`]: { outline: 'none', borderColor: 'var(--gs-accent)' },
 
+  /* `3/128`. A span rather than a control, so it takes none of the shared
+     rule above and states its own box; the meta size and the faint ink keep it
+     a readout beside the field rather than a fourth thing to click. */
+  [`${PANEL} .cm-gwSearchCount`]: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    boxSizing: 'border-box',
+    height: 'var(--gs-h-compact)',
+    margin: `0 ${GAP} ${ROW_GAP} 0`,
+    verticalAlign: 'top',
+    font: 'inherit',
+    fontSize: 'var(--gs-t-meta)',
+    lineHeight: '1',
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+    color: 'var(--gs-fg-faint)',
+  },
+
   [`${PANEL} .cm-button`]: {
     display: 'inline-flex',
     alignItems: 'center',
