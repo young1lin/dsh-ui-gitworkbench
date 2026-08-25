@@ -407,6 +407,26 @@ const local = (name) => [...document.querySelectorAll('[class]')]
 还有一条：规则写在子元素上时要读子元素。`.calWeek` 的 11px 写在 `.calWeek span`
 上，读容器拿到的是从面板继承来的 12px，看起来像漂移。
 
+### 6.20 行号槽是内联 `position: sticky`，把它改成透明就等于让代码从行号底下穿过去
+
+`@codemirror/view` 在 gutter 插件里用**内联样式**写死 `this.dom.style.position =
+"sticky"`（`dist/index.js` 约 11398 行），CSS 覆盖不掉。于是横向滚动时行号钉在面板
+左缘不动，代码从底下滑过去——库自带 `background: #f5f5f5` 正是为了挡住这一幕，
+`paneTheme` 早先把它改成了 `transparent`，行号和代码就叠印在一起了（在跑起来的
+应用上拍到过：`pl0ügin`、`ull5neutral`、`cro3ssed`）。所以 gutter 必须有自己的底色，
+用面板的地色 `--gs-surface`——Files 的 `.fbMain` 和 Changes 的 `.diffPane` 都是它。
+自己上色的格子（活动行、改动行）照旧盖在上面，跟盖在透明上没有区别。
+
+只补底色还差一截：`left: 0` 把 gutter 钉在滚动容器的**内容盒**边缘，而面板是在
+**内边距盒**上裁剪的，所以代码会继续从面板那 8px 左内边距里钻出来，露在行号左边。
+底色因此要向左溢出：`boxShadow: '-16px 0 0 0 var(--gs-surface)'`。颜色就是地色、
+又被面板裁掉，多溢一点不要钱。
+
+两个连带项。一是 `.cmHost[data-editable]::before` 那条可编辑轨条压着 gutter 头两个
+像素，而 CodeMirror 把 gutter 叠在 `z-index: 200`——轨条得写 `z-index: 201`，否则
+gutter 一变不透明就把它埋了。二是探针查不了这件事：`elementFromPoint` 不做
+box-shadow 的命中测试，行号左边那个点照样报 `.cm-line`，只能截图看像素，或者直接
+读 `getComputedStyle(...).boxShadow`。`scripts/verify_gutter.py` 走的是后者。
 
 ---
 

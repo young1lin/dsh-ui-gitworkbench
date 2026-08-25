@@ -266,11 +266,26 @@ const paneTheme = EditorView.theme({
     fontVariantLigatures: 'none',
   },
   '.cm-content': { padding: '0', caretColor: 'var(--gs-accent)' },
+  // Opaque, and it has to be. The gutter plugin writes `position: sticky`
+  // as an INLINE style, so the numbers hold the pane's left edge while the
+  // code scrolls sideways underneath them — with a transparent fill that is
+  // not a gutter, it is a smear of code behind the line numbers. The library
+  // ships `#f5f5f5` here for the same reason; this is that fill, restated in
+  // the pane's own ground so every palette clothes it. Both hosts sit on
+  // `--gs-surface` (`.fbMain` in Files, `.diffPane` in Changes), and the cells
+  // painted a colour of their own — the active line, a changed line — paint
+  // over it exactly as they did over the transparency.
   '.cm-gutters': {
-    backgroundColor: 'transparent',
+    backgroundColor: 'var(--gs-surface)',
     color: 'var(--gs-fg-faint)',
     border: 'none',
     paddingRight: '8px',
+    // The fill has to reach further left than the gutter does. `left: 0` sticks
+    // it to the scrollport's CONTENT box, while the pane clips at its PADDING
+    // box — so the code keeps travelling through the pane's own left padding
+    // and surfaces beside the numbers. The bleed covers that strip; it is the
+    // ground colour, and the pane clips it, so over-reaching costs nothing.
+    boxShadow: '-16px 0 0 0 var(--gs-surface)',
   },
   '.cm-activeLine': { backgroundColor: 'var(--gs-raise)' },
   // Same tints the diff columns use, so a line the reader just typed reads as

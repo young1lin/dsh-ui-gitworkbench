@@ -457,6 +457,9 @@
   opacity: 0.32;
   transition: opacity 140ms ease;
   pointer-events: none;
+  /* Above the gutter, which CodeMirror stacks at 200. The bar overlays its
+     first two pixels, so at the default z-index an opaque gutter buries it. */
+  z-index: 201;
 }
 .cmHost[data-editable]:focus-within::before { opacity: 1; }
 /* The change nav takes the free space, so it and `.sideActions` after it sit

@@ -618,6 +618,19 @@ describe('the drawer keeps one vocabulary', () => {
     expect(rest.map(decl => `${decl.at} ${decl.selector} { height: ${decl.value} }`)).toEqual([])
   })
 
+  it('keeps the editable rail above the gutter it overlays', () => {
+    // CodeMirror stacks `.cm-gutters` at z-index 200 and the rail overlays its
+    // first two pixels. At the default z-index the rail is behind it, which is
+    // invisible while the gutter is transparent and total once it is not.
+    const rail = ALL.filter(decl =>
+      decl.selector.includes('.cmHost') && decl.selector.includes('::before')
+      && decl.prop === 'z-index')
+    expect(rail.length, 'the rail should declare a z-index').toBeGreaterThan(0)
+    for (const decl of rail) {
+      expect(Number.parseInt(decl.value, 10), `${decl.at} ${decl.selector}`).toBeGreaterThan(200)
+    }
+  })
+
   it('gives every neutral hover the same one colour', () => {
     // `--gs-raise` is the drawer's "the pointer is here" lift. A hover that
     // paints a STATE — a warn tint on Pull, an accent on a picker — is saying

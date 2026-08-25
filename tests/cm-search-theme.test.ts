@@ -214,3 +214,59 @@ describe('the editor actually wears it', () => {
     expect(theme?.[1], 'paneTheme should spread the search panel spec').toContain('...SEARCH_PANEL_THEME')
   })
 })
+
+/**
+ * The gutter is stuck to the pane's edge, so it cannot be transparent.
+ *
+ * `@codemirror/view` writes `position: sticky` onto the gutter as an INLINE
+ * style, which no rule can take back. The numbers therefore hold the left edge
+ * while the code travels sideways under them — and a transparent gutter over
+ * moving code is not a gutter, it is line numbers smeared across whatever
+ * scrolled behind them. The library ships an opaque `#f5f5f5` for exactly this
+ * reason, and a theme that overrides the colour without keeping the opacity
+ * takes the fix out with the colour.
+ *
+ * Nothing about that shows in review: the pane looks right until someone scrolls
+ * a long line, and only then in the one pane wide enough to have long lines.
+ */
+describe('the line-number gutter is opaque', () => {
+  /** Comments stripped before anything is matched: a source scan in this repo
+   *  has twice been satisfied by the prose explaining the thing it looked for. */
+  function code(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  }
+
+  const source = code(readFileSync(
+    fileURLToPath(new URL('../src/client/CodeEditor.tsx', import.meta.url)), 'utf8'))
+
+  /** The declaration block of a selector inside `EditorView.theme({...})`. */
+  function themeRule(selector: string): string {
+    const at = source.indexOf(`'${selector}':`)
+    expect(at, `no theme rule for ${selector}`).toBeGreaterThan(-1)
+    const open = source.indexOf('{', at)
+    return source.slice(open + 1, source.indexOf('}', open))
+  }
+
+  it('fills the gutter rather than letting the code show through it', () => {
+    const gutters = themeRule('.cm-gutters')
+    expect(gutters, 'the gutter must not be see-through').not.toMatch(/backgroundColor:\s*'transparent'/)
+    expect(gutters, 'and it must take its fill from the palette').toMatch(/backgroundColor:\s*'var\(--gs-[a-z0-9-]+\)'/)
+  })
+
+  it('reaches further left than the gutter does', () => {
+    // `left: 0` sticks the gutter to the scrollport's CONTENT box while the pane
+    // clips at its PADDING box, so the code keeps travelling through the pane's
+    // own left padding and surfaces beside the numbers. Measured on the running
+    // app: an 8px strip of `.cm-line` to the left of a filled gutter.
+    const gutters = themeRule('.cm-gutters')
+    expect(gutters, 'the fill must bleed into the pane padding')
+      .toMatch(/boxShadow:\s*'-\d+px 0 0 0 var\(--gs-[a-z0-9-]+\)'/)
+  })
+
+  it('leaves the cells that paint themselves free to paint', () => {
+    // The fill belongs to the CONTAINER. A cell with a colour of its own — the
+    // active line, a line the reader just changed — paints over it, exactly as
+    // it painted over the transparency before.
+    expect(themeRule('.cm-activeLineGutter')).toMatch(/backgroundColor:/)
+  })
+})
