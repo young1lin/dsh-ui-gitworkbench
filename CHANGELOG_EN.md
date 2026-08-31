@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.14] - 2026-08-31
+
+### Fixed
+
+- **The carriage return is drawn now.** Opening a CRLF file in CHANGES showed a wall of changed lines whose two sides looked byte-identical — nothing filtered the file (the tree lists `git status` verbatim), but the CR byte the diff text carries through verbatim gets zero pixels from a browser, so an endings-only rewrite read as "everything changed and nothing shows what". Every carriage return now renders as `␍` (U+240D, the standard picture of the control character — what git's `^M` means to say): the CHANGES side-by-side pane marks each one, and History/Compare's unified view marks the line's end, because word-level highlights are char offsets into the row text that a mid-line glyph would shift. A line without a CR pays one extra `includes` and renders exactly as before. The editor still declines to arm on CRLF (the edit box would normalise the endings, and any save would rewrite the whole file), but both refusal notices — CHANGES and Files — now recommend normalising the file to LF.
+
 ## [0.1.13] - 2026-08-25
 
 ### Added
