@@ -2,7 +2,7 @@
 
 > last_verified_commit: bdc8ad5
 > source_packages:
-> - src/client/**（面板全部）+ src/style-store.ts + src/commit-cache.ts + src/git-log.ts
+> - src/client/**（面板全部）+ src/style-store.ts + src/commit-cache.ts + src/git-log.ts + src/repo-root.ts（仓库根解析）
 
 ## Quick Index
 - Core entry: `src/client/index.ts` 的 `apply(ctx)` → `ctx.slots.inject('conversation.session.header.actions', ...)`
@@ -40,6 +40,7 @@ flowchart LR
 ```
 
 ## Business Rules
+- **git 一律跑在仓库根，不是会话打开的目录**：抽屉里的 path 全是仓库根相对（porcelain status / `--numstat` 无论在哪运行都这么输出），而 pathspec、`:path`、`hash-object` 参数、`ls-tree` 清单、`join(dir, path)` 全相对运行目录解析——两者只在根相等。带路径的 RPC 先 `rootedDirOf`（`src/repo-root.ts` 的 `rootedDir`，`rev-parse --show-toplevel`，非仓库回落原目录）再跑 git；`stats` 把解析并进并行批次，`commitStats` 在缓存探测之后。不缓存解析：子目录里中途 `git init`，下次轮询认新根。守卫：`tests/repo-root.git.test.ts`（git 侧契约）+ `tests/host-rooted-paths.test.ts`（源码扫描布线，已变异测试）（README §6.22）
 - 轮询每次返回**新数组引用**：树展开状态提升到会话级组件，gen 只在手动刷新时 bump（README §6.0c）
 - diff 双上限：整体 `DIFF_CHAR_CAP` 400KB、untracked 合成段 `UNTRACKED_TOTAL_CHAR_CAP` 160KB；单 untracked >1MB 只计数
 - 词级高亮 = 相邻 −/+ 行 token LCS（`attachWordRanges`，>200k 单元格退化整行）；语法色 = Shiki 本地包（`highlight.ts`，语法按需分包）

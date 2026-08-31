@@ -457,6 +457,31 @@ DOM 里**。`page.get_by_text('会话标题')` 于是永远找不到，再怎么
 所以没有重叠」——不是「没有 bug」。按 gutter 自身宽度加一条缝算目标宽度，再
 `scrollLeft = scrollWidth` 滚到底，重叠就一定发生在最坏处。
 
+### 6.22 workspace 打开的是仓库子目录时，Changes 列得出文件、点开全是空白
+
+git 的两种「路径」只在仓库根相等：`git status --porcelain` 和 `git diff --numstat`
+无论在哪个目录运行，输出的都是**仓库根相对**路径（抽屉里的 `path` 全部来自这里）；
+而 pathspec、`:path` 版本语法、`hash-object` 的文件参数、`ls-tree` 的清单，全部相对
+**当前运行目录**解析。会话打开的就是仓库根时两者天然一致；一旦 workspace 打开的是
+子目录（如 git 根在 `C:/mattermost/`、workspace 开在 `C:/mattermost/server`），抽屉就
+成了「树是对的，其余全空」：`diff HEAD -- server/main.go` 在 `server/` 下运行会去找
+`server/server/main.go`，匹配不到，**exit 0、空输出**——点开改动文件一片空白，任何错
+都不报；勾选暂存报 `pathspec did not match`；blame 直接 fatal；`ls-tree` 从子目录吐出
+**剥掉前缀**的清单，路径选择器给历史过滤喂的 pathspec 从此永远匹配不到；宿主侧
+`join(cwd, path)` 读未跟踪文件同样拼出双前缀路径（实测 git for Windows：同一条
+`diff HEAD -- server/main.go`，在根 11 行，在 `server/` 0 行）。
+
+修法：所有带路径的 RPC 先解析一次仓库根（`rev-parse --show-toplevel`，纯模块
+`src/repo-root.ts` 的 `rootedDir`；不在仓库里则回落原目录，让调用方自己的 git 失败
+照旧冒出来），git 与文件读全部在根上做。`stats` 是轮询的，这次解析并进它已有的
+并行批次，墙钟零增加（status/numstat/rev-parse 本就 cwd 无关，仍跑在会话目录）；
+`commitStats` 把解析放在缓存探测之后，命中不多花 spawn。刻意**不缓存**解析结果：
+会话中途在子目录里 `git init`，下一次轮询就该认到新根。守卫两条：
+`tests/repo-root.git.test.ts` 把 git 侧行为逐条钉死（子目录下 pathspec 匹配不到、
+`ls-tree` 剥前缀、`hash-object` 双前缀报错——git 哪天改了行为它会先叫）；
+`tests/host-rooted-paths.test.ts` 源码扫描钉布线（先剥注释；断言带 path 的 @Remote
+恰好十个、每个方法体内必须出现 `rootedDirOf`；已做变异测试，改掉一个方法它会点名）。
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）

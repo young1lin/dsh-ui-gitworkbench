@@ -67,6 +67,7 @@ import {
 } from './discard-ops.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
+import { resolveRepoRoot, rootedDir } from './repo-root.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
@@ -424,10 +425,20 @@ export class GitWorkbenchService extends TypertRemoteService {
     // the browser. The tree and the counters need only `status` and
     // `--numstat`, both of which stay around 110-140ms at that size, and the
     // pane already fetches the file it is actually showing through `fileDiff`.
-    const [statusInfo, numstat, revInfo] = await Promise.all([
+    // The fourth read resolves where the rest of this method must run: the
+    // repository ROOT. The paths this method handles are repository-relative
+    // (that is what porcelain status prints wherever it runs), so the
+    // untracked files read below must be joined against the root — a session
+    // opened at `repo/server` would otherwise look for `repo/server/server/f`.
+    // The three git reads themselves are cwd-INSENSITIVE (their output names
+    // paths from the repository root whatever directory they run in), so they
+    // stay on the session's own directory and the root resolve rides along in
+    // the same batch: the polled call pays for it in wall time not at all.
+    const [statusInfo, numstat, revInfo, root] = await Promise.all([
       this.git(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all'], signal),
       this.git(cwd, ['diff', 'HEAD', '--numstat'], signal),
       this.git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], signal),
+      this.rootedDirOf(worktreePath, signal),
     ])
     if (statusInfo.exitCode !== 0) {
       const detail = statusInfo.stderr.length > 0 ? `: ${statusInfo.stderr}` : ''
@@ -443,7 +454,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     // segments into the payload — is gone with the payload itself; `fileDiff`
     // synthesizes the one segment the reader has actually opened.
     const untracked = files.filter(file => file.status === 'untracked')
-    const measured = await mapPooled(untracked, UNTRACKED_READ_CONCURRENCY, file => measureUntracked(cwd, file.path))
+    const measured = await mapPooled(untracked, UNTRACKED_READ_CONCURRENCY, file => measureUntracked(root, file.path))
 
     for (const [index, file] of untracked.entries()) {
       const measure = measured[index]
@@ -513,33 +524,38 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('fileDiff')
   async fileDiff(worktreePath: string, path: string, commit: string | undefined, base: string | undefined, head: string | undefined, signal: AbortSignal): Promise<{ readonly diff: string }> {
-    const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
     if (typeof path !== 'string' || path.length === 0) return { diff: '' }
+    // The repository root, not the session's directory: the pathspec below
+    // is repository-relative, and git resolves pathspecs against the cwd —
+    // from a subdirectory `diff HEAD -- server/f` looks for
+    // `server/server/f`, matches nothing, and reports an EMPTY diff with
+    // exit 0. (repo-root.ts holds the whole story.)
+    const root = await this.rootedDirOf(worktreePath, signal)
     if (typeof base === 'string' && base.length > 0 && typeof head === 'string' && head.length > 0) {
       if (!isRefName(base) || !isRefName(head)) return { diff: '' }
-      const ranged = await this.git(cwd, ['diff', '--no-renames', `${base}...${head}`, '--', path], signal)
+      const ranged = await this.git(root, ['diff', '--no-renames', `${base}...${head}`, '--', path], signal)
       if (ranged.exitCode === 0) return { diff: ranged.stdout }
       // Unrelated histories have no merge base for `A...B` to diff from; the
       // two-tip diff still answers what differs, exactly as `compareRefs` does.
       if (!isNoMergeBaseError(ranged.stderr)) return { diff: '' }
-      const tips = await this.git(cwd, ['diff', '--no-renames', base, head, '--', path], signal)
+      const tips = await this.git(root, ['diff', '--no-renames', base, head, '--', path], signal)
       return { diff: tips.exitCode === 0 ? tips.stdout : '' }
     }
     if (typeof commit === 'string' && commit.length > 0) {
       if (!COMMIT_HASH.test(commit)) return { diff: '' }
-      const key = cacheKey(cwd, commit, path)
+      const key = cacheKey(root, commit, path)
       const cached = this.commitDiffCache.get(key)
       if (cached !== undefined) return { diff: cached }
       // `--first-parent` for the same reason as in `commitStats`: without it a
       // merge commit has no diff to show and the pane opens empty.
-      const shown = await this.git(cwd, ['show', commit, '--first-parent', '--format=', '--no-renames', '--', path], signal)
+      const shown = await this.git(root, ['show', commit, '--first-parent', '--format=', '--no-renames', '--', path], signal)
       if (shown.exitCode !== 0) return { diff: '' }
       this.commitDiffCache.set(key, shown.stdout)
       return { diff: shown.stdout }
     }
-    const tracked = await this.git(cwd, ['diff', 'HEAD', '--', path], signal)
+    const tracked = await this.git(root, ['diff', 'HEAD', '--', path], signal)
     if (tracked.stdout.trim().length > 0) return { diff: tracked.stdout }
-    return { diff: await untrackedSegment(cwd, path) ?? '' }
+    return { diff: await untrackedSegment(root, path) ?? '' }
   }
 
   /**
@@ -555,7 +571,8 @@ export class GitWorkbenchService extends TypertRemoteService {
    * nothing for them and the unstaged layer falls back to the synthesized
    * new-file segment `fileDiff` already uses.
    *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param worktreePath - directory the session opened; git runs at its
+   *                       repository root. Empty falls back to the host cwd.
    * @param path - repository-relative path, as the drawer lists it.
    * @param layer - `unstaged` (index→worktree) or `staged` (HEAD→index).
    * @param signal - abort signal.
@@ -568,38 +585,41 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (typeof path !== 'string' || !isSafePathArg(path)) {
       throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
     }
-    const cwd = this.cwdOf(worktreePath)
+    // Repository root, not the session's directory: every path below is
+    // repository-relative (pathspecs resolve against the cwd, and so does
+    // the file read for the editor's target). See repo-root.ts.
+    const root = await this.rootedDirOf(worktreePath, signal)
     return layer === 'unstaged'
-      ? await this.unstagedSides(cwd, path, signal)
-      : await this.stagedSides(cwd, path, signal)
+      ? await this.unstagedSides(root, path, signal)
+      : await this.stagedSides(root, path, signal)
   }
 
   /** The unstaged layer: diff index→worktree, target = the working-tree file. */
-  private async unstagedSides(cwd: string, path: string, signal: AbortSignal): Promise<FileSides> {
+  private async unstagedSides(root: string, path: string, signal: AbortSignal): Promise<FileSides> {
     // Size guard first, off the stat rather than a read: declining a file past
     // the cap must not mean loading a pathological one whole first. Bytes are
     // all a stat knows; the line half of the guard needs the read below.
     try {
-      const info = await stat(join(cwd, path))
+      const info = await stat(join(root, path))
       if (info.isFile() && targetTooLarge(info.size, 0)) return { ...emptySides(), tooLarge: true }
     } catch {
       // Missing file: deleted in the working tree, which the diff below states.
     }
     let bytes: Buffer | null = null
     try {
-      bytes = await readFile(join(cwd, path))
+      bytes = await readFile(join(root, path))
     } catch {
       bytes = null
     }
     if (bytes !== null && isBinaryPrefix(bytes, BINARY_SNIFF_BYTES)) {
-      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
+      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(root, path, signal) }
     }
     if (bytes !== null && targetTooLarge(bytes.length, countBufferLines(bytes))) {
       return { ...emptySides(), tooLarge: true }
     }
-    const diff = await this.layerDiffText(cwd, path, 'unstaged', signal)
+    const diff = await this.layerDiffText(root, path, 'unstaged', signal)
     if (binaryDiffOutput(diff)) {
-      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(cwd, path, signal) }
+      return { ...emptySides(), binary: true, targetSha: await this.worktreeBlobSha(root, path, signal) }
     }
     // The diff half of the guard, AFTER the artifact exists: the target-side
     // checks above cannot see a worktree-deleted large file (no target to
@@ -610,7 +630,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       diff,
       diffSha: sha1Hex(diff),
       targetText: bytes === null ? '' : bytes.toString('utf8'),
-      targetSha: bytes === null ? '' : await this.worktreeBlobSha(cwd, path, signal),
+      targetSha: bytes === null ? '' : await this.worktreeBlobSha(root, path, signal),
       binary: false,
       tooLarge: false,
       // Only the unstaged layer can report this, and only it needs to: the
@@ -620,11 +640,11 @@ export class GitWorkbenchService extends TypertRemoteService {
   }
 
   /** The staged layer: diff HEAD→index, target = the index blob. */
-  private async stagedSides(cwd: string, path: string, signal: AbortSignal): Promise<FileSides> {
+  private async stagedSides(root: string, path: string, signal: AbortSignal): Promise<FileSides> {
     // `:path` resolves the stage-0 index entry: the target text when it exists,
     // and a failed resolution (no entry) is the empty target, not an error.
-    const shown = await this.git(cwd, ['show', `:${path}`], signal)
-    const sha = (await this.git(cwd, ['rev-parse', '--verify', '--quiet', `:${path}`], signal)).stdout.trim()
+    const shown = await this.git(root, ['show', `:${path}`], signal)
+    const sha = (await this.git(root, ['rev-parse', '--verify', '--quiet', `:${path}`], signal)).stdout.trim()
     const targetText = shown.exitCode === 0 ? shown.stdout : ''
     const targetBytes = Buffer.from(targetText, 'utf8')
     if (targetText.length > 0 && isBinaryPrefix(targetBytes, BINARY_SNIFF_BYTES)) {
@@ -633,7 +653,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (targetTooLarge(targetBytes.length, countBufferLines(targetBytes))) {
       return { ...emptySides(), tooLarge: true, targetSha: sha }
     }
-    const diff = await this.layerDiffText(cwd, path, 'staged', signal)
+    const diff = await this.layerDiffText(root, path, 'staged', signal)
     if (binaryDiffOutput(diff)) {
       return { ...emptySides(), binary: true, targetSha: sha }
     }
@@ -655,8 +675,8 @@ export class GitWorkbenchService extends TypertRemoteService {
   }
 
   /** Blob sha of the working-tree file, '' when git cannot hash it. */
-  private async worktreeBlobSha(cwd: string, path: string, signal: AbortSignal): Promise<string> {
-    const hashed = await this.git(cwd, ['hash-object', '--', path], signal)
+  private async worktreeBlobSha(root: string, path: string, signal: AbortSignal): Promise<string> {
+    const hashed = await this.git(root, ['hash-object', '--', path], signal)
     return hashed.exitCode === 0 ? hashed.stdout.trim() : ''
   }
 
@@ -669,19 +689,19 @@ export class GitWorkbenchService extends TypertRemoteService {
    * its own fresh fetch, so the two ends of the stale comparison are over the
    * SAME text by construction, not by two fetch sites staying in step.
    */
-  private async layerDiffText(cwd: string, path: string, layer: 'unstaged' | 'staged', signal: AbortSignal): Promise<string> {
+  private async layerDiffText(root: string, path: string, layer: 'unstaged' | 'staged', signal: AbortSignal): Promise<string> {
     if (layer === 'staged') {
-      return (await this.git(cwd, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+      return (await this.git(root, ['diff', '--cached', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
     }
-    const diff = (await this.git(cwd, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
+    const diff = (await this.git(root, ['diff', `-U${FULL_CONTEXT}`, '--', path], signal)).stdout
     // Untracked files have no index entry, so `git diff` reports nothing for
     // them; the synthesized new-file segment is their unstaged diff. The
     // trailing newline is added here because every diff git prints carries
     // one: this text is what `applyBlocks` re-emits as a patch file, and a
     // patch whose last line has no LF is "corrupt patch" to `git apply` —
     // which is exactly what a real-git drive of the untracked path caught.
-    if (diff.length === 0 && await this.isUntracked(cwd, path, signal)) {
-      const segment = await untrackedSegment(cwd, path, SIDE_BYTE_CAP)
+    if (diff.length === 0 && await this.isUntracked(root, path, signal)) {
+      const segment = await untrackedSegment(root, path, SIDE_BYTE_CAP)
       return segment === null ? '' : `${segment}\n`
     }
     return diff
@@ -700,7 +720,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * shared with `fileSides`, and the tmpfile pair. Every failure comes back as
    * a result — the method never throws across the RPC boundary.
    *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param layer - the layer the block was selected on; the mode decides which
    *                one that may be.
@@ -712,14 +732,16 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('applyBlocks')
   async applyBlocks(worktreePath: string, path: string, layer: string, diffSha: string, lines: readonly number[], mode: string, signal: AbortSignal): Promise<GitOpResult> {
-    const cwd = this.cwdOf(worktreePath)
+    // The repository root — the patch's pathspecs are repository-relative
+    // and `git apply` resolves them against the cwd (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     const io: ApplyBlocksIo = {
       git: (dir, argv) => this.git(dir, argv, signal),
-      layerDiff: (file, which) => this.layerDiffText(cwd, file, which === 'staged' ? 'staged' : 'unstaged', signal),
+      layerDiff: (file, which) => this.layerDiffText(root, file, which === 'staged' ? 'staged' : 'unstaged', signal),
       writePatch: writeTmpPatch,
       dropPatch: dropTmpPatch,
     }
-    return runApplyBlocks(io, cwd, path, layer, String(diffSha ?? ''), lines, mode)
+    return runApplyBlocks(io, root, path, layer, String(diffSha ?? ''), lines, mode)
   }
 
   /**
@@ -741,7 +763,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * check and this method are one thing, and no unchecked write RPC exists or
    * may be added in this plugin.
    *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param text - the editor buffer, verbatim; written as bytes (LF as given).
    * @param expectedSha - the `targetSha` the buffer was opened with ('' when
@@ -751,7 +773,10 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('writeChecked')
   async writeChecked(worktreePath: string, path: string, text: string, expectedSha: string, signal: AbortSignal): Promise<WriteResult> {
-    const cwd = this.cwdOf(worktreePath)
+    // The repository root — the save target joins the same base every
+    // other path here is relative to, and that base is the root, not the
+    // directory the session opened (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     const io: WriteCheckedIo = {
       git: (dir, argv) => this.git(dir, argv, signal),
       exists: async p => {
@@ -768,7 +793,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       remove: async p => { await rm(p, { force: true }) },
       delay: ms => new Promise(resolve => { setTimeout(resolve, ms) }),
     }
-    return runWriteChecked(io, cwd, path, typeof text === 'string' ? text : '', typeof expectedSha === 'string' ? expectedSha : '')
+    return runWriteChecked(io, root, path, typeof text === 'string' ? text : '', typeof expectedSha === 'string' ? expectedSha : '')
   }
 
   /**
@@ -780,7 +805,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * rather than missing. Read-only, no index or worktree is touched, so this
    * needs none of the confirmation machinery the write paths carry.
    *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param signal - abort signal.
    */
@@ -789,10 +814,13 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (typeof path !== 'string' || !isSafePathArg(path)) {
       return { lines: [], truncated: false, error: `unsafe path argument: ${JSON.stringify(path)}` }
     }
-    const cwd = this.cwdOf(worktreePath)
+    // The repository root: blame's pathspec resolves against the cwd, and
+    // from a subdirectory the repository-relative path doubles up
+    // (`server/server/f`) into a fatal "no such path" (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     // `--` keeps a path that looks like a revision from being read as one, as
     // every other pathspec in this plugin does.
-    const run = await this.git(cwd, ['blame', '--line-porcelain', '--', path], signal)
+    const run = await this.git(root, ['blame', '--line-porcelain', '--', path], signal)
     if (run.exitCode !== 0) {
       // An untracked file has no blame, and git says so; that message is the
       // honest thing to show rather than an empty gutter.
@@ -826,7 +854,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    *
    * Read-only — nothing is spawned, nothing is written.
    *
-   * @param worktreePath - directory to run in; empty falls back to the host cwd.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param signal - abort signal.
    */
@@ -835,7 +863,9 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (typeof path !== 'string' || !isSafePathArg(path)) {
       throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
     }
-    const full = join(this.cwdOf(worktreePath), path)
+    // The repository root — the image is read from disk at the same base
+    // every other path in this plugin is relative to (repo-root.ts).
+    const full = join(await this.rootedDirOf(worktreePath, signal), path)
     let size = 0
     try {
       const info = await stat(full)
@@ -871,10 +901,10 @@ export class GitWorkbenchService extends TypertRemoteService {
    * Those are the files whose diff has to be synthesized rather than asked of
    * `git diff`, which reports nothing for them.
    */
-  private async isUntracked(cwd: string, path: string, signal: AbortSignal): Promise<boolean> {
-    const listed = await this.git(cwd, ['ls-files', '--', path], signal)
+  private async isUntracked(root: string, path: string, signal: AbortSignal): Promise<boolean> {
+    const listed = await this.git(root, ['ls-files', '--', path], signal)
     if (listed.exitCode !== 0 || listed.stdout.trim().length > 0) return false
-    const head = await this.git(cwd, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`], signal)
+    const head = await this.git(root, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`], signal)
     return head.exitCode !== 0
   }
 
@@ -909,11 +939,17 @@ export class GitWorkbenchService extends TypertRemoteService {
     // empty pane. Against the first parent the answer is well defined and is the
     // useful one: what this merge brought into the branch it landed on. On a
     // single-parent commit the flag is a no-op, byte for byte.
+    // The repository root: no pathspec here today, but the cache key below
+    // must describe the same repository to a later caller, and running from
+    // the root is the one rule every read in this plugin follows
+    // (repo-root.ts). Resolved after the cache probe so a hit spawns
+    // nothing.
+    const root = await this.rootedDirOf(worktreePath, signal)
     const [meta, numstat, nameStatus, patch] = await Promise.all([
-      this.git(cwd, ['show', hash, '--no-patch', `--format=${LOG_FORMAT}`], signal),
-      this.git(cwd, ['show', hash, '--first-parent', '--numstat', '--format=', '--no-renames'], signal),
-      this.git(cwd, ['show', hash, '--first-parent', '--name-status', '--format=', '--no-renames'], signal),
-      this.git(cwd, ['show', hash, '--first-parent', '--format=', '--no-renames'], signal),
+      this.git(root, ['show', hash, '--no-patch', `--format=${LOG_FORMAT}`], signal),
+      this.git(root, ['show', hash, '--first-parent', '--numstat', '--format=', '--no-renames'], signal),
+      this.git(root, ['show', hash, '--first-parent', '--name-status', '--format=', '--no-renames'], signal),
+      this.git(root, ['show', hash, '--first-parent', '--format=', '--no-renames'], signal),
     ])
     if (meta.exitCode !== 0) {
       const detail = meta.stderr.length > 0 ? `: ${meta.stderr}` : ''
@@ -979,6 +1015,10 @@ export class GitWorkbenchService extends TypertRemoteService {
     const from = Number.isInteger(skip) && skip >= 0 ? skip : 0
     const size = Number.isInteger(limit) && limit > 0 && limit <= HISTORY_PAGE_MAX ? limit : HISTORY_PAGE
     const effective = filter ?? emptyLogFilter()
+    // The repository root: a filter's pathspec is repository-relative, and
+    // git resolves pathspecs against the cwd — from a subdirectory a
+    // filtered history silently comes back EMPTY with exit 0 (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     // Reading one row beyond the page answers "is there more" without a second
     // traversal of the log.
     //
@@ -992,7 +1032,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     // Filter args go LAST: their segment ends with `--` + pathspecs, and
     // nothing after that separator may be parsed as a flag.
     const log = await this.git(
-      cwd,
+      root,
       ['log', target, '--topo-order', `--skip=${from}`, `-${size + 1}`, `--pretty=format:${LOG_FORMAT}`, ...logFilterArgs(effective)],
       signal,
     )
@@ -1042,8 +1082,12 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('repoTree')
   async repoTree(worktreePath: string, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean }> {
-    const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
-    const res = await this.git(cwd, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], signal)
+    // The repository root: unlike status and numstat, `ls-tree` prints
+    // cwd-RELATIVE paths — from a subdirectory every entry would lose the
+    // `server/` prefix and the picker would feed the log filter pathspecs
+    // that match nothing (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
+    const res = await this.git(root, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], signal)
     const all = res.stdout.split('\0').filter(path => path.length > 0)
     const truncated = all.length > TREE_PATH_CAP
     return { paths: truncated ? all.slice(0, TREE_PATH_CAP) : all, truncated }
@@ -1358,25 +1402,31 @@ export class GitWorkbenchService extends TypertRemoteService {
 
   /**
    * Add paths to the index.
-   * @param worktreePath - directory to run in.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param paths - repository-relative paths; an empty list is refused rather
    *                than turned into a whole-tree `git add`.
    * @param signal - abort signal.
    */
   @Remote('stage')
   async stage(worktreePath: string, paths: readonly string[], signal: AbortSignal): Promise<GitOpResult> {
-    return this.writeOp(worktreePath, () => stageArgv(asPathList(paths)), signal)
+    // The repository root: `git add` resolves its pathspecs against the cwd,
+    // and from a subdirectory a repository-relative path dies with
+    // "pathspec did not match any files" (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
+    return this.writeOp(root, () => stageArgv(asPathList(paths)), signal)
   }
 
   /**
    * Remove paths from the index, leaving the working tree untouched.
-   * @param worktreePath - directory to run in.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param paths - repository-relative paths.
    * @param signal - abort signal.
    */
   @Remote('unstage')
   async unstage(worktreePath: string, paths: readonly string[], signal: AbortSignal): Promise<GitOpResult> {
-    return this.writeOp(worktreePath, () => unstageArgv(asPathList(paths)), signal)
+    // Same rule as `stage` — the pathspecs are repository-relative.
+    const root = await this.rootedDirOf(worktreePath, signal)
+    return this.writeOp(root, () => unstageArgv(asPathList(paths)), signal)
   }
 
   /**
@@ -1388,7 +1438,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * cannot come back" is exactly the difference the reader is being asked
    * about. So the dialog is built from this, read fresh, rather than from the
    * row that was clicked.
-   * @param worktreePath - directory to run in.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param signal - abort signal.
    * @returns the effect and whether it is irreversible; `effect` is absent when
@@ -1401,9 +1451,12 @@ export class GitWorkbenchService extends TypertRemoteService {
     previousPath?: string
     error?: string
   }> {
+    // The repository root — the plan's argv and delete paths are
+    // repository-relative (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     let plan: DiscardPlan | null
     try {
-      plan = await this.planDiscard(worktreePath, path, signal)
+      plan = await this.planDiscard(root, path, signal)
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
@@ -1427,7 +1480,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * it. `expectedEffect` is what the reader was shown and agreed to: if the
    * file changed underneath the dialog — staged, edited, reverted by someone
    * else — the freshly derived effect no longer matches and nothing is done.
-   * @param worktreePath - directory to run in.
+   * @param worktreePath - directory the session opened; git runs at its repository root.
    * @param path - repository-relative path, as the drawer lists it.
    * @param expectedEffect - the effect the confirmation stated; blank skips
    *                         the agreement check, which only the reversible
@@ -1437,9 +1490,13 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('discardFile')
   async discardFile(worktreePath: string, path: string, expectedEffect: string | undefined, signal: AbortSignal): Promise<GitOpResult & { effect?: DiscardEffect }> {
+    // The repository root, resolved ONCE for the plan and the steps alike:
+    // every step's argv and delete path came out of a whole-tree porcelain
+    // status, so they are repository-relative (repo-root.ts).
+    const root = await this.rootedDirOf(worktreePath, signal)
     let plan: DiscardPlan | null
     try {
-      plan = await this.planDiscard(worktreePath, path, signal)
+      plan = await this.planDiscard(root, path, signal)
     } catch (error) {
       return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
     }
@@ -1454,10 +1511,9 @@ export class GitWorkbenchService extends TypertRemoteService {
       }
     }
 
-    const cwd = this.cwdOf(worktreePath)
     for (const step of plan.steps) {
       if (step.kind === 'git') {
-        const result = await this.git(cwd, step.argv, signal)
+        const result = await this.git(root, step.argv, signal)
         const failure = classifyFailure(result.exitCode, result.stderr, result.stdout)
         if (failure !== null) {
           return { ok: false, failure, error: (result.stderr || result.stdout).trim().slice(-1000) }
@@ -1465,7 +1521,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         continue
       }
       try {
-        await removePathInside(cwd, step.path)
+        await removePathInside(root, step.path)
       } catch (error) {
         return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
       }
@@ -1481,12 +1537,14 @@ export class GitWorkbenchService extends TypertRemoteService {
    * reports `D` plus `??` instead — which plans as "restore one, DELETE the
    * other" where the truth is "undo the rename".
    */
-  private async planDiscard(worktreePath: string, path: string, signal: AbortSignal): Promise<DiscardPlan | null> {
+  private async planDiscard(root: string, path: string, signal: AbortSignal): Promise<DiscardPlan | null> {
     if (typeof path !== 'string' || !isSafePathArg(path)) {
       throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
     }
-    const cwd = this.cwdOf(worktreePath)
-    const status = await this.git(cwd, ['status', '--porcelain=v1', '--untracked-files=all'], signal)
+    // Runs at the repository root the caller resolved: the plan's paths
+    // must agree with the directory its steps execute in, and with the
+    // client's `path`, which the drawer lists repository-relative.
+    const status = await this.git(root, ['status', '--porcelain=v1', '--untracked-files=all'], signal)
     if (status.exitCode !== 0) {
       throw new Error((status.stderr || status.stdout).trim().slice(-1000) || 'git status failed')
     }
@@ -1502,7 +1560,8 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('commit')
   async commit(worktreePath: string, message: string, amend: boolean | undefined, signal: AbortSignal): Promise<GitOpResult> {
-    return this.writeOp(worktreePath, () => commitArgv(String(message ?? ''), amend === true), signal)
+    // No pathspec in this argv — the session's own directory suffices.
+    return this.writeOp(this.cwdOf(worktreePath), () => commitArgv(String(message ?? ''), amend === true), signal)
   }
 
   /**
@@ -1513,7 +1572,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('fetch')
   async fetch(worktreePath: string, signal: AbortSignal): Promise<GitOpResult & { tracking?: Tracking }> {
-    const result = await this.writeOp(worktreePath, () => fetchArgv(), signal, NETWORK_GRACE_MS)
+    const result = await this.writeOp(this.cwdOf(worktreePath), () => fetchArgv(), signal, NETWORK_GRACE_MS)
     if (!result.ok) return result
     // The point of fetching is the count it produces, so report it in the same
     // round trip rather than making the client ask again.
@@ -1531,7 +1590,7 @@ export class GitWorkbenchService extends TypertRemoteService {
   @Remote('pull')
   async pull(worktreePath: string, mode: string | undefined, signal: AbortSignal): Promise<GitOpResult> {
     const chosen: PullMode = mode === 'rebase' || mode === 'merge' ? mode : 'ff-only'
-    return this.writeOp(worktreePath, () => pullArgv(chosen), signal, NETWORK_GRACE_MS)
+    return this.writeOp(this.cwdOf(worktreePath), () => pullArgv(chosen), signal, NETWORK_GRACE_MS)
   }
 
   /**
@@ -1550,12 +1609,18 @@ export class GitWorkbenchService extends TypertRemoteService {
     const tracking = parseTracking(status.stdout)
     if (tracking.detached) return { ok: false, failure: 'unknown', error: 'HEAD is detached; nothing to push' }
     if (tracking.branch.length === 0) return { ok: false, failure: 'unknown', error: 'no branch to push' }
-    return this.writeOp(worktreePath, () => pushArgv(tracking.branch, tracking.upstream !== null), signal, NETWORK_GRACE_MS)
+    return this.writeOp(this.cwdOf(worktreePath), () => pushArgv(tracking.branch, tracking.upstream !== null), signal, NETWORK_GRACE_MS)
   }
 
-  /** Shared shape for every write op: run it, classify what went wrong. */
+  /** Shared shape for every write op: run it, classify what went wrong.
+   *
+   * Takes the DIRECTORY to run in, already resolved: callers carrying
+   * repository-relative pathspecs pass the rooted directory
+   * ({@link GitWorkbenchService.rootedDirOf}); pathspec-free operations may
+   * pass the session's own directory.
+   */
   private async writeOp(
-    worktreePath: string,
+    dir: string,
     build: () => readonly string[],
     signal: AbortSignal,
     graceMs?: number,
@@ -1568,7 +1633,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       // list or a blank commit message takes.
       return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
     }
-    const result = await this.git(this.cwdOf(worktreePath), argv, signal, graceMs)
+    const result = await this.git(dir, argv, signal, graceMs)
     const failure = classifyFailure(result.exitCode, result.stderr, result.stdout)
     if (failure === null) return { ok: true, output: result.stdout.trim().slice(-1000) }
     // The classification is a hint; the real text rides along beside it, because
@@ -1637,10 +1702,25 @@ export class GitWorkbenchService extends TypertRemoteService {
   }
 
   /** Resolve the repo root for a directory (null when not a git repo). Always forward slashes. */
-  private async repoRootOf(cwd: string, signal: AbortSignal): Promise<string | null> {
-    const out = await this.git(cwd, ['rev-parse', '--show-toplevel'], signal)
-    if (out.exitCode !== 0) return null
-    return out.stdout.trim().replace(/\\/g, '/') || null
+  private repoRootOf(cwd: string, signal: AbortSignal): Promise<string | null> {
+    return resolveRepoRoot((dir, argv) => this.git(dir, argv, signal), cwd)
+  }
+
+  /**
+   * The directory to run git in and join paths against for a session's
+   * `worktreePath`: the repository ROOT, falling back to the directory
+   * itself outside a repository (the caller's own git run then fails the
+   * way it always did, and that error is the honest one to show).
+   *
+   * The drawer's paths are repository-relative — porcelain status and
+   * `--numstat` print them that way wherever they run — while pathspecs,
+   * `:path` revisions, `hash-object` arguments and `join(dir, path)` all
+   * resolve against the directory a command runs in. Those two halves only
+   * agree at the root, so every method that carries a path runs there.
+   * `repo-root.ts` tells the whole story, with the probes that caught it.
+   */
+  private rootedDirOf(worktreePath: string | undefined, signal: AbortSignal): Promise<string> {
+    return rootedDir((dir, argv) => this.git(dir, argv, signal), this.cwdOf(worktreePath))
   }
 
   /**
@@ -1718,14 +1798,14 @@ interface UntrackedMeasure {
  * count newlines is the expensive half of this pass, and most untracked files
  * never reach the bundled diff. Never throws; an unreadable file reports zero
  * lines and nothing to diff.
- * @param cwd - worktree the path is relative to.
+ * @param root - repository root the path is relative to.
  * @param path - repository-relative file path.
  * @returns the file's line count, binary flag, and whether a diff may be built.
  */
-async function measureUntracked(cwd: string, path: string): Promise<UntrackedMeasure> {
+async function measureUntracked(root: string, path: string): Promise<UntrackedMeasure> {
   let bytes: Buffer
   try {
-    bytes = await readFile(join(cwd, path))
+    bytes = await readFile(join(root, path))
   } catch {
     return { lineCount: 0, binary: false, diffable: false }
   }
@@ -1742,16 +1822,16 @@ async function measureUntracked(cwd: string, path: string): Promise<UntrackedMea
  *
  * `git diff --no-index /dev/null <f>` is NOT used: on Windows git resolves
  * `/dev/null` as a repo-relative path. Never throws.
- * @param cwd - worktree the path is relative to.
+ * @param root - repository root the path is relative to.
  * @param path - repository-relative file path.
  * @param byteCap - refuse files larger than this; defaults to the stats
  *                  payload's budget, which `fileSides` raises to its own.
  * @returns the segment, or null when the file is missing, binary, or oversized.
  */
-async function untrackedSegment(cwd: string, path: string, byteCap: number = UNTRACKED_FILE_BYTE_CAP): Promise<string | null> {
+async function untrackedSegment(root: string, path: string, byteCap: number = UNTRACKED_FILE_BYTE_CAP): Promise<string | null> {
   let bytes: Buffer
   try {
-    bytes = await readFile(join(cwd, path))
+    bytes = await readFile(join(root, path))
   } catch {
     return null
   }
