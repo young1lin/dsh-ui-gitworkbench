@@ -2,6 +2,13 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.15] - 2026-08-31
+
+### 修复
+
+- **workspace 打开的是仓库子目录时，变更页的每个文件都能打开了。** 此前树是对的、点开全空白：抽屉里的路径全部来自 `git status` / `git diff --numstat`，它们无论在哪个目录运行，输出的都是仓库根相对路径；而 diff 的 pathspec、`:path`、blame、`hash-object`、`ls-tree` 清单和宿主侧的文件读取，全部相对命令的运行目录解析——两种「相对」只在仓库根重合。git 根在 `C:/mattermost/`、workspace 开在 `C:/mattermost/server` 时，`diff HEAD -- server/main.go` 在 `server/` 下运行会去找 `server/server/main.go`，匹配不到并以 exit 0 返回空输出；勾选暂存报 pathspec 不匹配，blame 直接失败，历史按路径过滤永远为空，路径选择器给出的树也缺着前缀。现在每个带路径的 RPC 先解析一次仓库根（`rev-parse --show-toplevel`，不在仓库里则原样回落、让调用方自己的 git 错误照旧冒出来），git 与文件读全部在根上进行；`stats` 的轮询把这次解析并进已有的并行批次，墙钟时间不变。实测（git for Windows，git 根与打开的 workspace 分处两级的 fixture）：同一条 diff 在根 11 行、在子目录 0 行，修复后所有视图都从根读取。
+- **peer 依赖范围跟上了当前 dsh 版本线。** 四个 `@deepseek-ai/*` peer 从 `^0.1.0-rc.2` 提到 `^0.1.1-rc.2`（当前发布并在跑的线）。带预发布号的 semver range 只匹配同 `主.次.补丁` 三元组的预发布版本，所以旧范围对 `0.1.1-rc.2` 实际是「不满足」——peer 在场时的兼容性检查会误报。`cordis` 的 `^4.0.1-rc.1` 已覆盖稳定版 `4.0.1`，不动。
+
 ## [0.1.14] - 2026-08-31
 
 ### 修复

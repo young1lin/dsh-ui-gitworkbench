@@ -2,6 +2,13 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.15] - 2026-08-31
+
+### Fixed
+
+- **Every file opens from the Changes tab when the workspace is a subdirectory of the repository.** The tree was right and the pane was blank: the drawer's paths all come from `git status` / `git diff --numstat`, which print repository-relative paths wherever they run, while diff pathspecs, `:path` revisions, blame, `hash-object`, `ls-tree` listings and the host's own file reads all resolve against the directory the command runs in — and the two notions of "relative" agree only at the root. With the git root at `C:/mattermost/` and the workspace opened at `C:/mattermost/server`, `diff HEAD -- server/main.go` run from `server/` looked for `server/server/main.go`, matched nothing, and came back exit 0 with empty output; the stage tick died on "pathspec did not match", blame went fatal, a path-filtered history came back empty, and the path picker's tree lost its prefix. Every path-carrying RPC now resolves the repository root once (`rev-parse --show-toplevel`, falling back to the directory itself outside a repository so the caller's own git error still surfaces) and runs git and file reads there; the polled `stats` folds the resolve into its existing parallel batch, so its wall time is unchanged. Measured on git for Windows with a fixture whose git root and opened workspace sit two levels apart: the same diff was 11 lines from the root and 0 from the subdirectory, and every view now reads through the root.
+- **The peer dependency ranges catch up with the current dsh line.** The four `@deepseek-ai/*` peers move from `^0.1.0-rc.2` to `^0.1.1-rc.2` — the line currently published and running. A semver range with a prerelease only matches prereleases of the same `major.minor.patch` tuple, so the old range actually FAILED against `0.1.1-rc.2`, making the compatibility check that runs when a peer is present report a mismatch. `cordis` stays at `^4.0.1-rc.1`, which already covers the stable `4.0.1`.
+
 ## [0.1.14] - 2026-08-31
 
 ### Fixed
