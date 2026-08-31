@@ -279,6 +279,14 @@
 
 .wordAdd { background: var(--gs-add-word); border-radius: 2px; }
 .wordDel { background: var(--gs-del-word); border-radius: 2px; }
+/* A carriage return, drawn. The diff's text carries the CR byte through
+   verbatim and a browser paints nothing for it, so a line whose only change
+   is its ending rendered as two identical-looking cells; the glyph (U+240D,
+   the picture of the control character — `cr-mark.ts`) makes the ending
+   visible wherever the diff paints one. Dim and slightly small so a whole
+   CRLF file reads as code with quiet markers, not as a wall of symbols, and
+   unselectable so copying a line copies code. */
+.crMark { color: var(--gs-fg-faint); font-size: 0.9em; user-select: none; }
 
 /* Side-by-side diff pane. One grid holds EVERY row's four cells — a per-row
    grid would let the column boundary drift with each row's content, and a

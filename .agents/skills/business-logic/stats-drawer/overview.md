@@ -43,6 +43,7 @@ flowchart LR
 - 轮询每次返回**新数组引用**：树展开状态提升到会话级组件，gen 只在手动刷新时 bump（README §6.0c）
 - diff 双上限：整体 `DIFF_CHAR_CAP` 400KB、untracked 合成段 `UNTRACKED_TOTAL_CHAR_CAP` 160KB；单 untracked >1MB 只计数
 - 词级高亮 = 相邻 −/+ 行 token LCS（`attachWordRanges`，>200k 单元格退化整行）；语法色 = Shiki 本地包（`highlight.ts`，语法按需分包）
+- **回车必须画出来**（`cr-mark.ts`）：diff 行文本原样携带 CR 字节（按块暂存/撤回的 patch 往返需要它），而浏览器对 CR 不着墨——只改行尾的变更两侧渲染成一模一样的文本。渲染时在每个 CR 处画 U+240D `␍`：side pane 逐个交错（它没有按字符偏移定位的浮层）；unified 只画行尾（词级范围是行内字符偏移，行中插字形会推偏它们）。无 CR 的行只多付一次 `includes`。编辑仍拒绝 CRLF（`armRefusal`），两条拒绝提示（`crlfNotice`/`fileReadOnlyCrlf`）都建议统一成 LF
 - 主题 7 族 × 亮暗（`themes.ts` `THEME_FAMILIES` ↔ CSS `[data-gs-theme]` 选择器，`tests/theme-palettes.test.ts` 互扣）；明暗默认跟随 dsh 宿主 `body` 属性而非 `prefers-color-scheme`
 - **每套调色板必须定义完整核心 token 集**：漏一个不报错——它会继承上一主题留在 `.overlay` 上的值，渲染成两主题混色（`theme-palettes.test.ts` 守完整性）。GitHub 两套逐值对住 Primer `diffBlob`（暗色 alpha 已在 `#0d1117` 上拍平，见 `drawer-chrome.test.ts` 的 `GITHUB_DIFF`）；IDEA 套读自 New UI 界面而非公开 token 文件，精度不同（源码注释写明）
 - **同步条把状态穿在按钮上**：`behind>0` → Pull 染 `--gs-warn` 且计数进按钮；`ahead>0` → Push 染 `--gs-add`；无 upstream → 首推变实心 Publish（accent）；Fetch **永远中性**（只读无新闻可报，`.btnFetch` 变体被测试禁止存在——留一个安静，另两个才读得出是信号）。pull 策略选择器焊在 Pull 上（segmented）：它是 Pull 的参数，不是第三个动作。变体类 `btnAhead/btnBehind/btnPrimary/headerPicker` 只染色绝不声明几何（height/padding/font-size/border-radius/line-height）
@@ -73,6 +74,7 @@ flowchart LR
 - **对源码文本做断言的三条纪律**（本仓库已两次被注释骗过）：先剥注释（CSS/TSX 注释会被吞进"选择器"或被数成出现次数）；miss 读作 pass，必须 `rules.length > 0` 兜底（曾因正则限定后循环跑零次而"全绿"）；新断言做变异验证（改掉被守代码确认变红）
 - Playwright 对此 UI：禁 `networkidle`（长连 WebSocket）；哈希类名用 `[class*=local]`；无头默认英文词典（zh/en 双匹配）
 - 客户端 `@deepseek-ai/*` 必须 `import type`（bundle 纯度门）
+- **CRLF「不显示」是渲染问题，不是过滤**：CHANGES 树逐字来自 `git status`（不过滤行尾），CRLF 文件一定在列表里；「看不见」的是 CR 字节本身——HTML 文本节点里 CR 零宽，行尾改写在视觉上等于没发生（实测：LF→CRLF 整文件改写，3 行 change 行左右两侧文本逐字节相同）。修法是把字节画出来（`cr-mark.ts`），**不是**剥掉它——剥掉会毁掉 patch 往返，且 `core.autocrlf=true` 的检出里 git 的 diff 本来就干净，剥行尾救不了那种「diff 干净但磁盘是 CRLF」的编辑拒绝
 - `commitStats` 才缓存（hash 寻址不可变）；`stats` 绝不缓存（工作区随时变）
 
 ## Related Docs

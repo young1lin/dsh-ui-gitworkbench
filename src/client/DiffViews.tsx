@@ -4,6 +4,7 @@ import {
 } from 'react'
 
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
+import { CR, CR_GLYPH, splitOnCr } from './cr-mark.ts'
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, allBlockLines, allBlockTally, blockActionsDisabled, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, currentActionBlock, needsFirstBlockClearance, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import { anchorFor, blockNearestTo, blockTopsFromRows, blockTopsFromSideRows, countBlocks, scrollTopFor, stepBlockIndex, unifiedBlocks } from './diff-nav.ts'
@@ -170,14 +171,25 @@ function rowClass(kind: Row['kind']): string {
 function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactNode {
   if (row.kind === 'hunk') return row.text
   const painted = overlayRanges(tokens.length > 0 ? tokens : [{ text: row.text }], row.ranges ?? [])
-  if (painted.length === 1 && painted[0]!.color === undefined && !painted[0]!.mark) return row.text
-  return painted.map((tok, i) => (
-    <span
-      key={i}
-      className={tok.mark ? (row.kind === 'add' ? css.wordAdd : css.wordDel) : undefined}
-      style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
-    >{tok.text}</span>
-  ))
+  // The trailing-CR marker rides AFTER everything painted: word ranges are
+  // char offsets into the row text, so a mid-line glyph would shift them.
+  // Mid-line CRs (a CR-only file) stay invisible here; the side pane draws those.
+  const crTail = row.text.endsWith(CR)
+    ? <span className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>
+    : null
+  if (painted.length === 1 && painted[0]!.color === undefined && !painted[0]!.mark) {
+    return crTail === null ? row.text : <>{row.text}{crTail}</>
+  }
+  return (<>
+    {painted.map((tok, i) => (
+      <span
+        key={i}
+        className={tok.mark ? (row.kind === 'add' ? css.wordAdd : css.wordDel) : undefined}
+        style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
+      >{tok.text}</span>
+    ))}
+    {crTail}
+  </>)
 }
 
 /* ---------- side-by-side diff rendering (working tree only) ---------- */
@@ -1043,16 +1055,33 @@ function sideCodeClass(row: SideRow, side: 'left' | 'right'): string {
   return `${side === 'left' ? css.sideCodeDel : css.sideCodeAdd} ${css.sideCellBlock}`
 }
 
-/** One cell's Shiki runs, or its plain text when no tokens exist. */
+/** One text with every carriage return drawn as the CR glyph. No CR means
+ * the text comes back untouched — the common line, on both sides, costs one
+ * `includes`. The glyph spans are aria-hidden and unselectable, so copying a
+ * line copies code, not markers. */
+function renderWithCrMarks(text: string): ReactNode {
+  const parts = splitOnCr(text)
+  if (parts.length === 1) return text
+  const out: ReactNode[] = [parts[0]!]
+  for (let i = 1; i < parts.length; i += 1) {
+    out.push(<span key={`cr${i}`} className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>)
+    out.push(parts[i]!)
+  }
+  return out
+}
+
+/** One cell's Shiki runs, or its plain text when no tokens exist; either way
+ * each carriage return in the cell is drawn, so a line whose only change is
+ * its ending shows the difference instead of two identical-looking cells. */
 function renderSideCode(cell: SideCell | null, tokens: readonly HighlightRun[] | undefined): ReactNode {
   if (cell === null) return ''
-  if (tokens === undefined || tokens.length === 0) return cell.text
-  if (tokens.length === 1 && tokens[0]!.color === undefined && !tokens[0]!.italic) return cell.text
+  if (tokens === undefined || tokens.length === 0) return renderWithCrMarks(cell.text)
+  if (tokens.length === 1 && tokens[0]!.color === undefined && !tokens[0]!.italic) return renderWithCrMarks(cell.text)
   return tokens.map((tok, i) => (
     <span
       key={i}
       style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
-    >{tok.text}</span>
+    >{renderWithCrMarks(tok.text)}</span>
   ))
 }
 
