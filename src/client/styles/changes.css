@@ -261,6 +261,15 @@
   user-select: none;
 }
 .code { flex: 1 0 auto; white-space: pre; padding: 0 16px 0 10px; }
+/* Soft wrap, unified view. Three things have to move together: the stack stops
+   being wider than the pane (`width: max-content` is exactly what makes a
+   200-column line scroll sideways), the code cell wraps instead of overflowing,
+   and the number columns hold the TOP of a row that is now several lines tall
+   rather than centring in it. `anywhere` rather than `break-word` because a
+   minified line or a base64 blob is one "word" and would not break at all. */
+.diffPreWrap { width: 100%; min-width: 0; }
+.diffPreWrap .line { align-items: flex-start; }
+.diffPreWrap .code { flex: 1 1 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .lineAdd { background: var(--gs-add-line); }
 .lineDel { background: var(--gs-del-line); }
@@ -379,6 +388,19 @@
 .sideNumAdd { background: var(--gs-add-num, var(--gs-add-line)); }
 .sideNumDel { background: var(--gs-del-num, var(--gs-del-line)); }
 .sideCode { white-space: pre; padding: 0 16px 0 10px; min-height: 20px; }
+/* Soft wrap, side-by-side. The column stops scrolling sideways (there is
+   nothing left to scroll to) and the grid stops sizing itself to the widest
+   line, which is what let a 200-column line push the pane wider than the pane.
+   `anywhere` rather than `break-word`: a minified line is one "word" and would
+   not break at all. The two columns are still two grids, so a row's height is
+   imposed on both cells from whichever side wrapped further — see
+   `use-variable-row-window.ts`; `.sideFlow` is the inner box that is MEASURED,
+   and it must not inherit that imposed height or the row could never shrink
+   back when the pane is widened. */
+.sideColWrap { overflow-x: hidden; }
+.sideColGridWrap { width: 100%; min-width: 0; }
+.sideColGridWrap .sideCode { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.sideFlow { display: block; height: auto; }
 /* Stands in for the rows outside the window, so the scrollbar is the length of
    the FILE rather than of whatever is currently rendered. Spans every column,
    including the blame gutter's. */

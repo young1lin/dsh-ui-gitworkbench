@@ -176,6 +176,10 @@ const STORE_FILES = 'dsh-ui-gitworkbench:files'
  *  field of the appearance object: that one is about colour, and this choice
  *  has to survive a build that adds a palette. */
 const STORE_HISTORY_LAYOUT = 'dsh-ui-gitworkbench:history-layout'
+/** Soft wrap, on or off. A reading preference rather than a project setting:
+ *  it says how THIS person wants long lines shown, so it lives beside the
+ *  pane sizes in localStorage rather than in the shared style store. */
+const STORE_WRAP = 'dsh-ui-gitworkbench:wrap'
 
 /** Dragged pane sizes in px; null on any of them keeps that pane's CSS default. */
 interface PaneWidths {
@@ -463,6 +467,12 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    */
   const [historyLayout, setHistoryLayout] = useState<HistoryLayout>(
     () => readStored(STORE_HISTORY_LAYOUT, isHistoryLayout, DEFAULT_HISTORY_LAYOUT),
+  )
+  /** Soft wrap. Default OFF, which is what the panes have always done: code is
+   *  written in columns, and wrapping it is a choice about one long file, not
+   *  a better default for every file. */
+  const [wrap, setWrap] = useState<boolean>(
+    () => readStored(STORE_WRAP, (value): value is boolean => typeof value === 'boolean', false),
   )
   /** Per-project and global styling; both scopes, unresolved. */
   const [style, setStyle] = useState<StyleSettings>(EMPTY_SETTINGS)
@@ -1169,6 +1179,22 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     writeStored(STORE_HISTORY_LAYOUT, next)
   }
 
+  /**
+   * Turn soft wrap on or off, and remember it.
+   *
+   * A plain function, like every other handler below the two guards above:
+   * those `return null`s are the reason nothing past this point may be a HOOK.
+   * A `useCallback` here rendered fewer hooks than the previous pass on the
+   * frame the first stats arrived, which React reports as error #310 and the
+   * shell reports as "slot entry crashed" — the chip simply vanishes.
+   */
+  const toggleWrap = (): void => {
+    setWrap(prev => {
+      writeStored(STORE_WRAP, !prev)
+      return !prev
+    })
+  }
+
   /** Tab switch. No direction refetches the working tree: `viewKey` already
    *  separates the tabs' per-file diff caches, so bumping `gen` here only cost a
    *  redundant round trip. */
@@ -1272,6 +1298,8 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onHistoryLayout={applyHistoryLayout}
           onClose={() => setOpen(false)}
           onRefresh={refresh}
+          wrap={wrap}
+          onToggleWrap={toggleWrap}
           commitDraft={commitDraft}
           onCommitDraft={setCommitDraft}
           commitAmend={commitAmend}
@@ -1428,6 +1456,10 @@ interface DrawerProps {
   onHistoryLayout: (next: HistoryLayout) => void
   onClose: () => void
   onRefresh: () => void
+  /** Soft wrap, shared by every pane that shows code — the Files editor and
+   *  both diff views — because it is one reading preference, not three. */
+  wrap: boolean
+  onToggleWrap: () => void
   /** Commit draft, lifted so a tab switch cannot discard it. */
   commitDraft: string
   onCommitDraft: (next: string) => void
@@ -1472,7 +1504,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1869,6 +1901,14 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             ><ChromeGlyph of={maximized ? 'restore' : 'maximize'} /></button>
             <button
               type="button"
+              className={wrap ? `${css.btn} ${css.btnIcon} ${css.btnIconOn}` : `${css.btn} ${css.btnIcon}`}
+              aria-pressed={wrap}
+              aria-label={wrap ? t('wrapLinesOff') : t('wrapLines')}
+              title={wrap ? t('wrapLinesOff') : t('wrapLines')}
+              onClick={onToggleWrap}
+            ><ChromeGlyph of="wrap" /></button>
+            <button
+              type="button"
               className={`${css.btn} ${css.btnIcon}`}
               aria-label={t('refresh')} title={t('refresh')}
               onClick={onRefresh}
@@ -2029,6 +2069,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               onPlace={rememberPlaceHere}
               cached={filesTrees.get(filesKey) ?? EMPTY_TREE}
               onTree={rememberTreeHere}
+              wrap={wrap}
               fetchRepoTree={fetchRepoTree}
               fetchIgnoredDir={fetchIgnoredDir}
               fetchFileSides={fetchFileSides}
@@ -2101,6 +2142,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   t={t}
                   path={active}
                   palette={theme}
+                  wrap={wrap}
                   statsPath={statsPath}
                   fetchSides={fetchFileSides}
                   writeChecked={writeChecked}
@@ -2115,7 +2157,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
               ) : segment.length > 0 ? (
-                <DiffView segment={segment} path={active ?? ''} palette={theme} t={t} />
+                <DiffView segment={segment} path={active ?? ''} palette={theme} t={t} wrap={wrap} />
               ) : (
                 <div className={css.empty}>{t('noTextDiff')}</div>
               )}

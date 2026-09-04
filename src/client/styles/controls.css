@@ -107,6 +107,11 @@
    come from the vocabulary — only the box changes shape. */
 .btnIcon { width: var(--gs-h-control); padding: 0; }
 .btnIcon svg { display: block; }
+/* An icon button that is a STATE, not an action - wrap is either on or off,
+   and the row has to say which without a second glyph. Qualified like
+   `.layoutButtonOn` and `.treeIconOn`: the shared button vocabulary sets
+   `color` at the same specificity a few rules above. */
+.btnIcon.btnIconOn { color: var(--gs-accent); border-color: var(--gs-accent); }
 /* Close is the one destructive control in the row, and every window on the
    machine says so with red on hover. Quiet until then: a permanently red X in
    a header would read as an error state. */

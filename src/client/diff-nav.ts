@@ -234,6 +234,7 @@ export function blockTopsFromRows(
   blocks: readonly number[],
   rowH: number,
   offset = 0,
+  topOf?: (index: number) => number,
 ): readonly BlockTop[] {
   const tops: BlockTop[] = []
   const seen = new Set<number>()
@@ -241,7 +242,9 @@ export function blockTopsFromRows(
     const block = blocks[i]!
     if (!Number.isInteger(block) || block < 0 || seen.has(block)) continue
     seen.add(block)
-    tops.push({ block, top: offset + i * rowH })
+    // `i * rowH` is the answer only while every row is one line tall. With
+    // soft wrap on, the pane's height model is the one that knows.
+    tops.push({ block, top: offset + (topOf === undefined ? i * rowH : topOf(i)) })
   }
   return tops
 }

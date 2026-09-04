@@ -66,6 +66,9 @@ const paintFacet = Facet.define<PaintFn | null, PaintFn | null>({
   combine: values => values.length > 0 ? values[0]! : null,
 })
 const paintCompartment = new Compartment()
+/** Soft wrap, in and out without rebuilding the view — the caret, the undo
+ *  stack and the selection all survive the toggle. */
+const wrapCompartment = new Compartment()
 
 /**
  * How long after the last keystroke the editor recomputes what it paints.
@@ -422,7 +425,7 @@ const paneTheme = EditorView.theme({
   ...SEARCH_PANEL_THEME,
 })
 
-export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick }: {
+export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, wrap }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -450,6 +453,11 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
   readOnly?: boolean
   /** A click in the blame gutter, with the 1-based line number. */
   onBlameClick?: (line: number) => void
+  /** Soft wrap. CodeMirror owns variable line heights natively — its height
+   *  oracle measures wrapped lines and its own viewport walk stays correct —
+   *  so this is the whole change here, unlike the diff panes, whose windowing
+   *  assumes a fixed row height. */
+  wrap?: boolean
 }): ReactNode {
   /**
    * Editable, and SAID to be editable, from one boolean.
@@ -486,6 +494,7 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
       searchCount,
       highlightActiveLine(),
       paintCompartment.of(paintFacet.of(paint)),
+      wrapCompartment.of(wrap === true ? EditorView.lineWrapping : []),
       painter,
       blameField,
       blameCompartment.of([]),
@@ -564,6 +573,15 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
     if (current === null) return
     current.dispatch({ effects: paintCompartment.reconfigure(paintFacet.of(paint)) })
   }, [paint])
+
+  // Wrap in or out. Through the compartment rather than a rebuild: the reader
+  // toggles this to look at the line they are already on, and a rebuilt view
+  // would drop the caret and the undo stack to show it to them.
+  useEffect(() => {
+    const current = view.current
+    if (current === null) return
+    current.dispatch({ effects: wrapCompartment.reconfigure(wrap === true ? EditorView.lineWrapping : []) })
+  }, [wrap])
 
   return <div ref={host} className={css.cmHost} data-editable={editable ? '' : undefined} />
 }

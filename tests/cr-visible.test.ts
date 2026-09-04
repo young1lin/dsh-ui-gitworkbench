@@ -15,6 +15,9 @@ import { describe, expect, it } from 'vitest'
 import { panelCssSource } from './helpers/panel-css.ts'
 
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/DiffViews.tsx', import.meta.url)), 'utf8')
+// The side-by-side cells moved out of the view when the module hit the size
+// guard; the wiring they carry is the same, so this reads them where they live.
+const cells = readFileSync(fileURLToPath(new URL('../src/client/diff-cells.tsx', import.meta.url)), 'utf8')
 const css = panelCssSource()
 const locales = readFileSync(fileURLToPath(new URL('../src/client/locales.ts', import.meta.url)), 'utf8')
 
@@ -24,7 +27,7 @@ function code(text: string): string {
 
 describe('the CR marker wiring', () => {
   it('routes every renderSideCode path through the marker', () => {
-    const body = code(tsx)
+    const body = code(cells)
     // Both early-outs (no tokens, single plain token) and the token map must
     // draw the CR — dropping any one of the three leaves cells that show
     // byte-identical text for an ending-only change.

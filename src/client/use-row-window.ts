@@ -18,9 +18,13 @@ import { rowWindow, rowWindowForMount, sameRowWindow, type HeldRowWindow, type R
  *
  * @param scrollRef - the element that scrolls the rows.
  * @param rowCount - how many rows the diff has.
+ * @param enabled - false while soft wrap is on, when the rows are no longer a
+ *                  fixed height and `use-variable-row-window.ts` answers
+ *                  instead. Attaching both panes' listeners at once would put
+ *                  two readers on the same scroll.
  * @returns the rows to render and the spacer heights standing in for the rest.
  */
-export function useRowWindow(scrollRef: { current: HTMLElement | null }, rowCount: number, mountKey: string): RowWindow {
+export function useRowWindow(scrollRef: { current: HTMLElement | null }, rowCount: number, mountKey: string, enabled = true): RowWindow {
   const count = Number.isFinite(rowCount) ? Math.max(0, Math.trunc(rowCount)) : 0
   const [held, setHeld] = useState<HeldRowWindow>(() => ({
     mountKey, rowCount: count, win: rowWindow(0, 0, count),
@@ -31,7 +35,7 @@ export function useRowWindow(scrollRef: { current: HTMLElement | null }, rowCoun
   const visible = rowWindowForMount(held, count, mountKey)
   useEffect(() => {
     const el = scrollRef.current
-    if (el === null) return
+    if (el === null || !enabled) return
     const read = (): void => {
       const next = rowWindow(el.scrollTop, el.clientHeight, count)
       setHeld(prev => prev.mountKey === mountKey && prev.rowCount === count && sameRowWindow(prev.win, next)
@@ -50,6 +54,6 @@ export function useRowWindow(scrollRef: { current: HTMLElement | null }, rowCoun
       el.removeEventListener('scroll', read)
       observer.disconnect()
     }
-  }, [scrollRef, count, mountKey])
+  }, [scrollRef, count, mountKey, enabled])
   return visible
 }

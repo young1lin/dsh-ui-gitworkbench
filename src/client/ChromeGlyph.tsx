@@ -16,6 +16,11 @@ const CHROME_GLYPH = {
   // and at 14px the only thing telling them apart is the arrow count.
   refresh: 'M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z',
   close: 'M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z',
+  // Drawn here rather than borrowed: Bootstrap has no wrap glyph, and the
+  // three text rules with a return arrow are what every editor spells this
+  // with. Same 16 viewBox and single fill as the rest, so the row still reads
+  // as one set.
+  wrap: 'M1 3.5a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 0 1h-13a.5.5 0 0 1-.5-.5zM1 7.5a.5.5 0 0 1 .5-.5h11a2.5 2.5 0 0 1 0 5h-2.293l1.147 1.146a.5.5 0 0 1-.708.708l-2-2a.5.5 0 0 1 0-.708l2-2a.5.5 0 0 1 .708.708L10.207 11H12.5a1.5 1.5 0 0 0 0-3h-11a.5.5 0 0 1-.5-.5zM1 12.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5z',
 } as const
 
 export function ChromeGlyph({ of }: { of: keyof typeof CHROME_GLYPH }): ReactNode {

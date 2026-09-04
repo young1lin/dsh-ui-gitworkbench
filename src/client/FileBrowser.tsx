@@ -62,7 +62,7 @@ const INDENT_EM = 0.85
 const FILES_PER_DIR = 100
 
 export function FileBrowser({
-  t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree,
+  t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree, wrap,
   fetchRepoTree, fetchIgnoredDir, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
@@ -109,6 +109,9 @@ export function FileBrowser({
    *  and a write built from a tree that a sibling write already replaced
    *  drops that sibling's children on the floor. */
   onTree: (update: (prev: FilesTree) => FilesTree) => void
+  /** Soft wrap for the editor. The drawer's header owns the switch, so the
+   *  Files tab and the diff panes cannot disagree about it. */
+  wrap: boolean
 }): ReactNode {
   const { open, query, blameOn } = place
   const { paths, truncated, ignored, ignoredTruncated, ignoredError, children } = cached
@@ -817,6 +820,7 @@ export function FileBrowser({
                     onBlameClick={line => { setPicked(line) }}
                     notCommitted={t('blameUncommitted')}
                     readOnly={readOnly}
+                    wrap={wrap}
                   />
                 )}
             </div>

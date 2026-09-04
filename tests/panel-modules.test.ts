@@ -48,6 +48,44 @@ describe('GitWorkbenchPanel module boundaries', () => {
     }
   })
 
+  it('calls no hook after the panel gives up rendering', () => {
+    // `GitWorkbenchPanel` returns null while the first stats fetch is in
+    // flight, and again for a stats error with the drawer shut. Every handler
+    // declared past those guards is therefore a plain function on purpose: one
+    // `useCallback` down there renders fewer hooks than the previous pass on
+    // the frame the stats land, which React reports as error #310 and the dsh
+    // shell reports as "slot entry crashed in
+    // 'conversation.session.header.actions'" — the chip vanishes with no other
+    // sign. Caught live once; this is so it is caught here instead.
+    const text = source('GitWorkbenchPanel.tsx')
+    const ast = ts.createSourceFile('p.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let body: ts.Block | undefined
+    const findPanel = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === 'GitWorkbenchPanel') body = node.body
+      else ts.forEachChild(node, findPanel)
+    }
+    ts.forEachChild(ast, findPanel)
+    expect(body, 'GitWorkbenchPanel should be a function declaration').toBeDefined()
+
+    const statements = body!.statements
+    const guard = statements.findIndex(statement =>
+      ts.isIfStatement(statement) && statement.thenStatement.getText(ast).includes('return null'))
+    expect(guard, 'the panel should still bail out early').toBeGreaterThanOrEqual(0)
+
+    const late: string[] = []
+    for (const statement of statements.slice(guard)) {
+      const walk = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+          && /^use[A-Z]/.test(node.expression.text)) {
+          late.push(`${node.expression.text} at line ${ast.getLineAndCharacterOfPosition(node.pos).line + 1}`)
+        }
+        ts.forEachChild(node, walk)
+      }
+      walk(statement)
+    }
+    expect(late, 'no hook may be called after the early returns').toEqual([])
+  })
+
   it('keeps the public data contracts in a React-free module', () => {
     expect(moduleRefs('GitWorkbenchPanel.tsx').typeExports).toContain('./git-workbench-types.ts')
     expect(moduleRefs('git-workbench-types.ts').imports).not.toContain('react')

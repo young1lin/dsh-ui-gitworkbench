@@ -95,12 +95,18 @@ describe('persistent hunk toolbar wiring', () => {
   })
 
   it('keeps the destructive target identical to the persistent outline', () => {
-    const outlines = collect((node): node is ts.VariableDeclaration =>
-      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'current'
+    // One predicate, handed to all three columns — the two sides of the aligned
+    // diff and the dense index column beside the editor. It reaches them as the
+    // `current` prop of `SideCells` since the three row loops were folded into
+    // one component; what it must never become is three predicates that can
+    // drift, which is how an action comes to target a block other than the one
+    // the reader sees outlined.
+    const outlines = collect((node): node is ts.JsxAttribute =>
+      ts.isJsxAttribute(node) && node.name.getText(ast) === 'current'
       && node.initializer?.getText(ast).includes('row.block') === true)
     expect(outlines).toHaveLength(3)
     for (const outline of outlines) {
-      expect(outline.initializer?.getText(ast)).toBe('row.block >= 0 && row.block === currentBlock')
+      expect(outline.initializer?.getText(ast)).toBe('{row.block >= 0 && row.block === currentBlock}')
     }
   })
 

@@ -19,6 +19,8 @@ import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
 import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
 import { useRowWindow } from './use-row-window.ts'
+import { rowMark, useVariableRowWindow } from './use-variable-row-window.ts'
+import { RowSpacer, SideCells } from './diff-cells.tsx'
 import type { BlockAsk, BlockMode, FileSides, GitOpResult, SideLayer, Translate } from './git-workbench-types.ts'
 import css from './GitWorkbenchPanel.module.css'
 
@@ -63,11 +65,15 @@ function NavGlyph({ of }: { of: keyof typeof NAV_GLYPH }): ReactNode {
  * a block child of a scroller is only ever as wide as the scrollport. A header
  * outside the scrolled box has neither problem.
  */
-export function DiffView({ segment, path, palette, t }: {
+export function DiffView({ segment, path, palette, t, wrap }: {
   segment: string
   path: string
   palette: string
   t: Translate
+  /** Soft wrap. Changes the pane's height model, not just its white-space:
+   *  the window below is exact arithmetic while every row is one line tall,
+   *  and measured once they are not. */
+  wrap: boolean
 }): ReactNode {
   const lang = shikiLangOf(path)
   const shikiTheme = shikiThemeOf(palette)
@@ -75,10 +81,15 @@ export function DiffView({ segment, path, palette, t }: {
   const rowsWithWords = useMemo(() => attachWordRanges(parseRows(segment)), [segment])
   const sides = useMemo(() => gutterSides(rowsWithWords), [rowsWithWords])
   const scrollRef = useRef<HTMLDivElement>(null)
+  const preRef = useRef<HTMLPreElement>(null)
   // Windowed for the same reason the side-by-side pane is: a unified diff of a
   // long file put every row in the DOM and re-lexed every one of them, so
-  // opening one froze the pane in exactly the same way.
-  const win = useRowWindow(scrollRef, rowsWithWords.length, path)
+  // opening one froze the pane in exactly the same way. Two models, one live
+  // at a time: exact `i * 20px` while nothing wraps, measured once it does.
+  const fixed = useRowWindow(scrollRef, rowsWithWords.length, path, !wrap)
+  const texts = useMemo(() => rowsWithWords.map(row => row.text), [rowsWithWords])
+  const flow = useVariableRowWindow({ scrollRef, rowsRef: preRef, texts, mountKey: path, scope: 'u', enabled: wrap })
+  const win = wrap ? flow.win : fixed
   const syntax = useMemo(
     () => highlightForRowsWindow(rowsWithWords, lang, shikiTheme, win.start, win.end),
     [rowsWithWords, lang, shikiTheme, win.start, win.end, grammarGen],
@@ -89,9 +100,16 @@ export function DiffView({ segment, path, palette, t }: {
   // the block being walked to.
   const blocksForNav = useRef<readonly number[]>(blocks)
   blocksForNav.current = blocks
+  // Same reason the blocks are held in a ref: the walk is built once, and by
+  // the time it runs the pane may have been wrapped, unwrapped or re-measured.
+  const placeRow = useRef<((index: number) => number) | undefined>(undefined)
+  placeRow.current = wrap ? flow.rowTop : undefined
   const { goToChange } = useChangeNav(
     scrollRef,
-    useCallback(() => blockTopsFromRows(blocksForNav.current, DIFF_ROW_H, DIFF_GRID_PAD_TOP), []),
+    useCallback(
+      () => blockTopsFromRows(blocksForNav.current, DIFF_ROW_H, DIFF_GRID_PAD_TOP, placeRow.current),
+      [],
+    ),
   )
   // Read by the key listener below, which is attached once. `goToChange` only
   // ever touches refs, but pinning it here says so rather than relying on it.
@@ -137,12 +155,12 @@ export function DiffView({ segment, path, palette, t }: {
         </div>
       ) : null}
       <div ref={scrollRef} className={css.diffScroll} tabIndex={-1}>
-    <pre className={css.diffPre}>
+    <pre ref={preRef} className={wrap ? `${css.diffPre} ${css.diffPreWrap}` : css.diffPre}>
       {win.padTop > 0 ? <div className={css.diffSpacer} style={{ height: `${win.padTop}px` }} aria-hidden="true" /> : null}
       {rowsWithWords.slice(win.start, win.end).map((row, k) => {
         const i = win.start + k
         return (
-        <div key={i} className={`${css.line} ${rowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined}>
+        <div key={i} className={`${css.line} ${rowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined} {...rowMark('u', i)}>
           {sides.old ? <span className={css.lnOld}>{row.kind === 'add' || row.kind === 'hunk' ? '' : row.oldL}</span> : null}
           {sides.new ? <span className={css.lnNew}>{row.kind === 'del' || row.kind === 'hunk' ? '' : row.newL}</span> : null}
           <span className={`${css.gutter} ${row.kind === 'add' ? css.signAdd : row.kind === 'del' ? css.signDel : ''}`}>
@@ -222,10 +240,14 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
+export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
   t: Translate
   path: string
   palette: string
+  /** Soft wrap. Passed through to the editor and the unified fallback; the two
+   *  aligned columns are the case it costs the most, since a row's height is
+   *  whichever side wrapped further. */
+  wrap: boolean
   statsPath: string | undefined
   fetchSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   /** Save the editor buffer; the host refuses a stale sha and nothing is written. */
@@ -390,7 +412,26 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   // line by line. Declared here because both the render and the highlighting
   // below are bounded by it.
   const rowWindowKey = `${scopeKey}\x1f${path}\x1f${layer}\x1f${sides?.diffSha ?? ''}`
-  const win = useRowWindow(scrollRef, rows.length, rowWindowKey)
+  const alignedGridRef = useRef<HTMLDivElement>(null)
+  const denseGridRef = useRef<HTMLDivElement>(null)
+  const fixedWin = useRowWindow(scrollRef, rows.length, rowWindowKey, !wrap)
+  // The taller of a row's two sides is what the row is worth, so the estimate
+  // is fed the longer of the two texts.
+  const rowTexts = useMemo(
+    () => rows.map(row => {
+      const left = row.left?.text ?? ''
+      const right = row.right?.text ?? ''
+      return left.length >= right.length ? left : right
+    }),
+    [rows],
+  )
+  // Both columns, because a row is as tall as its taller side; the width is
+  // read from one column, because that is what a line wraps inside.
+  const flow = useVariableRowWindow({
+    scrollRef, rowsRef: colsRef, widthRef: alignedGridRef,
+    texts: rowTexts, mountKey: rowWindowKey, scope: 'a', enabled: wrap,
+  })
+  const win = wrap ? flow.win : fixedWin
   //
   // Two passes with two lifetimes. The whole-file pass runs once per file and
   // is what knows about block comments and template literals; the per-line
@@ -469,7 +510,17 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
   // two columns render two different row lists while the editor is armed: the
   // right side is a buffer, and the left side is then the index side DENSE,
   // one row per index line rather than one per aligned row.
-  const leftWin = useRowWindow(scrollRef, leftRows.length, rowWindowKey)
+  const fixedLeftWin = useRowWindow(scrollRef, leftRows.length, rowWindowKey, !wrap)
+  const leftTexts = useMemo(() => leftRows.map(entry => entry.row.left?.text ?? ''), [leftRows])
+  // Its own height model: the dense column's rows are the INDEX side's lines,
+  // a different list from the aligned rows, so it cannot share theirs. Nothing
+  // has to line up with it — the other column is a CodeMirror buffer that wraps
+  // on its own — but its spacers still have to add up to what it renders.
+  const leftFlow = useVariableRowWindow({
+    scrollRef, rowsRef: denseGridRef,
+    texts: leftTexts, mountKey: rowWindowKey, scope: 'd', enabled: wrap,
+  })
+  const leftWin = wrap ? leftFlow.win : fixedLeftWin
 
   // Arming drops the caret straight into the buffer: the click that armed the
   // editor said "I want to type here", and a second click to focus is a tax.
@@ -666,7 +717,7 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
 
   /** The pane the drawer had before this view existed, notice included. */
   const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
-    ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} />
+    ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} wrap={wrap} />
     : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : t('noTextDiff')}</div>
 
   if (failed) return unifiedFallback()
@@ -875,8 +926,11 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
         onMouseDown={onBodySelect}
         onMouseLeave={() => { setHotBlock(null) }}
       >
-        <div className={css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
-          <div className={css.sideColGrid}>
+        <div className={wrap ? `${css.sideCol} ${css.sideColWrap}` : css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
+          <div
+            ref={bodyState.kind === 'editor' ? denseGridRef : alignedGridRef}
+            className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}
+          >
             {bodyState.kind === 'editor' ? (
               /* While armed the left column renders the index side DENSE —
                  one row per index line, no diff holes — because the right
@@ -888,16 +942,18 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
                 const k = leftWin.start + kk
                 const { row, i } = entry
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === currentBlock
-                const hotClass = blockHotClass(rows, i, 'left', current)
                 return (
-                  <Fragment key={`l${i}`}>
-                    <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left!.line}</span>
-                    <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.left !== null && row.block >= 0 ? row.block : undefined}>
-                      {renderSideCode(row.left, leftSyntax?.[i])}
-                      {hot && k === hotFirstLeft ? blockBar(row.block) : null}
-                    </span>
-                  </Fragment>
+                  <SideCells
+                    key={`l${i}`}
+                    row={row} side="left" index={i} rows={rows}
+                    current={row.block >= 0 && row.block === currentBlock}
+                    tokens={leftSyntax?.[i]}
+                    // Marked by its DENSE index: this column's rows are the
+                    // index side's lines, not the aligned ones. Nothing to
+                    // impose a height for — the buffer beside it wraps itself.
+                    mark={wrap ? rowMark('d', k) : undefined}
+                    bar={hot && k === hotFirstLeft ? blockBar(row.block) : null}
+                  />
                 )
               })}
               <RowSpacer height={leftWin.padBottom} />
@@ -908,20 +964,19 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === currentBlock
-                const hotClass = blockHotClass(rows, i, 'left', current)
-                // The block's action bar rides in this column only for a row
-                // with no right-hand side — a pure deletion, where the right
-                // column has no cell to hang it on.
-                const bar = hot && i === hotFirst && row.right === null ? blockBar(row.block) : null
                 return (
-                  <Fragment key={i}>
-                    <span className={`${sideNumClass(row, 'left')}${hotClass}`}>{row.left === null ? '' : row.left.line}</span>
-                    <span className={`${css.sideCode} ${sideCodeClass(row, 'left')}${hotClass}`} data-block={row.left !== null && row.block >= 0 ? row.block : undefined}>
-                      {renderSideCode(row.left, leftSyntax?.[i])}
-                      {bar}
-                    </span>
-                  </Fragment>
+                  <SideCells
+                    key={i}
+                    row={row} side="left" index={i} rows={rows}
+                    current={row.block >= 0 && row.block === currentBlock}
+                    tokens={leftSyntax?.[i]}
+                    mark={wrap ? rowMark('a', i) : undefined}
+                    minHeight={wrap ? flow.rowHeight(i) : undefined}
+                    // The block's action bar rides in this column only for a
+                    // row with no right-hand side — a pure deletion, where the
+                    // right column has no cell to hang it on.
+                    bar={hot && i === hotFirst && row.right === null ? blockBar(row.block) : null}
+                  />
                 )
               })}
               <RowSpacer height={win.padBottom} />
@@ -930,7 +985,10 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
           </div>
         </div>
         <PaneDivider label={t('resizeSides')} onDrag={onSplitDrag} />
-        <div className={`${css.sideCol} ${css.sideColRight}`} style={{ paddingTop: blockBarClearance }}>
+        <div
+          className={wrap ? `${css.sideCol} ${css.sideColRight} ${css.sideColWrap}` : `${css.sideCol} ${css.sideColRight}`}
+          style={{ paddingTop: blockBarClearance }}
+        >
           {bodyState.kind === 'editor' ? (
             <CodeEditor
               value={edit.buffer}
@@ -940,28 +998,26 @@ export function SideBySideView({ t, path, palette, statsPath, fetchSides, writeC
               indent={indentOfBuffer}
               ariaLabel={path}
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
+              wrap={wrap}
             />
           ) : (
-            <div className={css.sideColGrid}>
+            <div className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}>
               <RowSpacer height={win.padTop} />
               {rows.slice(win.start, win.end).map((row, k) => {
                 const i = win.start + k
                 const hot = hotBlock !== null && row.block === hotBlock
-                const current = row.block >= 0 && row.block === currentBlock
-                const hotClass = blockHotClass(rows, i, 'right', current)
-                const bar = hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null
                 return (
-                  <Fragment key={i}>
-                    <span className={`${sideNumClass(row, 'right')}${hotClass}`}>{row.right === null ? '' : row.right.line}</span>
-                    <span
-                      className={`${css.sideCode} ${sideCodeClass(row, 'right')}${hotClass}${layer === 'unstaged' && armable ? ` ${css.sideArmable}` : ''}`}
-                      data-block={row.right !== null && row.block >= 0 ? row.block : undefined}
-                      onClick={layer === 'unstaged' && armable ? armFromCell : undefined}
-                    >
-                      {renderSideCode(row.right, rightSyntax?.[i])}
-                      {bar}
-                    </span>
-                  </Fragment>
+                  <SideCells
+                    key={i}
+                    row={row} side="right" index={i} rows={rows}
+                    current={row.block >= 0 && row.block === currentBlock}
+                    tokens={rightSyntax?.[i]}
+                    mark={wrap ? rowMark('a', i) : undefined}
+                    minHeight={wrap ? flow.rowHeight(i) : undefined}
+                    bar={hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null}
+                    armable={layer === 'unstaged' && armable}
+                    onArm={layer === 'unstaged' && armable ? armFromCell : undefined}
+                  />
                 )
               })}
               <RowSpacer height={win.padBottom} />
@@ -1025,75 +1081,4 @@ export function LeaveEditsConfirm({ t, path, onCancel, onConfirm }: {
       </div>
     </div>
   )
-}
-
-/** Classes that paint only a block's OUTER perimeter. Internal rows carry the
- * vertical edges but no top/bottom line, avoiding the blue ladder a large
- * addition block used to draw. Absent side-cells return no class at all. */
-function blockHotClass(rows: readonly SideRow[], index: number, side: 'left' | 'right', hot: boolean): string {
-  if (!hot) return ''
-  const edge = blockEdge(rows, index, side)
-  if (edge === null) return ''
-  const first = edge === 'first' || edge === 'single' ? ` ${css.sideBlockHotFirst}` : ''
-  const last = edge === 'last' || edge === 'single' ? ` ${css.sideBlockHotLast}` : ''
-  return ` ${css.sideBlockHot}${first}${last}`
-}
-
-/** Line-number cell class: a PRESENT cell of a changed row carries its side's
- *  tint into the gutter; an absent one stays blank, the way a split diff shows
- *  a one-sided change with an empty opposite pane rather than a tinted void. */
-function sideNumClass(row: SideRow, side: 'left' | 'right'): string {
-  const cell = side === 'left' ? row.left : row.right
-  if (cell === null || row.kind === 'same') return css.sideNum
-  return `${css.sideNum} ${side === 'left' ? css.sideNumDel : css.sideNumAdd}`
-}
-
-/** Code cell class: deletions tint left, additions right, context stays quiet. */
-function sideCodeClass(row: SideRow, side: 'left' | 'right'): string {
-  const cell = side === 'left' ? row.left : row.right
-  if (cell === null || row.kind === 'same') return css.sideCodeSame
-  return `${side === 'left' ? css.sideCodeDel : css.sideCodeAdd} ${css.sideCellBlock}`
-}
-
-/** One text with every carriage return drawn as the CR glyph. No CR means
- * the text comes back untouched — the common line, on both sides, costs one
- * `includes`. The glyph spans are aria-hidden and unselectable, so copying a
- * line copies code, not markers. */
-function renderWithCrMarks(text: string): ReactNode {
-  const parts = splitOnCr(text)
-  if (parts.length === 1) return text
-  const out: ReactNode[] = [parts[0]!]
-  for (let i = 1; i < parts.length; i += 1) {
-    out.push(<span key={`cr${i}`} className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>)
-    out.push(parts[i]!)
-  }
-  return out
-}
-
-/** One cell's Shiki runs, or its plain text when no tokens exist; either way
- * each carriage return in the cell is drawn, so a line whose only change is
- * its ending shows the difference instead of two identical-looking cells. */
-function renderSideCode(cell: SideCell | null, tokens: readonly HighlightRun[] | undefined): ReactNode {
-  if (cell === null) return ''
-  if (tokens === undefined || tokens.length === 0) return renderWithCrMarks(cell.text)
-  if (tokens.length === 1 && tokens[0]!.color === undefined && !tokens[0]!.italic) return renderWithCrMarks(cell.text)
-  return tokens.map((tok, i) => (
-    <span
-      key={i}
-      style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
-    >{renderWithCrMarks(tok.text)}</span>
-  ))
-}
-
-
-
-/**
- * The spacer standing in for the rows above or below the window.
- *
- * It spans every column of the grid, so a blame gutter does not change it.
- * @param height - px of rows it stands in for; nothing is rendered for 0.
- */
-function RowSpacer({ height }: { height: number }): ReactNode {
-  if (height <= 0) return null
-  return <span className={css.sideSpacer} style={{ height: `${height}px` }} aria-hidden="true" />
 }

@@ -21,7 +21,7 @@
 export type WorkbenchKey =
   | 'aheadTitle' | 'behindTitle' | 'files'
   | 'filterFiles' | 'filterFilesPlaceholder' | 'filterFilesClear' | 'filesFiltered' | 'filterNoMatch'
-  | 'drawerLabel' | 'totalsDim' | 'refresh' | 'close'
+  | 'drawerLabel' | 'totalsDim' | 'refresh' | 'close' | 'wrapLines' | 'wrapLinesOff'
   | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare' | 'tabFiles'
   // the Files tab: browse the repository, read a file, blame it, edit it
   | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick' | 'filesIgnored' | 'filesIgnoredCut' | 'filesIgnoredFailed'
@@ -91,6 +91,8 @@ export const zh: Record<WorkbenchKey, string> = {
   fileSearchPlaceholder: '搜索文件…',
   filesTruncated: '文件太多，列表已截断；用搜索找剩下的。',
   filesIgnored: '已被 gitignore',
+  wrapLines: '自动换行',
+  wrapLinesOff: '取消自动换行',
   filesIgnoredCut: '这个目录条目太多，已截断；搜索找不到没列出的部分。',
   filesIgnoredFailed: '无法列出被忽略的文件。',
   filesEmpty: '这个仓库还没有文件',
@@ -336,6 +338,8 @@ export const en: Record<WorkbenchKey, string> = {
   fileSearchPlaceholder: 'Search files…',
   filesTruncated: 'Too many files to list; use the search for the rest.',
   filesIgnored: 'Ignored (gitignore)',
+  wrapLines: 'Wrap long lines',
+  wrapLinesOff: 'Stop wrapping lines',
   filesIgnoredCut: 'This directory has too many entries; the list is cut, and the search cannot reach the rest.',
   filesIgnoredFailed: 'Could not list the ignored files.',
   filesEmpty: 'This repository has no files yet',
