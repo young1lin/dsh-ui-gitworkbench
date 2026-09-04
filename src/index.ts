@@ -78,7 +78,7 @@ import {
   type StyleEntry, type StyleFile,
 } from './style-store.js'
 import {
-  bindingsPath, findRegisteredWorktree, isRefName, loadBindings, parseWorktreeList, sanitizeName, saveBindings, worktreeDir,
+  bindingNotice, bindingsPath, findRegisteredWorktree, isRefName, lineageEdgeOf, loadBindings, parseWorktreeList, resolveEffectiveBinding, sanitizeName, saveBindings, worktreeDir,
   type BindingsFile, type WorktreeBinding, type WorktreeEntry, type WorktreeOpResult,
 } from './worktree.js'
 
@@ -127,6 +127,21 @@ const COMMIT_DIFF_CACHE_CAPACITY = 128
 const COMMIT_HASH = /^[0-9a-fA-F]{4,40}$/
 
 export type { GitCommit } from './git-log.js'
+
+/**
+ * The slice of dsh's `agent/session-start` payload this plugin reads: just the
+ * session identity and its parent edge. Declared structurally (not imported
+ * from `@deepseek-ai/dsh-agent`, which is not a peer of this plugin) so the
+ * shape this code depends on is pinned here regardless of host-side changes.
+ */
+interface SessionStartEvent {
+  readonly agent: {
+    readonly session: {
+      readonly id: string
+      readonly header: { readonly parentSession?: string }
+    }
+  }
+}
 
 export interface WorkbenchStats {
   readonly worktreePath: string
@@ -270,10 +285,32 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   private readonly bindingMirror = new Map<string, WorktreeBinding>()
 
+  /**
+   * Session id → parent session id, as `agent/session-start` delivered it. A
+   * subagent header names its parent, and that edge is all the lineage walk
+   * needs: a child session without a binding of its own works under its
+   * nearest bound ancestor (see {@link resolveEffectiveBinding}). The map is
+   * never pruned — it holds one short string per session this process has
+   * seen, and a stale edge can only make a lookup walk further, never lie.
+   */
+  private readonly parentOf = new Map<string, string>()
+
   constructor(ctx: Context) {
     super(ctx, 'gitWorkbench')
     this.registerWorktreeTools(ctx)
     this.registerWorktreePrompt(ctx)
+    // Fires for every session the process publishes — fresh subagents and
+    // sessions whose loop resumes from disk. An IDLE session's edge is absent
+    // until its loop (re)starts, so a lookup can simply find no ancestor right
+    // after a host restart — the pre-feature behavior, fail-soft. `events.on`
+    // (not the typed `ctx.on` overload) because the event is declared by
+    // @deepseek-ai/dsh-agent, which this plugin does not depend on; the
+    // listener lives on this ctx's fiber.
+    ctx.events.on('agent/session-start', (payload: SessionStartEvent) => {
+      const session = payload.agent?.session
+      const parent = lineageEdgeOf(session?.header)
+      if (session !== undefined && parent !== undefined) this.parentOf.set(session.id, parent)
+    })
     // Hydrate the mirror through the same queue as the mutations, so a binding
     // written before hydration finishes is not overwritten by the stale read.
     // A failed read leaves the mirror empty: sessions then get no standing
@@ -305,16 +342,18 @@ export class GitWorkbenchService extends TypertRemoteService {
         name: 'worktree:binding',
         order: 115,
         text: (context) => {
-          const sessionId = context.agent?.session.id
-          const binding = sessionId === undefined ? undefined : this.bindingMirror.get(sessionId)
-          if (binding === undefined) return ''
-          const rel = `.agents/worktrees/${binding.name}`
-          const branchNote = binding.branch === undefined ? '' : ` (branch ${binding.branch})`
-          return `This session is bound to git worktree "${binding.name}"${branchNote}.\n`
-            + 'The session working directory is still the repository root, so the binding is a convention you must apply yourself:\n'
-            + `- shell commands: pass workdir "${rel}"\n`
-            + `- file tools: prefix every path with ${rel}/\n`
-            + 'A path without that prefix acts on the MAIN worktree, not the bound one. Call worktree_exit to unbind.'
+          const session = context.agent?.session
+          if (session === undefined) return ''
+          // First hop straight off the live header: the prompt must not depend
+          // on the session-start event having been seen (a plugin reload
+          // mid-session repopulates the map only through later events).
+          const parent = lineageEdgeOf(session.header)
+          if (parent !== undefined && !this.parentOf.has(session.id)) {
+            this.parentOf.set(session.id, parent)
+          }
+          const effective = resolveEffectiveBinding(session.id, this.parentOf, id => this.bindingMirror.get(id))
+          if (effective === undefined) return ''
+          return bindingNotice(effective.binding.name, effective.binding.branch, effective.inherited)
         },
       })
     })
@@ -352,6 +391,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         ok: { type: 'boolean' },
         error: { type: 'string' },
         binding: { oneOf: [{ type: 'null' }, { type: 'object', additionalProperties: true }] },
+        bindingInherited: { type: 'boolean' },
         worktrees: { type: 'array', items: { type: 'object', additionalProperties: true } },
         branches: { type: 'array', items: { type: 'string' } },
         branchesTruncated: { type: 'boolean' },
@@ -396,7 +436,8 @@ export class GitWorkbenchService extends TypertRemoteService {
 
     ctx.tools.register(defineTool({
       name: 'worktree_status',
-      description: 'Show this session\'s bound worktree (if any) and the repository\'s existing worktrees with branches.',
+      description: 'Show this session\'s worktree (its own, or the one its parent session entered — bindingInherited says which) '
+        + 'and the repository\'s existing worktrees with branches.',
       parameters: {},
       output: output(STATUS_SCHEMA),
       execute: async (_args: Record<string, never>, exec: ToolRunContext) => {
@@ -1164,13 +1205,20 @@ export class GitWorkbenchService extends TypertRemoteService {
     }
   }
 
-  /** The session's worktree binding, or nulls when unbound (plain-identifier params; signal last). */
+  /**
+   * The session's EFFECTIVE worktree binding — its own, else the nearest bound
+   * ancestor's — or nulls when neither exists. This is what the chip follows,
+   * so a subagent session shows the worktree its conversation works in without
+   * ever holding a binding of its own (plain-identifier params; signal last).
+   */
   @Remote('sessionWorktree')
-  async sessionWorktree(sessionId: string, signal: AbortSignal): Promise<{ worktreePath: string | null; name: string | null }> {
-    if (typeof sessionId !== 'string' || sessionId.length === 0) return { worktreePath: null, name: null }
+  async sessionWorktree(sessionId: string, signal: AbortSignal): Promise<{ worktreePath: string | null; name: string | null; inherited: boolean }> {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return { worktreePath: null, name: null, inherited: false }
     const file = await this.bindingsIo().load()
-    const binding = file.bindings[sessionId]
-    return binding === undefined ? { worktreePath: null, name: null } : { worktreePath: binding.worktreePath, name: binding.name }
+    const effective = resolveEffectiveBinding(sessionId, this.parentOf, id => file.bindings[id])
+    return effective === undefined
+      ? { worktreePath: null, name: null, inherited: false }
+      : { worktreePath: effective.binding.worktreePath, name: effective.binding.name, inherited: effective.inherited }
   }
 
   /** Create (or reuse) a git worktree under `<repoRoot>/.agents/worktrees/` and bind the session to it. */
@@ -1265,7 +1313,15 @@ export class GitWorkbenchService extends TypertRemoteService {
     return this.withBindings(async io => {
       const file = await io.load()
       const binding = file.bindings[sessionId]
-      if (binding === undefined) return { ok: false, error: 'no worktree binding for this session' }
+      if (binding === undefined) {
+        // A subagent CAN see a worktree in its status while holding no binding
+        // of its own (it works under its parent's). Naming that here keeps the
+        // model from retrying an exit that cannot succeed.
+        const inherited = resolveEffectiveBinding(sessionId, this.parentOf, id => file.bindings[id])
+        return inherited === undefined
+          ? { ok: false, error: 'no worktree binding for this session' }
+          : { ok: false, error: 'this session has no binding of its own; its worktree is entered by a parent session — ask the parent session to call worktree_exit' }
+      }
       if (remove === true) {
         const status = await this.git(binding.worktreePath, ['status', '--porcelain'], signal)
         if (status.exitCode !== 0) {
@@ -1297,21 +1353,26 @@ export class GitWorkbenchService extends TypertRemoteService {
    * Branches come back most-recently-committed first. With hundreds of them the
    * order is what makes the list usable — the handful anyone is working on sit
    * at the top, so the picker is useful before a single character is typed.
-   * @param sessionId - session whose binding is looked up.
+   * @param sessionId - session whose effective binding is looked up.
    * @param repoPath - caller's directory, used when the session is unbound.
    * @param signal - abort signal.
-   * @returns the binding, the repository's worktrees, and its local branches.
+   * @returns the effective binding (with whether an ancestor lent it), the
+   * repository's worktrees, and its local branches.
    */
   @Remote('worktreeStatus')
-  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean }> {
+  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; bindingInherited: boolean; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean }> {
     const file = await this.bindingsIo().load()
-    const binding = typeof sessionId === 'string' && sessionId.length > 0 ? file.bindings[sessionId] ?? null : null
+    const effective = typeof sessionId === 'string' && sessionId.length > 0
+      ? resolveEffectiveBinding(sessionId, this.parentOf, id => file.bindings[id])
+      : undefined
+    const binding = effective?.binding ?? null
+    const bindingInherited = effective?.inherited ?? false
     // Unbound: list the CALLER's repo. Falling back to the host's launch directory
     // would answer about whatever directory dsh was started in, not this session's.
     const caller = typeof repoPath === 'string' && repoPath.length > 0 ? repoPath.replace(/\\/g, '/') : process.cwd()
     const cwd = binding?.repoRoot ?? caller
     const root = await this.repoRootOf(cwd, signal)
-    if (root === null) return { binding, worktrees: [], branches: [], branchesTruncated: false }
+    if (root === null) return { binding, bindingInherited, worktrees: [], branches: [], branchesTruncated: false }
     const [listed, named] = await Promise.all([
       this.git(root, ['worktree', 'list', '--porcelain'], signal),
       this.git(root, ['branch', '--sort=-committerdate', '--format=%(refname:short)'], signal),
@@ -1320,6 +1381,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     const { branches, branchesTruncated } = capBranches(all, BRANCH_LIST_CAP)
     return {
       binding,
+      bindingInherited,
       worktrees: parseWorktreeList(listed.stdout),
       branches,
       branchesTruncated,

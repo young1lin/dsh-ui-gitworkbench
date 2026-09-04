@@ -187,6 +187,103 @@ export function worktreeDir(repoRoot: string, name: string): string {
   return `${repoRoot.replace(/\/+$/, '')}/.agents/worktrees/${name}`
 }
 
+// ---- session lineage: the binding a session effectively works under ----
+
+/** A binding resolved for a session, with whether it is the session's own. */
+export interface EffectiveBinding<T> {
+  readonly binding: T
+  /** False when the binding is the session's own; true when an ancestor's. */
+  readonly inherited: boolean
+}
+
+/**
+ * Deepest ancestor chain walked before the lookup gives up. Real delegation
+ * nests two or three levels; the cap exists so a corrupt lineage (a cycle the
+ * guard below somehow missed, a pathologically deep chain) costs a bounded
+ * number of lookups instead of walking forever.
+ */
+const LINEAGE_HOP_CAP = 8
+
+/**
+ * Resolve the binding a session effectively works under: its own, else the
+ * nearest ancestor's.
+ *
+ * A subagent session never gets a binding of its own — `worktree_enter` is
+ * called by the session that wants the worktree — but it works wherever its
+ * parent conversation works: the standing prompt, the chip, and `worktree_exit`'s
+ * diagnostics all answer "which worktree is THIS session in" through here. The
+ * walk is re-resolved on every read, so a session exiting its worktree changes
+ * only its own binding: descendants lend the next bound ancestor up the chain
+ * on their next read (possibly none — the common case — possibly a grandparent's,
+ * which is still the conversation tree they work in) and nothing dangles.
+ *
+ * Own wins over inherited on purpose: a session that enters a worktree of its
+ * own is deliberately somewhere else than its parent.
+ * @param sessionId - the session whose effective binding is wanted.
+ * @param parentOf - session id → parent session id, as `agent/session-start`
+ * delivered it (subagent headers name their parent).
+ * @param bindingOf - binding lookup (the bindings file, or the prompt mirror).
+ * @returns the effective binding, or undefined when neither the session nor any
+ * ancestor (within the hop cap) is bound.
+ */
+export function resolveEffectiveBinding<T>(
+  sessionId: string,
+  parentOf: ReadonlyMap<string, string>,
+  bindingOf: (id: string) => T | undefined,
+): EffectiveBinding<T> | undefined {
+  const own = bindingOf(sessionId)
+  if (own !== undefined) return { binding: own, inherited: false }
+  const seen = new Set<string>([sessionId])
+  let ancestor = parentOf.get(sessionId)
+  for (let hops = 0; ancestor !== undefined && hops < LINEAGE_HOP_CAP; hops += 1) {
+    if (seen.has(ancestor)) return undefined
+    seen.add(ancestor)
+    const binding = bindingOf(ancestor)
+    if (binding !== undefined) return { binding, inherited: true }
+    ancestor = parentOf.get(ancestor)
+  }
+  return undefined
+}
+
+/**
+ * The session's parent edge, read off a dsh session header: the id of the
+ * session this one was delegated by, or undefined for a top-level session (or
+ * a malformed empty value). Both `parentOf` feeds — the `agent/session-start`
+ * listener and the prompt-time self-heal — go through here, so their input
+ * guards cannot drift apart.
+ */
+export function lineageEdgeOf(header: { readonly parentSession?: string } | undefined): string | undefined {
+  const parent = header?.parentSession
+  return typeof parent === 'string' && parent.length > 0 ? parent : undefined
+}
+
+/**
+ * The standing notice for a session's effective binding — the text the
+ * `worktree:binding` prompt context returns. Both variants carry the same two
+ * operational rules; what differs is who holds the binding, and the inherited
+ * variant must NOT offer `worktree_exit` (the caller cannot unbind a parent's
+ * binding — the exit would fail, and the model should not be told to try).
+ * @param name - worktree name (also the directory under `.agents/worktrees/`).
+ * @param branch - branch checked out there, when known.
+ * @param inherited - whether an ancestor, not this session, holds the binding.
+ */
+export function bindingNotice(name: string, branch: string | undefined, inherited: boolean): string {
+  const rel = `.agents/worktrees/${name}`
+  const branchNote = branch === undefined ? '' : ` (branch ${branch})`
+  const opening = inherited
+    ? `This session works in git worktree "${name}"${branchNote}, entered by its parent session.`
+    : `This session is bound to git worktree "${name}"${branchNote}.`
+  const closing = inherited
+    ? 'A path without that prefix acts on the MAIN worktree, not the worktree this conversation works in. '
+      + '(The binding belongs to the parent session; worktree_exit here would not unbind it.)'
+    : 'A path without that prefix acts on the MAIN worktree, not the bound one. Call worktree_exit to unbind.'
+  return `${opening}\n`
+    + 'The session working directory is still the repository root, so the binding is a convention you must apply yourself:\n'
+    + `- shell commands: pass workdir "${rel}"\n`
+    + `- file tools: prefix every path with ${rel}/\n`
+    + closing
+}
+
 export function parseWorktreeList(porcelain: string): WorktreeEntry[] {
   const out: WorktreeEntry[] = []
   let path = ''

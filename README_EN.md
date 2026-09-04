@@ -13,7 +13,7 @@ Every session header gets a small status card showing the current branch, ahead/
 - **Commit & sync** — ticking a file in the tree is a real `git add` / `git restore --staged`; with the commit box and the fetch / pull / push bar, a full commit-and-push never leaves the panel.
 - **Appearance** — seven theme families in light and dark (following the OS by default), plus a blurred background image and custom CSS, stored per project and globally with the project scope winning.
 
-It also ships **worktree emulation**: the model can call the `worktree_enter` / `worktree_exit` / `worktree_status` agent tools to create or leave an isolated worktree under `.agents/worktrees/<name>` and bind the session to it. The status card lights up its binding marker, the panel header gains a worktree switcher listing every worktree in the repository, and the stats follow the binding.
+It also ships **worktree emulation**: the model can call the `worktree_enter` / `worktree_exit` / `worktree_status` agent tools to create or leave an isolated worktree under `.agents/worktrees/<name>` and bind the session to it. **A subagent session never writes a binding of its own — it borrows the nearest bound ancestor's worktree along its lineage**: the standing prompt, the chip, and `worktree_status` all resolve that effective binding for a session without one, and the borrow disappears when the parent exits. The status card lights up its binding marker, the panel header gains a worktree switcher listing every worktree in the repository, and the stats follow the binding.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c6a73c7b-bf69-4b97-80a2-9175bc293d7d" muted autoplay loop playsinline controls width="100%"></video>

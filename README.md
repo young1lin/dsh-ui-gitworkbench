@@ -13,7 +13,7 @@
 - **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；
 - **外观**：七套主题族各带亮暗，默认跟随系统；支持虚化背景图和自定义 CSS，按「项目 / 全局」两个作用域保存，项目优先。
 
-另带 **worktree 仿真**：模型在会话里调用 `worktree_enter` / `worktree_exit` / `worktree_status` 三个工具，即可在 `.agents/worktrees/<name>` 下建立或退出隔离 worktree，并把会话绑定过去。绑定后状态卡点亮绑定标记，面板头部出现 worktree 切换器（按分支列出仓库全部 worktree），统计随之切换。
+另带 **worktree 仿真**：模型在会话里调用 `worktree_enter` / `worktree_exit` / `worktree_status` 三个工具，即可在 `.agents/worktrees/<name>` 下建立或退出隔离 worktree，并把会话绑定过去。**子代理会话不写自己的绑定，而是沿谱系借用最近绑定祖先的 worktree**——standing 提示、芯片与 `worktree_status` 对无自有绑定的会话统一解析「有效绑定」，外层退出后子树自动失去借用。绑定后状态卡点亮绑定标记，面板头部出现 worktree 切换器（按分支列出仓库全部 worktree），统计随之切换。
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c6a73c7b-bf69-4b97-80a2-9175bc293d7d" muted autoplay loop playsinline controls width="100%"></video>
@@ -171,8 +171,8 @@ export function apply(ctx) {
 - **宿主 RPC**（同一 `GitWorkbenchService` 上多挂 4 个 `@Remote`，参数照 §6.8 裸标识符、signal 最后）：
   - `worktreeEnter(sessionId, repoPath, name, signal)`——`repoRootOf` 解析仓库根；在 `<repoRoot>/.agents/worktrees/<name>` 创建（或复用）worktree、**分支 = 名字本身**（不加强制前缀），写绑定；返回 `{ok, worktreePath, branch, hint}`，hint 教模型怎么用相对路径（会话 cwd 不可变）。复用判定走 **realpath**：目标目录已是注册 worktree（别的工具建的、或经 Junction 映射进来的，git 登记的是另一种拼写）→ 直接绑定并保留**它自己的分支**，不再 `worktree add`。
   - `worktreeExit(sessionId, remove, signal)`——解绑；`remove:true` 且树干净才 `git worktree remove`，脏树拒绝。
-  - `worktreeStatus(sessionId, signal)`——绑定 + 仓库全部 worktree 列表。
-  - `sessionWorktree(sessionId, signal)`——`{worktreePath, name}`，未绑定为双 `null`；客户端轮询已改用 `worktreeStatus`（绑定+列表一次拿全），这个 RPC 保留作轻量单查。
+  - `worktreeStatus(sessionId, repoPath, signal)`——**有效绑定**（自有优先，否则沿谱系借最近绑定祖先；`bindingInherited` 标明是否借来）+ 仓库全部 worktree 列表。
+  - `sessionWorktree(sessionId, signal)`——`{worktreePath, name, inherited}`，只读绑定 JSON、零 git spawn；无自有绑定时借最近绑定祖先（`inherited:true`），连祖先也无绑定才是双 `null`。客户端轮询已改用 `worktreeStatus`（绑定+列表一次拿全），这个 RPC 保留作轻量单查。
 - **绑定持久化** `~/.dsh/gitworkbench-worktree-bindings.json`（`{v:1, bindings:{<sessionId>:{repoRoot,worktreePath,name,enteredAt}}}`）。写法是**先写 `.tmp` 再 rename**（崩溃不留半截文件）；Windows 上 rename 可能 EPERM → 25/50/100/200/400ms 退避重试；所有 load→save 段落经 promise 队列互斥（`withBindings`），并发 enter/exit 不会互相覆盖。
 - **agent 工具**：同一份逻辑用 `ctx.tools.register(defineTool({...}))` 注册成 `worktree_enter/exit/status`，sessionId/cwd 取自 `exec.agent?.session`（**不接受**模型传参）——注册要点见 §6.10，schema 限制见 §6.11。
 - **客户端跟随**：`GitWorkbenchPanel` 每轮拉 stats 的同时拉 `worktreeStatus(sessionId, cwd)`（绑定 + 仓库全部 worktree 一次拿到，agent 在 dsh 外面建的 worktree 也会跟进列表）；有绑定 → 状态卡亮出绑定标记（树形图标；分支与徽标文字重名时省略后者）、stats 改传绑定的 worktree 绝对路径；面板头部的 worktree 选择器按分支列出所有源，**只切显示对象、不动绑定**。树的展开状态跨切换、跨轮询保留；选中在切换源时**有意重置**——旧 worktree 的路径不能漏进新树的选中（§6.0c）。
@@ -533,4 +533,5 @@ git 的两种「路径」只在仓库根相等：`git status --porcelain` 和 `g
   - **会话 cwd 不可变**（dsh 本体约束）：enter 不切 cwd，而是返回 hint 指引模型——file 工具用 `.agents/worktrees/<name>/` 前缀的相对路径，shell 命令传 per-call workdir `.agents/worktrees/<name>`（相对会话 cwd 解析）。
   - **再进入**：目录仍是注册 worktree（含外部工具建的、经 Junction 映射的——realpath 判定）→ 直接复用、只补绑定并保留其分支；目录已删但分支 `<name>` 幸存 → `worktree add <dir> <name>` 检出旧分支（hint 注明 reused）。
   - **绑定**（per-session）持久化于 `~/.dsh/gitworkbench-worktree-bindings.json`；损坏/缺失视为无绑定并重建。写入原子（tmp+rename）+ 互斥（promise 队列）+ EPERM 退避重试（§6.12）。
+  - **子代理借绑定、不写键**：`agent/session-start` 事件把子会话 header 的 `parentSession` 喂进宿主 `parentOf` 表（提示回调还会从活 header 自愈补第一跳，兜插件重载）；standing 提示、芯片/抽屉、`worktree_status`、`sessionWorktree` 统一经 `resolveEffectiveBinding`（worktree.ts：**自有绑定优先**，miss 沿父链借最近绑定祖先，环检测 + 8 跳上限）解析有效绑定。只读不写——外层 `worktree_exit` 后子树下次读取自动失去借用（更高祖先仍绑定时向上翻转）；子会话自己 `worktree_enter` 以自有绑定遮蔽继承。`worktree_exit` 对无自有绑定的会话报错并指明绑定属父会话。宿主重启后空闲会话的谱系边要等其 loop 恢复才有——查询退化为无继承（即旧版行为，fail-soft）。
   - **状态卡纪律例外**：有绑定时即使 bound worktree 干净也显示状态卡——绑定标记（树形图标）是绑定指示器与面板入口；面板打开期间空视图也保持挂载（可从空源切走）。头部选择器只改显示对象，不动绑定。

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-09-04 [capture]
+- **Domains**: worktree-emulation
+- **Updated docs**:
+  - `worktree-emulation/overview.md`：新增「会话 id 跨压缩与重启稳定，跨 fork 才换」规则——dsh 压缩（手动+自动）均为会话内操作不改 id；`session/end-seed` 是 resume 标记而非 fork 证据（含判别法）；换 id 仅 fork/subagent/新会话三条路，修复面是 parentId 链
+  - 同日第二条：「子代理沿谱系借绑定，不写绑定」——`resolveEffectiveBinding`（自有优先→父链借用，环检测+8 跳上限）、`agent/session-start` 喂 `parentOf`、`sessionWorktree`/`worktreeStatus` 回 `inherited`/`bindingInherited`、exit 报错指明绑定属父会话、客户端零改动
+
 ## 2026-08-17 [capture]
 - **Domains**: stats-drawer
 - **Updated docs**:

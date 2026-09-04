@@ -13,16 +13,26 @@ declare module '@deepseek-ai/cordis' {
       register(definition: unknown): () => void
     }
     /**
+     * Event bus, mixed onto ctx in real cordis. Only `on` is mirrored, loose:
+     * the typed event table lives in the @deepseek-ai/dsh-* packages this shim
+     * stands in for. Listeners are fiber-owned and removed on unload.
+     */
+    events: {
+      on(name: string, listener: (...args: any[]) => void): void
+    }
+    /**
      * SystemPrompt registry. Only `context()` is mirrored — the dynamic
      * per-assembly contribution, whose `text` provider is SYNCHRONOUS (see the
      * real `PromptContext` in packages/core/system-prompt/src/index.ts). The
-     * `agent` field on the assemble context is merged in by `dsh-agent`.
+     * `agent` field on the assemble context is merged in by `dsh-agent`; its
+     * session header carries the parent edge a subagent is born with
+     * (`SessionHeader.parentSession` in packages/core/session).
      */
     systemPrompt: {
       context(input: {
         name: string
         order: number
-        text: (context: { agent?: { session: { id: string } } }) => string
+        text: (context: { agent?: { session: { id: string; header?: { parentSession?: string } } } }) => string
       }): () => void
     }
     /** Mount a child scope once the named services are available; loose here, see file header. */
