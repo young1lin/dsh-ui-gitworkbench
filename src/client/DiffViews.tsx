@@ -15,6 +15,7 @@ import {
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import { PaneDivider } from './PaneDivider.tsx'
+import { SideRails } from './SideRails.tsx'
 import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
 import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
@@ -414,6 +415,11 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   const rowWindowKey = `${scopeKey}\x1f${path}\x1f${layer}\x1f${sides?.diffSha ?? ''}`
   const alignedGridRef = useRef<HTMLDivElement>(null)
   const denseGridRef = useRef<HTMLDivElement>(null)
+  // The two columns themselves, for the rails that scroll them — see
+  // SideRails.tsx: each column's own scrollbar is drawn at the bottom of the
+  // FILE, which is not a place a scrollbar can be used from.
+  const leftColRef = useRef<HTMLDivElement>(null)
+  const rightColRef = useRef<HTMLDivElement>(null)
   const fixedWin = useRowWindow(scrollRef, rows.length, rowWindowKey, !wrap)
   // The taller of a row's two sides is what the row is worth, so the estimate
   // is fed the longer of the two texts.
@@ -919,6 +925,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
       {bodyState.kind === 'empty' ? (
         <div className={css.empty}>{t('noTextDiff')}</div>
       ) : (
+      <>
       <div
         ref={colsRef}
         className={css.sideCols}
@@ -926,7 +933,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
         onMouseDown={onBodySelect}
         onMouseLeave={() => { setHotBlock(null) }}
       >
-        <div className={wrap ? `${css.sideCol} ${css.sideColWrap}` : css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
+        <div ref={leftColRef} className={wrap ? `${css.sideCol} ${css.sideColWrap}` : css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
           <div
             ref={bodyState.kind === 'editor' ? denseGridRef : alignedGridRef}
             className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}
@@ -986,6 +993,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
         </div>
         <PaneDivider label={t('resizeSides')} onDrag={onSplitDrag} />
         <div
+          ref={rightColRef}
           className={wrap ? `${css.sideCol} ${css.sideColRight} ${css.sideColWrap}` : `${css.sideCol} ${css.sideColRight}`}
           style={{ paddingTop: blockBarClearance }}
         >
@@ -1025,6 +1033,8 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           )}
         </div>
       </div>
+      <SideRails leftRef={leftColRef} rightRef={rightColRef} split={split} />
+      </>
       )}
       </div>
       {pendingLayer !== null ? (

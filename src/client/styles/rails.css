@@ -1,0 +1,72 @@
+/**
+ * Where the side-by-side pane's horizontal scrollbars live.
+ *
+ * The pane scrolls vertically and each column scrolls horizontally on its own,
+ * which is what lets the divider mean something: one grid across both sides is
+ * sized by the widest line in the file, so dragging it moves nothing. The cost
+ * is where the browser then draws a column's scrollbar — at the bottom of the
+ * COLUMN, and a column is as tall as the file. On a two-thousand-line diff the
+ * only way to reach the control that scrolls sideways was to scroll all the
+ * way down first, and then scroll back up to see what it did.
+ *
+ * So the column's scrollbar is hidden and a rail is stuck to the bottom of the
+ * pane in its place. See `h-rail.ts` and `SideRails.tsx`.
+ */
+/* The horizontal scrollbars, one per column, stuck to the bottom of the PANE.
+   `position: sticky` inside the pane's vertical scroller is what floats them:
+   they ride at the bottom edge of the viewport wherever the reader is in the
+   file, the way an editor's scrollbar does.
+
+   The strip is ALWAYS rendered and collapses to `height: 0` instead of being
+   conditionally mounted, so the rails keep their elements and the scroll-sync
+   effects keep stable dependencies (SideRails.tsx).
+
+   The negative margin is why the strip costs no layout height: without it the
+   pane would scroll 12px further than the file is long, forever. What it
+   overlays is the grid's own 16px bottom padding, not a line of code. */
+.sideRails {
+  position: sticky; bottom: 0; z-index: 6;
+  display: flex; align-items: stretch;
+  height: 0; overflow: hidden;
+}
+/* Opaque, because it OVERLAYS the last rows rather than reserving space below
+   them: without a background the code underneath reads straight through the
+   strip. */
+.sideRailsOn {
+  height: 12px; margin-top: -12px; overflow: visible;
+  background: var(--gs-surface);
+}
+/* Each rail is a REAL scroller whose content is exactly as wide as its
+   column's, so the two scroll positions map one to one with no arithmetic and
+   the thumb is the size the reader expects. */
+.sideRail {
+  flex: 0 0 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+}
+/* Firefox only. Chromium IGNORES its `::-webkit-scrollbar` rules for any
+   element that also sets `scrollbar-width`, and what it falls back to on
+   Windows is an overlay bar: no layout height, and nothing painted at rest.
+   For a strip whose whole job is to be seen and dragged, that is a control
+   that is not there — so the standard property is scoped to the engine that
+   needs it. */
+@supports (-moz-appearance: none) {
+  .sideRail { scrollbar-width: thin; scrollbar-color: var(--gs-fg-fainter) transparent; }
+}
+/* The thumb, drawn explicitly: styling these pseudo-elements is what opts
+   Chromium out of overlay scrollbars and back into a classic one that occupies
+   its own layout height — which is what the probe measures to prove the bar is
+   painted at all. */
+.sideRail::-webkit-scrollbar { height: 10px; }
+.sideRail::-webkit-scrollbar-track { background: transparent; }
+.sideRail::-webkit-scrollbar-thumb {
+  background: var(--gs-fg-fainter);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--gs-r-pill);
+}
+.sideRail:hover::-webkit-scrollbar-thumb { background: var(--gs-fg-faint); background-clip: padding-box; }
+.sideRailRight { flex: 1 1 0; }
+/* Mirrors `.paneDivider`'s width in shell.css, so each rail sits under the
+   column it scrolls — `tests/css-modules.test.ts` holds the two together. */
+.sideRailGap { flex: none; width: 7px; }
+.sideRailSpan { height: 1px; }

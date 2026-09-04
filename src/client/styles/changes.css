@@ -315,8 +315,17 @@
 .sideScroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .sideCols { display: flex; align-items: stretch; min-height: 100%; }
 /* `min-width: 0` is what lets a flex column be narrower than its content —
-   without it the column refuses to shrink and the divider stops moving. */
-.sideCol { flex: 0 0 auto; min-width: 0; overflow-x: auto; }
+   without it the column refuses to shrink and the divider stops moving. The
+   column still scrolls sideways — a trackpad swipe or a shift-wheel over the
+   code lands here — but draws no scrollbar of its own: it is as tall as the
+   file, so that scrollbar lands at the bottom of the diff. rails.css puts a
+   real one at the bottom of the PANE and says why. Both spellings, because
+   Firefox reads the property and Chromium the pseudo-element. */
+.sideCol {
+  flex: 0 0 auto; min-width: 0; overflow-x: auto;
+  scrollbar-width: none;
+}
+.sideCol::-webkit-scrollbar { display: none; }
 .sideColRight { flex: 1 1 0; }
 .sideColGrid {
   display: grid;
