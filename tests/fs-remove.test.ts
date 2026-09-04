@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { removePathInside, resolveInside } from '../src/fs-remove.js'
+import { removePathInside } from '../src/fs-remove.js'
 
 let root = ''
 
@@ -15,27 +15,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
-})
-
-describe('resolveInside', () => {
-  it('resolves a plain relative path against the root', () => {
-    expect(resolveInside(root, 'a/b.txt')).toBe(resolve(root, 'a/b.txt'))
-  })
-
-  it('refuses to leave the worktree', () => {
-    expect(() => resolveInside(root, '../escape.txt')).toThrow(/unsafe path/)
-    expect(() => resolveInside(root, 'a/../../escape.txt')).toThrow(/unsafe path/)
-  })
-
-  it('refuses an absolute path, a drive letter and a UNC prefix', () => {
-    expect(() => resolveInside(root, '/etc/passwd')).toThrow(/unsafe path/)
-    expect(() => resolveInside(root, 'C:/Windows/System32')).toThrow(/unsafe path/)
-    expect(() => resolveInside(root, '//server/share/file')).toThrow(/unsafe path/)
-  })
-
-  it('refuses the worktree root itself', () => {
-    expect(() => resolveInside(root, '.')).toThrow(/worktree root/)
-  })
 })
 
 describe('removePathInside', () => {

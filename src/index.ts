@@ -44,7 +44,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -68,6 +68,7 @@ import {
 import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
+import { resolveInside } from './path-lock.js'
 import { resolveRepoRoot, rootedDir } from './repo-root.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
@@ -629,32 +630,36 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (layer !== 'unstaged' && layer !== 'staged') {
       throw new Error(`unknown layer "${String(layer)}"; expected 'unstaged' or 'staged'`)
     }
-    if (typeof path !== 'string' || !isSafePathArg(path)) {
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
       throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
     }
     // Repository root, not the session's directory: every path below is
     // repository-relative (pathspecs resolve against the cwd, and so does
     // the file read for the editor's target). See repo-root.ts.
     const root = await this.rootedDirOf(worktreePath, signal)
+    // The unstaged layer READS THE FILE, so its absolute path is built by the
+    // lock rather than by a join — see path-lock.ts. Done here, once, so the
+    // one place that resolves a client path is visible in this method.
     return layer === 'unstaged'
-      ? await this.unstagedSides(root, path, signal)
+      ? await this.unstagedSides(root, path, resolveInside(root, path), signal)
       : await this.stagedSides(root, path, signal)
   }
 
-  /** The unstaged layer: diff index→worktree, target = the working-tree file. */
-  private async unstagedSides(root: string, path: string, signal: AbortSignal): Promise<FileSides> {
+  /** The unstaged layer: diff index→worktree, target = the working-tree file.
+   *  `full` is that file's absolute path, already through the lock. */
+  private async unstagedSides(root: string, path: string, full: string, signal: AbortSignal): Promise<FileSides> {
     // Size guard first, off the stat rather than a read: declining a file past
     // the cap must not mean loading a pathological one whole first. Bytes are
     // all a stat knows; the line half of the guard needs the read below.
     try {
-      const info = await stat(join(root, path))
+      const info = await stat(full)
       if (info.isFile() && targetTooLarge(info.size, 0)) return { ...emptySides(), tooLarge: true }
     } catch {
       // Missing file: deleted in the working tree, which the diff below states.
     }
     let bytes: Buffer | null = null
     try {
-      bytes = await readFile(join(root, path))
+      bytes = await readFile(full)
     } catch {
       bytes = null
     }
@@ -907,12 +912,14 @@ export class GitWorkbenchService extends TypertRemoteService {
    */
   @Remote('fileImage')
   async fileImage(worktreePath: string, path: string, signal: AbortSignal): Promise<FileImage> {
-    if (typeof path !== 'string' || !isSafePathArg(path)) {
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
       throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
     }
     // The repository root — the image is read from disk at the same base
-    // every other path in this plugin is relative to (repo-root.ts).
-    const full = join(await this.rootedDirOf(worktreePath, signal), path)
+    // every other path in this plugin is relative to (repo-root.ts) — and
+    // through the lock, because this is a raw read with no git in the way
+    // to refuse a path that leaves the repository (path-lock.ts).
+    const full = resolveInside(await this.rootedDirOf(worktreePath, signal), path)
     let size = 0
     try {
       const info = await stat(full)
@@ -1204,24 +1211,17 @@ export class GitWorkbenchService extends TypertRemoteService {
    * `fileImage`, and adding an ignore check would only make the browser ask
    * git a second question to learn what it already knows from the listing it
    * was handed. What it does NOT permit is leaving the worktree, which is
-   * what the two locks below are for.
+   * what the path lock below is for.
    * @param worktreePath - worktree the directory lives in; empty falls back to the host cwd.
    * @param dir - repo-relative directory path, as the collapsed listing named it.
    * @param signal - abort signal.
    */
   @Remote('ignoredDir')
   async ignoredDir(worktreePath: string, dir: string, signal: AbortSignal): Promise<{ entries: DirChild[]; truncated: boolean }> {
-    // The same two locks every delete in fs-remove.ts carries, read here
-    // instead of written: the browser is a less trusted source of paths than
-    // git's own output, and `readdir` obeys no repository boundary.
-    if (!isSafeRelativePath(dir)) {
-      throw new Error(`unsafe path argument: ${JSON.stringify(dir)}`)
-    }
-    const base = resolve(await this.rootedDirOf(worktreePath, signal))
-    const target = resolve(base, dir)
-    if (target === base || !target.startsWith(base + sep)) {
-      throw new Error(`path escapes the worktree: ${JSON.stringify(dir)}`)
-    }
+    // The same lock every filesystem read in this plugin passes: the browser
+    // is a less trusted source of paths than git's own output, and `readdir`
+    // obeys no repository boundary (path-lock.ts).
+    const target = resolveInside(await this.rootedDirOf(worktreePath, signal), dir)
     let dirents
     try {
       dirents = await readdir(target, { withFileTypes: true })
@@ -1979,7 +1979,7 @@ interface UntrackedMeasure {
 async function measureUntracked(root: string, path: string): Promise<UntrackedMeasure> {
   let bytes: Buffer
   try {
-    bytes = await readFile(join(root, path))
+    bytes = await readFile(resolveInside(root, path))
   } catch {
     return { lineCount: 0, binary: false, diffable: false }
   }
@@ -2005,7 +2005,7 @@ async function measureUntracked(root: string, path: string): Promise<UntrackedMe
 async function untrackedSegment(root: string, path: string, byteCap: number = UNTRACKED_FILE_BYTE_CAP): Promise<string | null> {
   let bytes: Buffer
   try {
-    bytes = await readFile(join(root, path))
+    bytes = await readFile(resolveInside(root, path))
   } catch {
     return null
   }

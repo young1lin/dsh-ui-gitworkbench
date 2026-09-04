@@ -124,3 +124,53 @@ describe('path-carrying RPCs run at the repository root', () => {
     expect(stats!.body, 'stats must measure untracked files at the root').toContain('measureUntracked(root,')
   })
 })
+
+/**
+ * Every raw filesystem read in the host goes through the path lock.
+ *
+ * git is its own backstop: hand it any pathspec and it still will not read
+ * outside the repository, which is why `isSafePathArg` only has to keep a path
+ * from being read as an option. `readFile`, `stat` and `readdir` have no such
+ * backstop, and the path they are given came from the browser — so
+ * `join(root, path)` was an arbitrary read of the machine, one `../` at a
+ * time. `resolveInside` (path-lock.ts) is the single place that turns a
+ * client path into an absolute one; this pins that it stays the only one.
+ */
+describe('filesystem reads pass the path lock', () => {
+  const stripped = code(source)
+  const methods = remoteMethods(stripped)
+
+  it('imports the lock at all', () => {
+    // Vacuous-pass backstop: without this, a file that stopped importing
+    // `resolveInside` would satisfy every assertion below by having no
+    // filesystem path to check.
+    expect(stripped).toContain("import { resolveInside } from './path-lock.js'")
+  })
+
+  it('exactly the RPCs that read the disk resolve their path through the lock', () => {
+    // `writeChecked` is absent on purpose: it delegates to `runWriteChecked`,
+    // which takes the same lock inside write-checked.ts. Every other name here
+    // reads the filesystem in its own body.
+    expect(methods.filter(m => m.body.includes('resolveInside')).map(m => m.name).sort())
+      .toEqual(['fileImage', 'fileSides', 'ignoredDir'])
+  })
+
+  it('no filesystem path is built by joining a caller path onto the root', () => {
+    // The shape the traversal arrived in. `join(target, entry.name)` inside
+    // `ignoredDir` is fine and stays: `target` is already locked and the name
+    // came from readdir, not from the client.
+    const joined = [...stripped.matchAll(/join\([^()]*,\s*(?:path|dir)\s*\)/g)].map(m => m[0])
+    expect(joined, 'join(root, path) is how a client string became an absolute path').toEqual([])
+  })
+
+  it('the untracked helpers read through the lock too', () => {
+    // These take git's own output rather than a client string, so they are not
+    // the hole — but they are the two remaining raw reads in the file, and a
+    // rule with an exception is a rule nobody applies.
+    for (const helper of ['measureUntracked', 'untrackedSegment']) {
+      const at = stripped.indexOf(`async function ${helper}(`)
+      expect(at, `${helper} not found`).toBeGreaterThanOrEqual(0)
+      expect(stripped.slice(at, at + 800), helper).toContain('readFile(resolveInside(root, path))')
+    }
+  })
+})

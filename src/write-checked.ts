@@ -33,7 +33,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { renameWithRetry } from './atomic-json.js'
-import { resolveInside } from './fs-remove.js'
+import { resolveInside } from './path-lock.js'
 import { decodesAsUtf8, isSafePathArg, type OpFailure } from './git-ops.js'
 import type { GitRun } from './apply-blocks.js'
 
