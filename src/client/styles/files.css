@@ -45,6 +45,11 @@
   text-overflow: ellipsis;
 }
 .fbRow:hover { background: var(--gs-raise); }
+/* Ignored territory, dimmed so "why does this never show in Changes" has a
+   visible answer. Qualified like .fbRowActive (which it must not fight: the
+   component never applies both, and the active rule in controls.css is
+   imported before this file anyway). */
+.fbRow.fbRowIgnored { opacity: 0.55; }
 /* .fbRowActive: see the shared selected-state rule in controls.css. It is
    written there qualified, because this file is imported after that one and a
    bare modifier declared above its base loses the cascade. */

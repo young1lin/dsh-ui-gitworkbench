@@ -24,7 +24,7 @@ export type WorkbenchKey =
   | 'drawerLabel' | 'totalsDim' | 'refresh' | 'close'
   | 'tabsLabel' | 'tabChanges' | 'tabHistory' | 'tabCompare' | 'tabFiles'
   // the Files tab: browse the repository, read a file, blame it, edit it
-  | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick'
+  | 'fileSearchPlaceholder' | 'filesTruncated' | 'filesEmpty' | 'filesNoMatch' | 'filesPick' | 'filesIgnored' | 'filesIgnoredCut' | 'filesIgnoredFailed'
   | 'filesUnsavedAsk' | 'filesDiscardOpen' | 'filesMore' | 'filesVanished' | 'fileReadOnlyCrlf' | 'fileReadOnlyEncoding'
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory'
   | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
@@ -90,6 +90,9 @@ export const zh: Record<WorkbenchKey, string> = {
   tabFiles: '文件',
   fileSearchPlaceholder: '搜索文件…',
   filesTruncated: '文件太多，列表已截断；用搜索找剩下的。',
+  filesIgnored: '已被 gitignore',
+  filesIgnoredCut: '这个目录条目太多，已截断；搜索找不到没列出的部分。',
+  filesIgnoredFailed: '无法列出被忽略的文件。',
   filesEmpty: '这个仓库还没有文件',
   filesNoMatch: '没有匹配的文件',
   filesMore: '还有 {count} 个，用上面的搜索找',
@@ -332,6 +335,9 @@ export const en: Record<WorkbenchKey, string> = {
   tabFiles: 'Files',
   fileSearchPlaceholder: 'Search files…',
   filesTruncated: 'Too many files to list; use the search for the rest.',
+  filesIgnored: 'Ignored (gitignore)',
+  filesIgnoredCut: 'This directory has too many entries; the list is cut, and the search cannot reach the rest.',
+  filesIgnoredFailed: 'Could not list the ignored files.',
   filesEmpty: 'This repository has no files yet',
   filesNoMatch: 'No matching files',
   filesMore: 'and {count} more — use the search above',

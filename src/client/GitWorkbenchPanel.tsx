@@ -72,6 +72,7 @@ import {
   opMessage, RefPicker, SettingsMenu, SourceChip, SyncBar,
 } from './WorkbenchControls.tsx'
 import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
+import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cache.ts'
 import { useIdleValue } from './idle-value.ts'
 import { emptyQueryFilter, parseLogQuery, serializeLogQuery } from './log-filter-query.ts'
 import { nextAfterPlan, type DiscardAnswer, type DiscardPreview } from './discard-flow.ts'
@@ -86,6 +87,7 @@ import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesCl
 import css from './GitWorkbenchPanel.module.css'
 
 export type * from './git-workbench-types.ts'
+export type { IgnoredChild } from './ignored-cache.ts'
 import type {
   BlameAnswer, BlockAsk, BlockMode, FileImage, FileSides, GitCommit, GitFile,
   GitOpName, GitOpPayload, GitOpResult, SideLayer, SyncStatus, Translate, WorkbenchStats,
@@ -114,7 +116,12 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
    *  ref the history walks, so every listed author actually has commits there. */
   readonly fetchAuthors: (worktreePath: string | undefined, ref: string, signal: AbortSignal) => Promise<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>
   /** Every path on HEAD — the path picker's raw material. */
-  readonly fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
+  readonly fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<RepoTreeAnswer | null>
+  /** One level of one ignored directory, read from the filesystem — the step
+   *  behind expanding `node_modules/` in the Files tab. Null when the host
+   *  half is older than this client, which also sends no ignored entries, so
+   *  the call is never made. */
+  readonly fetchIgnoredDir: (worktreePath: string | undefined, dir: string, signal: AbortSignal) => Promise<DirRead | null>
   readonly fetchCompare: (worktreePath: string | undefined, base: string, head: string, signal: AbortSignal) => Promise<WorkbenchStats | null>
   readonly fetchStyle: (worktreePath: string | undefined, signal: AbortSignal) => Promise<StyleSettings | null>
   readonly saveStyle: (worktreePath: string | undefined, scope: StyleScope, entry: StyleEntry, signal: AbortSignal) => Promise<{ ok: boolean; error?: string }>
@@ -254,15 +261,44 @@ const EMPTY_STATS: WorkbenchStats = {
 /** How long the Files place must hold still before it is written. */
 const PLACES_WRITE_MS = 500
 
-/** One worktree's last-read file list. */
-interface FilesTree {
+/**
+ * What `repoTree` answers. The ignored fields are OPTIONAL because a host
+ * half older than this client sends none of them — the browser then simply
+ * has no ignored rows to show. Named rather than inlined so the panel, the
+ * drawer and the browser cannot drift apart on what crosses the wire.
+ */
+export interface RepoTreeAnswer {
+  paths: string[]
+  truncated: boolean
+  ignored?: string[]
+  ignoredTruncated?: boolean
+  /** Set when the ignored listing itself failed, so "nothing ignored" and
+   *  "could not ask" are not the same silence. */
+  ignoredError?: string
+}
+
+/** One worktree's last-read file list. Exported because the browser takes it
+ *  whole: one shape for the cache and the update, so the two cannot drift. */
+export interface FilesTree {
   readonly paths: readonly string[]
   readonly truncated: boolean
+  /** Ignored entries exactly as `repoTree` sent them: full paths for ignored
+   *  files, one trailing-slash line per directory a rule ignores whole. */
+  readonly ignored: readonly string[]
+  readonly ignoredTruncated: boolean
+  /** Why the ignored listing is missing, when it is. Absent on success — an
+   *  empty list then means the repository really has nothing ignored. */
+  readonly ignoredError?: string
+  /** Children read so far — the payload of every lazy expansion the reader
+   *  has made in this worktree, bounded and evicting (`ignored-cache.ts`). */
+  readonly children: IgnoredCache
 }
 
 /** A worktree nobody has opened the Files tab on yet. One instance, so an
  *  unvisited worktree does not re-render the browser on every pass. */
-const EMPTY_TREE: FilesTree = { paths: [], truncated: false }
+const EMPTY_TREE: FilesTree = {
+  paths: [], truncated: false, ignored: [], ignoredTruncated: false, children: NO_IGNORED_READS,
+}
 
 /** The overlay with nothing on it — one instance, so an empty overlay never
  *  re-renders the tree that receives it. */
@@ -296,7 +332,7 @@ function defaultBase(branches: readonly string[], head: string): string {
 
 
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchIgnoredDir, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -332,10 +368,17 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const rememberPlace = useCallback((key: string, next: FilesPlace): void => {
     setFilesPlaces(prev => withPlace(prev, key, next))
   }, [])
-  const rememberTree = useCallback((key: string, next: FilesTree): void => {
+  // An UPDATER, not a value: two lazy directory reads can land in the same
+  // microtask, before React has re-rendered either into the browser. Both
+  // would then build their write from the same stale tree and the first one's
+  // children would be silently dropped — which the effect below the browser
+  // notices and re-reads, turning N expanded directories into O(N²) disk
+  // reads. Folding the merge into the setState is what makes each write see
+  // the one before it.
+  const rememberTree = useCallback((key: string, update: (prev: FilesTree) => FilesTree): void => {
     setFilesTrees(prev => {
       const map = new Map(prev)
-      map.set(key, next)
+      map.set(key, update(prev.get(key) ?? EMPTY_TREE))
       return map
     })
   }, [])
@@ -1246,6 +1289,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           writeChecked={writeChecked}
           fetchBlame={fetchBlame}
           fetchFileImage={fetchFileImage}
+          fetchIgnoredDir={fetchIgnoredDir}
           viewKey={viewKey}
           gen={gen}
           collapsed={collapsed}
@@ -1329,7 +1373,8 @@ interface DrawerProps {
   /** Author roster for the funnel popup's user picker. */
   fetchAuthors: (worktreePath: string | undefined, ref: string, signal: AbortSignal) => Promise<{ authors: readonly AuthorEntry[]; truncated: boolean } | null>
   /** Every path on HEAD — the path picker's raw material. */
-  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
+  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<RepoTreeAnswer | null>
+  fetchIgnoredDir: (worktreePath: string | undefined, dir: string, signal: AbortSignal) => Promise<DirRead | null>
   /** Every local branch — the ref pickers' options, worktree or not. */
   branches: readonly string[]
   /** Branches that have a worktree, grouped to the top of every picker. */
@@ -1423,11 +1468,11 @@ interface DrawerProps {
   filesPlaces: FilesPlaces
   onFilesPlace: (key: string, next: FilesPlace) => void
   filesTrees: ReadonlyMap<string, FilesTree>
-  onFilesTree: (key: string, next: FilesTree) => void
+  onFilesTree: (key: string, update: (prev: FilesTree) => FilesTree) => void
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1457,7 +1502,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   const rememberPlaceHere = useCallback(
     (next: FilesPlace) => { onFilesPlace(filesKey, next) }, [onFilesPlace, filesKey])
   const rememberTreeHere = useCallback(
-    (next: FilesTree) => { onFilesTree(filesKey, next) }, [onFilesTree, filesKey])
+    (update: (prev: FilesTree) => FilesTree) => { onFilesTree(filesKey, update) }, [onFilesTree, filesKey])
   const browsablePaths = useMemo(
     () => stats.files.filter(file => file.status !== 'deleted').map(file => file.path),
     [stats.files],
@@ -1985,6 +2030,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               cached={filesTrees.get(filesKey) ?? EMPTY_TREE}
               onTree={rememberTreeHere}
               fetchRepoTree={fetchRepoTree}
+              fetchIgnoredDir={fetchIgnoredDir}
               fetchFileSides={fetchFileSides}
               writeChecked={writeChecked}
               fetchBlame={fetchBlame}

@@ -84,3 +84,48 @@ describe('searchPaths', () => {
     expect(searchPaths(paths, '   ')).toEqual([])
   })
 })
+
+describe('buildDirTree with dirHints', () => {
+  it('shows a hinted directory with no files under it as a real directory', () => {
+    // The ignored listing collapses `node_modules/` to one line with nothing
+    // under it; a path list cannot express "a directory that exists but is
+    // empty here" — without the hint the browser would render no row at all,
+    // and there would be nothing to click to expand.
+    const tree = buildDirTree(['src/a.ts'], new Set(['node_modules']))
+    expect(tree).toEqual([
+      { name: 'node_modules', path: 'node_modules', fileCount: 0, files: [], children: [] },
+      { name: 'src', path: 'src', fileCount: 1, files: ['a.ts'], children: [] },
+    ])
+  })
+
+  it('hints nest, and a hint whose children have loaded is redundant but harmless', () => {
+    // Once a lazy directory's children arrive they are ordinary paths; the
+    // hint still names the directory and must not duplicate or damage it.
+    const tree = buildDirTree(['node_modules/react/index.js'], new Set(['node_modules']))
+    expect(tree).toEqual([
+      {
+        name: 'node_modules', path: 'node_modules', fileCount: 1, files: [],
+        children: [
+          { name: 'react', path: 'node_modules/react', fileCount: 1, files: ['index.js'], children: [] },
+        ],
+      },
+    ])
+    const nested = buildDirTree(['a/b/c.ts'], new Set(['a/b']))
+    expect(nested[0]!.children.map(dir => dir.name)).toEqual(['b'])
+  })
+
+  it('never demotes a name the path list recorded as a file', () => {
+    // The list is the primary source; a hint is hearsay next to it. A stale
+    // listing claiming `x` is a directory must not turn the file `x` into a
+    // folder, nor split one name into two rows.
+    const tree = buildDirTree(['x', 'src/a.ts'], new Set(['x']))
+    expect(tree.map(dir => dir.name)).toEqual(['src'])
+    expect(tree.length).toBe(1)
+    // And a hint walking THROUGH a recorded file name is skipped entire.
+    expect(buildDirTree(['a'], new Set(['a/b'])).length).toBe(0)
+  })
+
+  it('ignores empty hint strings', () => {
+    expect(buildDirTree(['a/b.ts'], new Set(['']))[0]!.files).toEqual(['b.ts'])
+  })
+})

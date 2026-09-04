@@ -23,12 +23,13 @@
  * @module @young1lin/dsh-ui-gitworkbench/client/FileBrowser
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import css from './GitWorkbenchPanel.module.css'
 import { CodeEditor } from './CodeEditor.tsx'
 import { buildDirTree } from './dir-tree.ts'
-import { mergePaths, rootFiles, searchRows, treeRows, type FileRow } from './file-rows.ts'
+import { ancestorsOf, isIgnoredPath, mergePaths, rootFiles, searchRows, splitIgnored, treeRows, type FileRow } from './file-rows.ts'
+import { NO_IGNORED_READS, anyDirTruncated, attachReads, rememberDir, type DirRead } from './ignored-cache.ts'
 import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
 import { sameList } from './stable-list.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
@@ -44,7 +45,7 @@ import {
   DISARMED, applySaveOk, applySides, armEdit, armRefusal, isDirty, markConflict,
   type EditState, type WriteResult,
 } from './side-edit.ts'
-import type { BlameAnswer, BlameLine, FileImage, FileSides, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
+import type { BlameAnswer, BlameLine, FileImage, FileSides, FilesTree, RepoTreeAnswer, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
 
 /** Most search hits rendered at once — a one-letter query must not paint a
  *  whole repository into the DOM. */
@@ -62,7 +63,7 @@ const FILES_PER_DIR = 100
 
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree,
-  fetchRepoTree, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
+  fetchRepoTree, fetchIgnoredDir, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
 }: {
   t: Translate
   palette: string
@@ -78,7 +79,12 @@ export function FileBrowser({
   /** The drawer's own drag handle, passed in rather than imported, so this
    *  module does not import a value out of the panel that imports it. */
   divider: ReactNode
-  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<{ paths: string[]; truncated: boolean } | null>
+  fetchRepoTree: (worktreePath: string | undefined, signal: AbortSignal) => Promise<RepoTreeAnswer | null>
+  /** One level of one ignored directory, read from the filesystem: git
+   *  collapses ignored directories by design and cannot be asked for their
+   *  contents scoped, so the expansion of a `node_modules/` row is a disk
+   *  read, not a git listing. */
+  fetchIgnoredDir: (worktreePath: string | undefined, dir: string, signal: AbortSignal) => Promise<DirRead | null>
   fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
@@ -95,12 +101,17 @@ export function FileBrowser({
   place: FilesPlace
   onPlace: (next: FilesPlace) => void
   /** The last file list read, kept for the same reason: coming back should
-   *  render the tree, not blank it while the repository is re-read. */
-  cached: { readonly paths: readonly string[]; readonly truncated: boolean }
-  onTree: (next: { readonly paths: readonly string[]; readonly truncated: boolean }) => void
+   *  render the tree, not blank it while the repository is re-read. The
+   *  ignored fields carry the collapsed listing and every lazy directory's
+   *  read children. */
+  cached: FilesTree
+  /** An UPDATER rather than a value: lazy directory reads land concurrently,
+   *  and a write built from a tree that a sibling write already replaced
+   *  drops that sibling's children on the floor. */
+  onTree: (update: (prev: FilesTree) => FilesTree) => void
 }): ReactNode {
   const { open, query, blameOn } = place
-  const { paths, truncated } = cached
+  const { paths, truncated, ignored, ignoredTruncated, ignoredError, children } = cached
   const expanded = useMemo(() => new Set(place.expanded), [place.expanded])
   /** A file that was open and is not in the repository any more. Reported
    *  rather than silently applied: a selection that clears itself with no
@@ -158,7 +169,19 @@ export function FileBrowser({
     void fetchRepoTree(statsPath, ctrl.signal)
       .then(answer => {
         if (!alive || answer === null) return
-        onTree({ paths: answer.paths, truncated: answer.truncated })
+        // A refresh starts the lazy children over: the tree they were read
+        // against is gone. The ignored fields are optional against an older
+        // host half, which then simply has no ignored rows to show.
+        onTree(() => ({
+          paths: answer.paths,
+          truncated: answer.truncated,
+          ignored: answer.ignored ?? [],
+          ignoredTruncated: answer.ignoredTruncated ?? false,
+          // Omitted, not undefined: the field says WHY the listing is missing,
+          // and a present-but-undefined key would read as an empty reason.
+          ...(answer.ignoredError !== undefined ? { ignoredError: answer.ignoredError } : {}),
+          children: NO_IGNORED_READS,
+        }))
       })
       .catch(() => { /* an old host half: the tree stays empty and says so */ })
     return () => { alive = false; ctrl.abort() }
@@ -246,9 +269,54 @@ export function FileBrowser({
   if (!sameList(extraHeld.current, extraPaths)) extraHeld.current = extraPaths
   const steadyExtra = extraHeld.current
 
-  const all = useMemo(() => mergePaths(paths, steadyExtra), [paths, steadyExtra])
-  const tree = useMemo(() => buildDirTree(all), [all])
-  const roots = useMemo(() => rootFiles(all), [all])
+  /** The ignored half of the listing, split by the trailing slash that is its
+   *  only kind marker: ignored files join the browsable list (they open,
+   *  edit and save through the same path untracked files already take);
+   *  collapsed directories become tree hints the rows below render as
+   *  expandable folders. */
+  const { files: ignoredFiles, dirs: collapsedDirs } = useMemo(() => splitIgnored(ignored), [ignored])
+  const ignoredFilesOf = useMemo(() => new Set(ignoredFiles), [ignoredFiles])
+  const collapsedOf = useMemo(() => new Set(collapsedDirs), [collapsedDirs])
+
+  /**
+   * The list git can speak for, and the tree over it. Both change only when
+   * the REPOSITORY is re-read — never when a folder is expanded, which is the
+   * whole point of the split below: merging the lazy children back into this
+   * list meant a fresh `Set`, a fresh `localeCompare` sort and a fresh tree
+   * walk over every path in the repository on every click (140ms at 50,000
+   * paths, measured, synchronously on the click).
+   */
+  const base = useMemo(
+    () => mergePaths(mergePaths(paths, steadyExtra), ignoredFiles),
+    [paths, steadyExtra, ignoredFiles],
+  )
+  /** Collapsed directories exist with nothing under them YET, and a path list
+   *  cannot express that; tracked directories are all implied by their files
+   *  and never need a hint. */
+  const baseTree = useMemo(() => buildDirTree(base, collapsedOf), [base, collapsedOf])
+  /** Everything read since, grafted onto the nodes it belongs to — work
+   *  proportional to what was clicked, not to the repository. */
+  const tree = useMemo(() => attachReads(baseTree, children), [baseTree, children])
+  const roots = useMemo(() => rootFiles(base), [base])
+
+  /** Lazy children as ordinary openable paths. The search and the
+   *  open-file reconciliation both read a flat list, so they get one — a
+   *  CONCATENATION, deliberately: `base` is already sorted and deduped, and
+   *  nothing under a collapsed directory can appear in it (git lists neither
+   *  ignored files nor untracked ones from inside a collapsed directory). */
+  const lazyFiles = useMemo(() => {
+    const out: string[] = []
+    for (const [dir, read] of Object.entries(children.reads)) {
+      for (const child of read.entries) if (!child.dir) out.push(`${dir}/${child.name}`)
+    }
+    return out.sort((a, b) => a.localeCompare(b))
+  }, [children])
+  const all = useMemo(
+    () => lazyFiles.length === 0 ? base : [...base, ...lazyFiles],
+    [base, lazyFiles],
+  )
+  /** Whether a directory the reader can still see was cut at the host's cap. */
+  const dirCut = useMemo(() => anyDirTruncated(children), [children])
   const rows = useMemo(
     () => query.trim().length > 0
       ? searchRows(all, query, SEARCH_CAP)
@@ -366,7 +434,34 @@ export function FileBrowser({
     onPlace(openAt(place, path))
   }
 
-  const foldDir = (path: string): void => { onPlace(toggleDir(place, path)) }
+  /** Directories whose children are in flight, so the effect further down
+   *  does not ask twice for the same one. */
+  const pendingDirs = useRef<Set<string>>(new Set())
+  /**
+   * How many times each directory has been expanded. A read belongs to ONE
+   * attempt: fold a directory while its read is in flight, expand it again,
+   * and the first read's answer — including its decision to fold the row back
+   * on failure — would otherwise land on the second attempt and undo the
+   * reader's click.
+   */
+  const attempts = useRef<Map<string, number>>(new Map())
+
+  const foldDir = (path: string): void => {
+    // Folding disowns whatever read is in flight for this row: its answer must
+    // not land on a later expansion, and a re-expand has to be free to ask
+    // again rather than wait on a read nobody will accept.
+    if (place.expanded.includes(path)) {
+      attempts.current.set(path, (attempts.current.get(path) ?? 0) + 1)
+      pendingDirs.current.delete(path)
+    }
+    onPlace(toggleDir(place, path))
+  }
+  /** Collapse a directory only if it stands open — the failure path of a
+   *  lazy read, where a plain toggle would re-open what the reader already
+   *  folded while the read was in flight. */
+  const foldIfOpen = (path: string): void => {
+    if (place.expanded.includes(path)) onPlace(toggleDir(place, path))
+  }
 
   const idRef = useRef(0)
   useEffect(() => { idRef.current += 1 }, [open])
@@ -416,8 +511,66 @@ export function FileBrowser({
    * their identity — would rebuild every row on every render, which is the
    * cost this memo exists to remove.
    */
-  const acts = useRef({ foldDir, openFile })
-  acts.current = { foldDir, openFile }
+  const acts = useRef({ foldDir, openFile, foldIfOpen })
+  acts.current = { foldDir, openFile, foldIfOpen }
+
+  /** What eviction must not touch: the directories standing open, and the
+   *  ancestors of the open file — whose path has to stay in the browsable
+   *  list, or the reconciliation below would report the open file vanished. */
+  const keepRef = useRef<ReadonlySet<string>>(new Set())
+  keepRef.current = useMemo(
+    () => new Set([...place.expanded, ...(open === null ? [] : ancestorsOf(open))]),
+    [place.expanded, open],
+  )
+
+  /** Read one ignored directory's children into the tree cache. A no-op when
+   *  they are already there or in flight. */
+  const loadDirChildren = useCallback((dir: string): void => {
+    if (pendingDirs.current.has(dir)) return
+    pendingDirs.current.add(dir)
+    const attempt = (attempts.current.get(dir) ?? 0) + 1
+    attempts.current.set(dir, attempt)
+    const settle = (): boolean => {
+      pendingDirs.current.delete(dir)
+      return attempts.current.get(dir) === attempt
+    }
+    void fetchIgnoredDir(statsPath, dir, new AbortController().signal)
+      .then(answer => {
+        if (!settle()) return // the reader folded this row and opened it again
+        if (answer === null) {
+          // The read failed — the host half went dark, or refused the path. Fold
+          // the row back: a folder standing open and empty forever reads as
+          // broken, one that declines to open reads as "nothing to ask again".
+          // The effect below retries once anything moves.
+          acts.current.foldIfOpen(dir)
+          return
+        }
+        // Merged inside the setState, against whatever tree is current: two
+        // reads can land before React re-renders either, and a write built
+        // from the tree this callback captured would drop the other's
+        // children — which the effect would then read again, and again.
+        onTree(prev => ({
+          ...prev,
+          children: rememberDir(prev.children, dir, answer, keepRef.current),
+        }))
+      })
+      .catch(() => { settle() })
+  }, [statsPath, fetchIgnoredDir, onTree])
+
+  // Any expanded directory in ignored territory whose children have not been
+  // read — one just clicked open, or one restored from a previous run; the
+  // PLACE survives restarts while the tree does not — gets them read now. The
+  // click itself is the plain folder toggle; children appear as they land,
+  // one level at a time, so no click can enumerate a whole ignored tree at
+  // once. A directory read while its parent is still unread grafts itself the
+  // moment the parent's read creates the node for it.
+  useEffect(() => {
+    for (const dir of place.expanded) {
+      if (children.reads[dir] === undefined && isIgnoredPath(dir, ignoredFilesOf, collapsedOf)) {
+        loadDirChildren(dir)
+      }
+    }
+  }, [place.expanded, children, ignoredFilesOf, collapsedOf, loadDirChildren])
 
   /**
    * `t` arrives in the host's slot props and its identity is not ours to rely
@@ -425,6 +578,8 @@ export function FileBrowser({
    * to change when the language does, and it costs one lookup per render.
    */
   const langKey = t('filesMore', { count: 0 })
+  /** Same trick for the ignored rows' title suffix. */
+  const ignoredLabel = t('filesIgnored')
 
   /**
    * The rendered rows.
@@ -436,7 +591,12 @@ export function FileBrowser({
    * the reader opens — the shape of "it gets laggy once there are a lot of
    * files".
    */
-  const list = useMemo(() => rows.map(row => (
+  const list = useMemo(() => rows.map(row => {
+    /** Ignored territory, by file or by descent from a collapsed directory.
+     *  The active row is exempt in the className below: being the file on
+     *  screen is the louder state, and the two must not fight. */
+    const ignored = row.kind !== 'more' && isIgnoredPath(row.path, ignoredFilesOf, collapsedOf)
+    return (
     <li key={rowKey(row)}>
       {row.kind === 'more' ? (
         <span
@@ -446,11 +606,13 @@ export function FileBrowser({
       ) : (
       <button
         type="button"
-        title={row.path}
+        title={ignored ? `${row.path} — ${ignoredLabel}` : row.path}
         aria-expanded={row.kind === 'dir' ? row.open : undefined}
         className={row.kind === 'file' && row.path === open
           ? `${css.fbRow} ${css.fbRowActive}`
-          : css.fbRow}
+          : ignored
+            ? `${css.fbRow} ${css.fbRowIgnored}`
+            : css.fbRow}
         style={{ paddingLeft: `${0.4 + row.depth * INDENT_EM}em` }}
         onClick={() => {
           row.kind === 'dir' ? acts.current.foldDir(row.path) : acts.current.openFile(row.path)
@@ -471,10 +633,11 @@ export function FileBrowser({
       </button>
       )}
     </li>
-  )),
+    )
+  }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is read through
   // `langKey`, and the handlers through `acts`; see both comments above.
-  [rows, open, langKey])
+  [rows, open, langKey, ignoredLabel, ignoredFilesOf, collapsedOf])
 
   return (
     <>
@@ -487,7 +650,13 @@ export function FileBrowser({
           aria-label={t('fileSearchPlaceholder')}
           onChange={event => { onPlace({ ...place, query: event.target.value }) }}
         />
-        {truncated ? <div className={css.fbNote}>{t('filesTruncated')}</div> : null}
+        {truncated || ignoredTruncated ? <div className={css.fbNote}>{t('filesTruncated')}</div> : null}
+        {/* Separate from the note above because the advice differs: the search
+            reads the path list, and entries a DIRECTORY read cut are not in
+            it. Derived from the cache, so folding or re-reading that directory
+            takes the note away instead of leaving it standing. */}
+        {dirCut ? <div className={css.fbNote}>{t('filesIgnoredCut')}</div> : null}
+        {ignoredError !== undefined ? <div className={css.fbNote}>{t('filesIgnoredFailed')}</div> : null}
         {rows.length === 0 ? (
           <div className={css.empty}>{all.length === 0 ? t('filesEmpty') : t('filesNoMatch')}</div>
         ) : (

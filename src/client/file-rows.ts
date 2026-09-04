@@ -162,6 +162,46 @@ export function searchRows(paths: readonly string[], needle: string, cap: number
   return out
 }
 
+/** What `git ls-files --others --ignored --exclude-standard --directory`
+ *  returned, split by kind: every ignored FILE (any depth, as long as no rule
+ *  swallowed its whole directory) and every directory git collapsed to one
+ *  line because it is ignored as a whole — the trailing slash is the only
+ *  thing that tells them apart, so it is the whole test.
+ *  @param entries - the listing verbatim, as `repoTree` carried it.
+ */
+export function splitIgnored(entries: readonly string[]): { files: readonly string[]; dirs: readonly string[] } {
+  const files: string[] = []
+  const dirs: string[] = []
+  for (const entry of entries) {
+    if (entry.length === 0) continue
+    if (entry.endsWith('/')) dirs.push(entry.slice(0, -1))
+    else files.push(entry)
+  }
+  return { files, dirs }
+}
+
+/**
+ * Whether a row is gitignored territory: an ignored file itself, a directory
+ * the listing collapsed, or anything living under one. Everything under a
+ * collapsed directory is ignored by inheritance, which is what makes the
+ * ancestor walk the whole rule.
+ *
+ * @param path - the row's repo-relative path.
+ * @param files - ignored file paths, from {@link splitIgnored}.
+ * @param dirs - collapsed directory paths, from {@link splitIgnored}.
+ */
+export function isIgnoredPath(
+  path: string,
+  files: ReadonlySet<string>,
+  dirs: ReadonlySet<string>,
+): boolean {
+  if (files.has(path) || dirs.has(path)) return true
+  for (const dir of ancestorsOf(path)) {
+    if (dirs.has(dir)) return true
+  }
+  return false
+}
+
 /**
  * The browsable path list: everything git tracks, plus files that exist on
  * disk but not in HEAD.

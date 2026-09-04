@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildDirTree } from '../src/client/dir-tree.ts'
-import { ancestorsOf, mergePaths, rootFiles, searchRows, treeRows } from '../src/client/file-rows.ts'
+import { ancestorsOf, isIgnoredPath, mergePaths, rootFiles, searchRows, splitIgnored, treeRows } from '../src/client/file-rows.ts'
 
 const PATHS = [
   'package.json',
@@ -263,5 +263,52 @@ describe('treeRows caps subdirectories too', () => {
     const rows = treeRows(buildDirTree(paths), [], new Set(['few']), 100)
     expect(rows.filter(row => row.kind === 'more').length).toBe(0)
     expect(rows.filter(row => row.kind === 'dir').length).toBe(10)
+  })
+})
+
+describe('splitIgnored', () => {
+  it('tells files from collapsed directories by the trailing slash alone', () => {
+    // The listing's only kind marker is the `/` git puts on a directory it
+    // collapsed because a rule ignores it as a whole; an ignored FILE is
+    // listed verbatim at any depth, as long as no rule swallowed its
+    // directory. That is the whole difference between `application-local.yml`
+    // being findable and `node_modules` staying one line.
+    expect(splitIgnored([
+      'application-local.yml',
+      'node_modules/',
+      'scripts/__pycache__/',
+      'src/local-notes.md',
+      '.env',
+    ])).toEqual({
+      files: ['application-local.yml', 'src/local-notes.md', '.env'],
+      dirs: ['node_modules', 'scripts/__pycache__'],
+    })
+  })
+
+  it('drops empty entries rather than inventing a directory from one', () => {
+    expect(splitIgnored(['', 'ok.txt', ''])).toEqual({ files: ['ok.txt'], dirs: [] })
+  })
+})
+
+describe('isIgnoredPath', () => {
+  const { files, dirs } = splitIgnored(['application-local.yml', 'node_modules/', 'logs/'])
+
+  it('marks an ignored file and a collapsed directory itself', () => {
+    expect(isIgnoredPath('application-local.yml', new Set(files), new Set(dirs))).toBe(true)
+    expect(isIgnoredPath('node_modules', new Set(files), new Set(dirs))).toBe(true)
+  })
+
+  it('marks everything under a collapsed directory: inheritance, not re-listing', () => {
+    // Lazy children of an ignored directory are never re-checked against the
+    // ignore rules — everything below the collapse is ignored by descent.
+    expect(isIgnoredPath('node_modules/react/index.js', new Set(files), new Set(dirs))).toBe(true)
+    expect(isIgnoredPath('logs/2026/app.log', new Set(files), new Set(dirs))).toBe(true)
+  })
+
+  it('leaves tracked and untracked paths alone', () => {
+    expect(isIgnoredPath('src/index.ts', new Set(files), new Set(dirs))).toBe(false)
+    expect(isIgnoredPath('new-file.txt', new Set(files), new Set(dirs))).toBe(false)
+    // A directory that merely shares a prefix is not the directory.
+    expect(isIgnoredPath('node_modules-old/config.yml', new Set(files), new Set(dirs))).toBe(false)
   })
 })

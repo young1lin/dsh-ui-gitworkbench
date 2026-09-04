@@ -42,9 +42,9 @@
  * @module @young1lin/dsh-ui-gitworkbench
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -62,9 +62,10 @@ import {
   type OpFailure, type PullMode, type Tracking,
 } from './git-ops.js'
 import {
-  planFromStatus,
+  isSafeRelativePath, planFromStatus,
   type DiscardEffect, type DiscardPlan,
 } from './discard-ops.js'
+import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveRepoRoot, rootedDir } from './repo-root.js'
@@ -113,6 +114,11 @@ const SHORTLOG_CAP = 500
 /** Path list cap for the picker: a monorepo can outrun any popup; past this
  *  the tree is cut and the truncation reported, never silent. */
 const TREE_PATH_CAP = 50_000
+/** Cap on the ignored entry listing `repoTree` rides along. The listing is
+ *  proportional to the .gitignore's coverage, not the repository (git
+ *  collapses every fully-ignored directory to one line), so real repos sit in
+ *  the tens; this is a reported fuse for a pathological ignore setup. */
+const IGNORED_PATH_CAP = 5_000
 /**
  * Most branch names sent to the browser. `worktreeStatus` is polled, so an
  * unbounded list would repeat on the wire every few seconds; the picker reports
@@ -1113,25 +1119,131 @@ export class GitWorkbenchService extends TypertRemoteService {
 
   /**
    * Every file path on HEAD — the filter popup's path picker, aggregated into
-   * a directory tree client-side.
+   * a directory tree client-side — plus the ignored-but-present entries the
+   * Files tab browses.
    *
-   * `-z` is load-bearing: NUL-separated output is UNQUOTED, while the default
-   * would render non-ASCII names as quoted octal escapes under
-   * `core.quotepath` and hand the picker garbage.
+   * The ignored listing is `ls-files --others --ignored --exclude-standard
+   * --directory`: every ignored FILE is listed verbatim (`application-local.yml`
+   * is exactly the file a browser must find and `ls-tree HEAD` cannot), while
+   * every directory a rule ignores as a whole collapses to ONE line with a
+   * trailing slash — `node_modules/` costs one entry, not the ~40k files
+   * inside it. The list therefore scales with the .gitignore's coverage, not
+   * the repository: measured 54 entries / 48ms on this checkout with
+   * node_modules present.
+   *
+   * `-z` is load-bearing on both spawns: NUL-separated output is UNQUOTED,
+   * while the default would render non-ASCII names as quoted octal escapes
+   * under `core.quotepath` and hand the picker garbage.
    * @param worktreePath - worktree whose HEAD is listed; empty falls back to the host cwd.
    * @param signal - abort signal.
    */
   @Remote('repoTree')
-  async repoTree(worktreePath: string, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean }> {
+  async repoTree(worktreePath: string, signal: AbortSignal): Promise<{
+    paths: string[]
+    truncated: boolean
+    /** Ignored entries verbatim; directories keep their trailing slash, which
+     *  is the only thing that tells them from files. */
+    ignored: string[]
+    ignoredTruncated: boolean
+    /** Present only when the ignored listing FAILED, so the browser can tell
+     *  "this repository ignores nothing" from "the question could not be
+     *  asked". Omitted on success — never `undefined`, which is not JSON. */
+    ignoredError?: string
+  }> {
     // The repository root: unlike status and numstat, `ls-tree` prints
     // cwd-RELATIVE paths — from a subdirectory every entry would lose the
     // `server/` prefix and the picker would feed the log filter pathspecs
     // that match nothing (repo-root.ts).
     const root = await this.rootedDirOf(worktreePath, signal)
-    const res = await this.git(root, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], signal)
+    const [res, ignoredRes] = await Promise.all([
+      this.git(root, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], signal),
+      this.git(root, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], signal),
+    ])
     const all = res.stdout.split('\0').filter(path => path.length > 0)
     const truncated = all.length > TREE_PATH_CAP
-    return { paths: truncated ? all.slice(0, TREE_PATH_CAP) : all, truncated }
+    const ignoredAll = ignoredRes.stdout.split('\0').filter(path => path.length > 0)
+    const ignoredTruncated = ignoredAll.length > IGNORED_PATH_CAP
+    // `ls-tree`'s exit code is deliberately NOT checked: a repository with no
+    // HEAD yet fails it, and "this repository has no files" is the honest
+    // answer there. The ignored listing has no such legitimate failure, so a
+    // non-zero exit is reported rather than served as an empty list — the one
+    // shape that is indistinguishable from a repository ignoring nothing.
+    const ignoredError = ignoredRes.exitCode === 0
+      ? undefined
+      : (ignoredRes.stderr.trim() || `git ls-files failed (exit ${ignoredRes.exitCode})`).slice(-500)
+    return {
+      paths: truncated ? all.slice(0, TREE_PATH_CAP) : all,
+      truncated,
+      ignored: ignoredTruncated ? ignoredAll.slice(0, IGNORED_PATH_CAP) : ignoredAll,
+      ignoredTruncated,
+      ...(ignoredError !== undefined ? { ignoredError } : {}),
+    }
+  }
+
+  /**
+   * One level of one ignored directory, read from the filesystem — the step
+   * behind clicking `node_modules/` open in the Files tab.
+   *
+   * Deliberately NOT a git listing: with `--directory`, a pathspec under an
+   * ignored directory still collapses to that one directory line (probed:
+   * `ls-files --others --ignored --exclude-standard --directory -- 'node_modules/*'`
+   * answers `node_modules/` and nothing else), and dropping `--directory`
+   * would enumerate every file inside at once — the very flood the collapsed
+   * listing exists to avoid. `readdir` is one level by construction and costs
+   * milliseconds. What the entries ARE is inherited anyway: everything below
+   * an ignored directory is ignored by descent, so the browser owes the
+   * reader the directory's contents, not git's opinion of them.
+   *
+   * A directory that vanished between the listing and the click answers
+   * empty: nothing to browse is the honest answer, and the next refresh
+   * drops the row.
+   *
+   * The name says what it is FOR, not what it permits: nothing here checks
+   * that `dir` is ignored, so this lists any directory inside the worktree.
+   * That is the same reach the reader already has through `fileSides` and
+   * `fileImage`, and adding an ignore check would only make the browser ask
+   * git a second question to learn what it already knows from the listing it
+   * was handed. What it does NOT permit is leaving the worktree, which is
+   * what the two locks below are for.
+   * @param worktreePath - worktree the directory lives in; empty falls back to the host cwd.
+   * @param dir - repo-relative directory path, as the collapsed listing named it.
+   * @param signal - abort signal.
+   */
+  @Remote('ignoredDir')
+  async ignoredDir(worktreePath: string, dir: string, signal: AbortSignal): Promise<{ entries: DirChild[]; truncated: boolean }> {
+    // The same two locks every delete in fs-remove.ts carries, read here
+    // instead of written: the browser is a less trusted source of paths than
+    // git's own output, and `readdir` obeys no repository boundary.
+    if (!isSafeRelativePath(dir)) {
+      throw new Error(`unsafe path argument: ${JSON.stringify(dir)}`)
+    }
+    const base = resolve(await this.rootedDirOf(worktreePath, signal))
+    const target = resolve(base, dir)
+    if (target === base || !target.startsWith(base + sep)) {
+      throw new Error(`path escapes the worktree: ${JSON.stringify(dir)}`)
+    }
+    let dirents
+    try {
+      dirents = await readdir(target, { withFileTypes: true })
+    } catch {
+      return { entries: [], truncated: false }
+    }
+    const plain = dirents
+      .filter(entry => !entry.isSymbolicLink())
+      .map(entry => ({ name: entry.name, dir: entry.isDirectory() }))
+    // A pnpm-style layout makes every package row a symlink into the store;
+    // `withFileTypes` reports the LINK, so a follow-up stat decides whether
+    // the row expands. A broken link reads as a file and simply fails to
+    // open, like any other dangling name.
+    const links = dirents.filter(entry => entry.isSymbolicLink())
+    const resolved = await Promise.all(links.map(async entry => {
+      try {
+        return { name: entry.name, dir: (await stat(join(target, entry.name))).isDirectory() }
+      } catch {
+        return { name: entry.name, dir: false }
+      }
+    }))
+    return shapeDirChildren([...plain, ...resolved])
   }
 
   /**

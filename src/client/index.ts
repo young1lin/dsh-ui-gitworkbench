@@ -181,15 +181,34 @@ export function apply(ctx: ClientContext): void {
           ) as { ok: true; value: { authors: AuthorEntry[]; truncated: boolean } } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
-        // Every path on HEAD — the path picker's raw material.
-        fetchRepoTree: async (worktreePath: string | undefined, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean } | null> => {
+        // Every path on HEAD — the path picker's raw material — plus the
+        // ignored entries the Files tab browses. The ignored fields are
+        // optional because a host half older than this client does not send
+        // them: the browser then simply has no ignored rows to show.
+        fetchRepoTree: async (worktreePath: string | undefined, signal: AbortSignal): Promise<{ paths: string[]; truncated: boolean; ignored?: string[]; ignoredTruncated?: boolean; ignoredError?: string } | null> => {
           const result = await connection.rpc.call(
             '/api',
             'gitWorkbench/repoTree',
             { args: { worktreePath: worktreePath ?? '' } },
             signal,
-          ) as { ok: true; value: { paths: string[]; truncated: boolean } } | { ok: false; error: { message?: string } }
+          ) as { ok: true; value: { paths: string[]; truncated: boolean; ignored?: string[]; ignoredTruncated?: boolean; ignoredError?: string } } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
+        },
+        // One level of one ignored directory, read from the filesystem: git
+        // collapses ignored directories by design, so the only way into
+        // `node_modules/` is to ask the disk directly (see the host method).
+        fetchIgnoredDir: async (worktreePath: string | undefined, dir: string, signal: AbortSignal): Promise<{ entries: { name: string; dir: boolean }[]; truncated: boolean } | null> => {
+          try {
+            const result = await connection.rpc.call(
+              '/api',
+              'gitWorkbench/ignoredDir',
+              { args: { worktreePath: worktreePath ?? '', dir } },
+              signal,
+            ) as { ok: true; value: { entries: { name: string; dir: boolean }[]; truncated: boolean } } | { ok: false; error: { message?: string } }
+            return result.ok ? result.value : null
+          } catch {
+            return null
+          }
         },
         // Two refs compared as `base...head`, in the same shape as every other
         // view, so the drawer's tree and diff panes render it unchanged.

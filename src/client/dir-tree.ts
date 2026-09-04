@@ -36,10 +36,20 @@ interface BuildNode {
  * Fold a flat path list into a sorted directory tree carrying its files.
  * Root-level files live on no directory; the SEARCH ({@link searchPaths}) is
  * where they surface.
+ *
+ * `dirHints` names directories that exist with NO file under them yet — the
+ * collapsed entries of the ignored listing (`node_modules/`), whose children
+ * are only read when the reader expands them. A path list cannot express
+ * that: a node with no files and no children is indistinguishable from a
+ * path that was never mentioned. Hints only ever ADD an empty directory; a
+ * hint that lands on a name the path list recorded as a file is skipped,
+ * because the list is the primary source and a hint is hearsay next to it.
+ *
  * @param paths - repo-relative file paths, any order, no duplicates assumed.
+ * @param dirHints - repo-relative directory paths to show even while empty.
  * @returns the top-level directories, children and files sorted by name.
  */
-export function buildDirTree(paths: readonly string[]): readonly DirEntry[] {
+export function buildDirTree(paths: readonly string[], dirHints?: ReadonlySet<string>): readonly DirEntry[] {
   const rootNode: BuildNode = { name: '', path: '', files: [], children: new Map() }
   for (const path of paths) {
     if (path.length === 0) continue
@@ -58,6 +68,26 @@ export function buildDirTree(paths: readonly string[]): readonly DirEntry[] {
     }
     node.files.push(parts[parts.length - 1]!)
   }
+
+  const addHint = (hint: string): void => {
+    if (hint.length === 0) return
+    const parts = hint.split('/')
+    let node = rootNode
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      const name = parts[i]!
+      const child = node.children.get(name)
+      if (child !== undefined) { node = child; continue }
+      // The path list recorded this name as a file; the hint does not demote it.
+      if (node.files.includes(name)) return
+      const created: BuildNode = { name, path: parts.slice(0, i + 1).join('/'), files: [], children: new Map() }
+      node.children.set(name, created)
+      node = created
+    }
+    const last = parts[parts.length - 1]!
+    if (node.children.has(last) || node.files.includes(last)) return
+    node.children.set(last, { name: last, path: hint, files: [], children: new Map() })
+  }
+  if (dirHints !== undefined) for (const hint of dirHints) addHint(hint)
 
   const freeze = (node: BuildNode): DirEntry => {
     const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name)).map(freeze)

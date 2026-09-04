@@ -1,6 +1,10 @@
 node_modules/
 lib/
 .tmp-verify/
+# Scratch for one session's integration probes: they build throwaway git
+# repositories and measure against them, so they are working material, not a
+# record the repository keeps.
+.tmp/
 __pycache__/
 
 # Superpowers scratch: planning and spec notes written while building a change.
