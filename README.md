@@ -169,7 +169,7 @@ export function apply(ctx) {
 ### 2.4 worktree 仿真（`src/worktree.ts` 纯逻辑 + `src/index.ts` 里的 RPC/工具）
 
 - **宿主 RPC**（同一 `GitWorkbenchService` 上多挂 4 个 `@Remote`，参数照 §6.8 裸标识符、signal 最后）：
-  - `worktreeEnter(sessionId, repoPath, name, signal)`——`repoRootOf` 解析仓库根；在 `<repoRoot>/.agents/worktrees/<name>` 创建（或复用）worktree、**分支 = 名字本身**（不加强制前缀），写绑定；返回 `{ok, worktreePath, branch, hint}`，hint 教模型怎么用相对路径（会话 cwd 不可变）。复用判定走 **realpath**：目标目录已是注册 worktree（别的工具建的、或经 Junction 映射进来的，git 登记的是另一种拼写）→ 直接绑定并保留**它自己的分支**，不再 `worktree add`。
+  - `worktreeEnter(sessionId, repoPath, name, branchName, signal)`——`repoRootOf` 解析仓库根；在 `<repoRoot>/.agents/worktrees/<name>` 创建（或复用）worktree、**分支 = branchName ?? 名字**（都不加强制前缀），写绑定；返回 `{ok, worktreePath, branch, hint}`，hint 教模型怎么用相对路径（会话 cwd 不可变）。`branchName` 是给斜杠分支留的口子：`feature/foo` 是合法 ref、却是 Windows 目录名拼不出的拼写，名字兼任分支时这类最通行的分支永远建不出来。它的校验按分支的规矩走（`isRefName` 加上 git 自己也会拒的 `.lock` 结尾、首尾点、`head` 大小写碰撞），**非法直接拒绝、绝不静默换名**——目录标签可以随机生成，分支名有语义；且只在全新创建时生效。复用判定走 **realpath**：目标目录已是注册 worktree（别的工具建的、或经 Junction 映射进来的，git 登记的是另一种拼写）→ 直接绑定并保留**它自己的分支**（显式传了不一致的 branchName 时 hint 注明未采用），不再 `worktree add`。
   - `worktreeExit(sessionId, remove, signal)`——解绑；`remove:true` 且树干净才 `git worktree remove`，脏树拒绝。
   - `worktreeStatus(sessionId, repoPath, signal)`——**有效绑定**（自有优先，否则沿谱系借最近绑定祖先；`bindingInherited` 标明是否借来）+ 仓库全部 worktree 列表。
   - `sessionWorktree(sessionId, signal)`——`{worktreePath, name, inherited}`，只读绑定 JSON、零 git spawn；无自有绑定时借最近绑定祖先（`inherited:true`），连祖先也无绑定才是双 `null`。客户端轮询已改用 `worktreeStatus`（绑定+列表一次拿全），这个 RPC 保留作轻量单查。
@@ -363,7 +363,7 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 - **输出 schema 必须容纳所有早退返回形状**：`worktree_status` 的无会话早退 `{ok:false, error}` 与正常 `{ok, binding, worktrees}` 共用一个 schema，所以 `ok`/`error` 声明为可选、`binding` 用 oneOf——否则真实调用时校验失败。
 
 ### 6.12 worktree 的 Windows 细节
-- **`git worktree remove` 保留分支**（exit 从不删 `<name>`——可能有未合并提交）。之后再 enter：`worktree add -b <name> <dir>` 会因分支已存在而失败 → 先 `rev-parse --verify --quiet refs/heads/<name>` 探测，幸存则改用 `worktree add <dir> <name>` **检出既有分支**（hint 注明 reused，提醒模型里面有旧提交）。
+- **`git worktree remove` 保留分支**（exit 从不删 `<name>`——可能有未合并提交）。之后再 enter：`worktree add -b <branch> <dir>`（`<branch>` = branchName ?? 名字）会因分支已存在而失败 → 先 `rev-parse --verify --quiet refs/heads/<branch>` 探测，幸存则改用 `worktree add <dir> <branch>` **检出既有分支**（hint 注明 reused，提醒模型里面有旧提交）——这也是「目录叫 X、落在既有分支 Y」的通路。
 - **绑定文件的 rename 在 Windows 可能 EPERM**：页面 15s 轮询短暂持有读句柄/杀毒扫描，rename 撞上就 EPERM。做法：tmp + rename，EPERM 按 25/50/100/200/400ms 退避重试后再抛（见 `src/worktree.ts` 的 `saveBindings`）。
 - **路径一律正斜杠规范化**：`rev-parse --show-toplevel` 的输出、porcelain 的 worktree path 都要做 `.replace(/\\/g,'/')` 再比对——宿主在 Windows 返回反斜杠，两边不统一就匹配不上（复用判定会失灵）。
 

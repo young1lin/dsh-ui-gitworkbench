@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **`worktree_enter` can name the branch: a new `branch` parameter, still defaulting to the name.** The name-doubles-as-branch contract had locked out the most common branch spelling there is — `feature/foo` is a perfectly legal ref, but `/` can never appear in a Windows directory name, so worktree emulation could not create a single slash branch. The parameter splits the two: the directory still comes from `name`, a fresh worktree's branch from `branch` (falling back to `name` when absent — old callers behave identically). Validation follows branch rules: besides `isRefName` it refuses the three spellings git itself refuses (a `.lock` ending, leading/trailing dots, `head` in any case), and an illegal value is **rejected outright** rather than silently replaced the way an illegal name is — a directory label is arbitrary, a branch name is semantic, and substituting one lands work on the wrong branch. The parameter applies to a fresh create only: a reused registered worktree keeps its own branch (the hint says so when an explicit request was set aside), and an existing-branch collision still falls back to checking that branch out — which also makes "directory named X, on existing branch Y" possible for the first time.
+
 ## [0.1.16] - 2026-09-04
 
 ### Added

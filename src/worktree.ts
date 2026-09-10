@@ -183,6 +183,62 @@ export function isRefName(ref: string): boolean {
     && REF_CHARS.test(ref)
 }
 
+/**
+ * The extra rules an ENTER branch must satisfy beyond {@link isRefName}.
+ *
+ * isRefName guards untrusted refs that reach git as positional arguments
+ * (leading `-`, `..`, alien characters). A branch worktreeEnter CREATES has
+ * two more classes of trouble: spellings check-ref-format refuses that
+ * REF_CHARS happens to pass (a leading or trailing dot, a `.lock` ending),
+ * and `head` — a legal ref on Linux that collides with HEAD on the
+ * case-insensitive filesystems the host runs on.
+ */
+function isEnterBranch(branch: string): boolean {
+  return isRefName(branch)
+    && !branch.startsWith('.')
+    && !branch.endsWith('.')
+    && !branch.endsWith('.lock')
+    && branch.toLowerCase() !== 'head'
+}
+
+/**
+ * Decide the branch a worktreeEnter call lands on.
+ *
+ * The worktree NAME is the identity knob — the directory under
+ * `.agents/worktrees/` — and doubles as the branch by default (the old
+ * contract, kept for callers that pass no branchName). branchName splits the
+ * two for the one thing the name can never express: a SLASH branch
+ * (`feature/foo` is a legal ref and an impossible Windows directory).
+ *
+ * Reuse keeps the registered worktree's own branch, request or no request;
+ * an explicit branchName it displaces is reported as branchOverridden so the
+ * hint can say so — refusing there would break enter's idempotency (the same
+ * call re-issued must rebind, not explode).
+ *
+ * An illegal branchName is REFUSED, never substituted: the worktree name may
+ * be auto-generated because a directory label is arbitrary, but a branch is
+ * semantic — silently renaming it lands work on the wrong branch.
+ * @param wtName - sanitized worktree name (the default branch).
+ * @param branchName - caller-requested branch, or undefined for the default.
+ * @param existingBranch - the registered worktree's own branch when the
+ * target directory already holds one, else undefined.
+ * @returns the branch to create or keep, plus whether an explicit request
+ * was set aside — or the refusal error.
+ */
+export function resolveEnterBranch(
+  wtName: string,
+  branchName: string | undefined,
+  existingBranch: string | undefined,
+): { ok: true; branch: string; branchOverridden: boolean } | { ok: false; error: string } {
+  if (branchName !== undefined && !isEnterBranch(branchName)) {
+    return { ok: false, error: 'branchName is not a valid branch name' }
+  }
+  if (existingBranch !== undefined) {
+    return { ok: true, branch: existingBranch, branchOverridden: branchName !== undefined && branchName !== existingBranch }
+  }
+  return { ok: true, branch: branchName ?? wtName, branchOverridden: false }
+}
+
 export function worktreeDir(repoRoot: string, name: string): string {
   return `${repoRoot.replace(/\/+$/, '')}/.agents/worktrees/${name}`
 }

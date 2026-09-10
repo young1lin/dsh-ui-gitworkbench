@@ -1,6 +1,6 @@
 // tests/worktree-derive.test.ts
 import { describe, expect, it } from 'vitest'
-import { findRegisteredWorktree, parseWorktreeList, sanitizeName, worktreeDir } from '../src/worktree'
+import { findRegisteredWorktree, parseWorktreeList, resolveEnterBranch, sanitizeName, worktreeDir } from '../src/worktree'
 
 describe('sanitizeName', () => {
   const rng = () => 'ab12cd'
@@ -46,6 +46,62 @@ describe('sanitizeName', () => {
     // The 特性-a fixture row is hand-made on purpose: the enter path can
     // never create it, because the accepted alphabet is ASCII-only.
     expect(sanitizeName('特性-a', rng)).toBe('worktree-ab12cd')
+  })
+})
+
+describe('resolveEnterBranch', () => {
+  // Result-shape helpers: narrow the union once so each case reads as a value.
+  const decided = (wtName: string, branchName: string | undefined, existingBranch: string | undefined) => {
+    const result = resolveEnterBranch(wtName, branchName, existingBranch)
+    if (!result.ok) throw new Error(`unexpected refusal: ${result.error}`)
+    return result
+  }
+  const refused = (wtName: string, branchName: string | undefined, existingBranch: string | undefined) => {
+    const result = resolveEnterBranch(wtName, branchName, existingBranch)
+    if (result.ok) throw new Error(`expected a refusal, got branch ${result.branch}`)
+    return result.error
+  }
+
+  it('keeps the old contract when branchName is absent: branch = name, or the reused branch', () => {
+    expect(decided('demo', undefined, undefined)).toEqual({ ok: true, branch: 'demo', branchOverridden: false })
+    expect(decided('demo', undefined, 'older')).toEqual({ ok: true, branch: 'older', branchOverridden: false })
+  })
+
+  it('uses branchName for a fresh create, including slashes the name charset cannot hold', () => {
+    // The whole point of the parameter: `feature/foo` is a legal branch and an
+    // impossible Windows directory, so the name could never express it.
+    expect(decided('demo', 'feature/foo', undefined)).toEqual({ ok: true, branch: 'feature/foo', branchOverridden: false })
+  })
+
+  it('keeps a reused worktree\'s own branch and reports the set-aside request', () => {
+    expect(decided('demo', 'feature/x', 'older')).toEqual({ ok: true, branch: 'older', branchOverridden: true })
+    // Asking for exactly the branch the worktree already has is no override.
+    expect(decided('demo', 'older', 'older')).toEqual({ ok: true, branch: 'older', branchOverridden: false })
+  })
+
+  it('refuses an illegal branchName instead of substituting anything', () => {
+    // A branch name is semantic: silently renaming it (the way an illegal
+    // worktree name gets a generated one) would land work on the wrong branch.
+    expect(refused('demo', '', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', '../escape', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', 'a b', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', '-x', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', '.hidden', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', '特性', undefined)).toContain('not a valid branch name')
+  })
+
+  it('refuses what git itself would refuse: .lock ending, trailing dot, HEAD collision', () => {
+    expect(refused('demo', 'feature.lock', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', 'x.', undefined)).toContain('not a valid branch name')
+    // `head` is a legal ref spelling on Linux and collides with HEAD on the
+    // case-insensitive filesystems the host runs on — refused up front.
+    expect(refused('demo', 'head', undefined)).toContain('not a valid branch name')
+    expect(refused('demo', 'HEAD', undefined)).toContain('not a valid branch name')
+  })
+
+  it('accepts at the length cap isRefName already enforces', () => {
+    expect(decided('demo', 'a'.repeat(200), undefined).branch).toBe('a'.repeat(200))
+    expect(refused('demo', 'a'.repeat(201), undefined)).toContain('not a valid branch name')
   })
 })
 
