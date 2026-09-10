@@ -38,6 +38,14 @@ Then **restart dsh and hard-refresh the browser** (Ctrl/Cmd + Shift + R). The pa
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add @young1lin/dsh-ui-gitworkbench
 ```
 
+**Upgrading an installed copy** uses `update`, not a repeated `add`:
+
+```sh
+dsh plugin --profile web update @young1lin/dsh-ui-gitworkbench
+```
+
+`dsh plugin` is a thin pnpm forwarder: repeating `add` does not error, but it reinstalls the latest version and **overwrites a `link:` install** (a from-source checkout suddenly reverts to the npm build). `update` reconciles by installed state, so a `dsh.bundle` declaration a newer version gained is activated automatically. Restart dsh afterwards either way.
+
 <details>
 <summary><b>Alternative: one-line installer scripts</b> (same official channel, two extra conveniences)</summary>
 

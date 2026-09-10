@@ -38,6 +38,14 @@ dsh plugin --profile web add @young1lin/dsh-ui-gitworkbench
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add @young1lin/dsh-ui-gitworkbench
 ```
 
+**已安装的升级**用 `update`，不要重复 `add`：
+
+```sh
+dsh plugin --profile web update @young1lin/dsh-ui-gitworkbench
+```
+
+`dsh plugin` 是 pnpm 的薄转发层：重复 `add` 对已装包不报错，但会把依赖重装成最新版并**覆盖 `link:` 软链安装**（从源码开发的机器会突然「回到」npm 版）；`update` 按安装态对账，新版新增的 `dsh.bundle` 声明也会被自动激活进层栈。升级后同样重启 DSH。
+
 <details>
 <summary><b>备选：一键脚本</b>（同样走官方通道，多处理两件小事）</summary>
 
