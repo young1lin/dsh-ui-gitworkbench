@@ -482,6 +482,30 @@ git 的两种「路径」只在仓库根相等：`git status --porcelain` 和 `g
 `tests/host-rooted-paths.test.ts` 源码扫描钉布线（先剥注释；断言带 path 的 @Remote
 恰好十个、每个方法体内必须出现 `rootedDirOf`；已做变异测试，改掉一个方法它会点名）。
 
+### 6.23 「永远 modified」的 CRLF 幻影：status 列着 M、diff 永远为空
+
+仓库字节 + `core.autocrlf=true`（或 `eol=crlf` 属性）的组合下，git 的 stat 检查与
+clean 过滤对同一文件给出**相反答案**：`git status` 永远报 modified（smudge 方向认为
+重新检出会不一样），`git diff` / `--numstat` 永远为空（clean 方向认为内容一致）。
+实测两种形态稳定复现（LF 入库 + autocrlf=true + CRLF 工作区；`v.txt eol=crlf` 属性 +
+LF 入库 + CRLF 工作区），touch 失效 stat 缓存后反复 status **不会**自愈。注意反例：
+CRLF 字节**入库**（autocrlf 翻转之前提交的）反而报干净——不是「有 CRLF 就有幻影」，
+条件是「入库字节经 clean 后与工作区一致、经 smudge 后与工作区不一致」。
+
+抽屉此前把它显示成一行无人解释的「无文本差异」——树里挂着 M、点开却什么都不说，
+读起来就是显示坏了；unified 视图更糟：`fileDiff` 的 untracked fallback **不查 tracked
+状态**，会给幻影文件合成出 git 自己都看不见的「整文件新增」段。修复三层：
+空 diff + 树行状态为 modified（`isPhantomModified`，diff-model.ts——fully-staged 文件
+的 unstaged 层也空，但整文件 HEAD-diff 非空，所以判据必须用**整文件**段而不是当前层）
+→ 面板解释这是行尾归一化幻影并建议统一 LF（locale `phantomNotice`；cr-visible 的
+LF 建议守卫计数 2→3）；`fileDiff` 合成前先过 `isUntracked`；Compare 的另一半是
+**三点语义方向**——`A...B` 比较分叉点到 B，两端选反时**整个文件树为空**（RPC 的
+files/numstat 全 0），此前一个字不说，现在给一行「想看另一方向请交换两端」
+（`compareEmptyHint`）。守卫：`tests/phantom-notice.test.ts`（判定）、
+`tests/crlf-pipeline.test.ts`（CRLF 行在解析与两遍着色中逐行自对齐——排查时管线已
+被排除，钉住它继续被排除）；活体验证 `scripts/verify_crlf_display.py`（本地，5 项断言：
+幻影提示出现、fileDiff 空返回、真差异照常渲染、方向提示出现、仅行尾对比带 ␍ 渲染）。
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）

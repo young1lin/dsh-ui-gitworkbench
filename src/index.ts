@@ -605,6 +605,12 @@ export class GitWorkbenchService extends TypertRemoteService {
     }
     const tracked = await this.git(root, ['diff', 'HEAD', '--', path], signal)
     if (tracked.stdout.trim().length > 0) return { diff: tracked.stdout }
+    // Empty for a TRACKED file is real, not a missing diff: the line-ending
+    // phantom (autocrlf / eol attributes make the stat check and the clean
+    // filter disagree) lists such files modified forever while git itself
+    // finds no content difference. Synthesizing a new-file segment for one
+    // would paint a whole-file addition git does not see.
+    if (!await this.isUntracked(root, path, signal)) return { diff: '' }
     return { diff: await untrackedSegment(root, path) ?? '' }
   }
 

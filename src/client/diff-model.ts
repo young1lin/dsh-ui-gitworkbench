@@ -20,6 +20,26 @@ export interface RowWithRanges extends Row {
 }
 
 /**
+ * Whether an empty per-file diff is the line-ending phantom.
+ *
+ * autocrlf / `eol` attributes make git's stat check and its clean filter
+ * disagree, so a file can sit in the tree as modified forever while every
+ * content diff comes back empty — the classic always-modified file of a
+ * Windows checkout. Opening it must explain that, not fall to the generic
+ * "no text changes" a broken pane also shows.
+ *
+ * Only `modified` + an empty WHOLE-FILE segment is the phantom: a fully
+ * staged file has an empty unstaged layer but a non-empty HEAD-diff (the
+ * reader is one click from the content), and every other status always has
+ * a diff or a synthesized one.
+ * @param status - the tree row's status for the open file.
+ * @param segment - the whole-file diff text (HEAD vs worktree).
+ */
+export function isPhantomModified(status: string | undefined, segment: string): boolean {
+  return status === 'modified' && segment.length === 0
+}
+
+/**
  * Parse a unified diff segment into typed rows, tracking line numbers.
  * @param segment - one file's `diff --git` text (headers are skipped).
  */

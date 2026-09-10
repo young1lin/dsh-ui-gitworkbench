@@ -76,6 +76,7 @@ import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cac
 import { useIdleValue } from './idle-value.ts'
 import { emptyQueryFilter, parseLogQuery, serializeLogQuery } from './log-filter-query.ts'
 import { nextAfterPlan, type DiscardAnswer, type DiscardPreview } from './discard-flow.ts'
+import { isPhantomModified } from './diff-model.ts'
 import { NO_PATHS, preferredFile } from './active-file.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
@@ -1554,6 +1555,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   // content in the working tree and in every commit.
   const activeKey = active === null ? null : `${viewKey}\x1f${active}`
   const segment = bundled.length > 0 ? bundled : activeKey === null ? '' : fetched.get(activeKey) ?? ''
+  /** The CRLF phantom: listed modified, whole-file diff empty (see
+   *  {@link isPhantomModified}). Changes-tab only — history and compare list
+   *  files from real ref diffs, where an empty segment means a failed fetch,
+   *  and the phantom notice would mislead. */
+  const phantomListed = tab === 'changes' && isPhantomModified(activeFile?.status, segment)
 
   // On-demand diff for files absent from the bundled payload (cap-truncated
   // untracked files, oversize paths).
@@ -2134,6 +2140,13 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             ) : activeFile !== null && activeFile.previousPath !== undefined ? (
               <div className={css.renameLine}>{t('renamedFrom')} <code>{activeFile.previousPath}</code></div>
             ) : null}
+            {/* An empty compare result is usually the three-dot DIRECTION, not
+                "no differences": A...B diffs from the fork point up to B, so a
+                B that never moved past the fork shows nothing at all. Say so —
+                an empty tree with no word reads as a broken one. */}
+            {tab === 'compare' && comparable && shown !== null && body.files.length === 0 ? (
+              <div className={css.empty}>{t('compareEmptyHint', { base: baseRef ?? '', head: headRef ?? '' })}</div>
+            ) : null}
             {(shown === null && tab !== 'changes') || (tab === 'compare' && !comparable) ? null
               : activeFile !== null && activeFile.binary ? (
                 <div className={css.empty}>{t('binaryFile')}</div>
@@ -2150,6 +2163,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                   gen={gen}
                   fallbackSegment={segment}
                   fallbackLoading={loading && segment.length === 0}
+                  phantomListed={phantomListed}
                   onBlockAction={askBlockAction}
                   onSaved={onRefresh}
                   onDirtyChange={onSideDirty}

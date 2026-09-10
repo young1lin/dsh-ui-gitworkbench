@@ -39,7 +39,7 @@ export type WorkbenchKey =
   | 'filterDate' | 'filterToday' | 'filterLast7' | 'filterLast30' | 'filterAfter' | 'filterBefore'
   | 'filterPaths' | 'filterPathsMore' | 'allBranches' | 'filterPathSearch'
   | 'filterCalendarSets' | 'filterSelected' | 'filterLocale'
-  | 'compareBase' | 'compareHead' | 'comparePick' | 'compareCommits' | 'loadingCompare' | 'noBranches'
+  | 'compareBase' | 'compareHead' | 'comparePick' | 'compareCommits' | 'compareEmptyHint' | 'loadingCompare' | 'noBranches'
   | 'refSearch' | 'refNone' | 'refCount' | 'refTruncated' | 'refWorktrees' | 'refBranches' | 'historyRefLabel'
   | 'settings' | 'themeMode' | 'themePalette' | 'themeScope' | 'themeBackground' | 'themeCss'
   | 'modeSystem' | 'modeLight' | 'modeDark'
@@ -66,7 +66,7 @@ export type WorkbenchKey =
   // side-by-side editing: arm the editor, save, revert, the stale/conflict
   // banner, the CRLF refusal notice, and the unsaved-changes prompt that
   // guards every gesture dropping the buffer (tab, file, close)
-  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice' | 'encodingNotice'
+  | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice' | 'encodingNotice' | 'phantomNotice'
   // blame gutter on the working-tree column
   | 'blameToggle' | 'blameHint' | 'blameUncommitted' | 'blameFailed' | 'blameTruncated'
   | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
@@ -118,6 +118,7 @@ export const zh: Record<WorkbenchKey, string> = {
   compareHead: '对比',
   comparePick: '选择两个不同的分支进行对比',
   compareCommits: '{count} 个提交（自共同祖先起）',
+  compareEmptyHint: '{base}...{head} 比较的是自分叉点到 {head} 的变化，没有找到差异；想看另一方向的变化请交换两端。',
   loadingCompare: '加载对比…',
   noBranches: '没有可对比的分支',
   refSearch: '筛选分支…',
@@ -299,6 +300,7 @@ export const zh: Record<WorkbenchKey, string> = {
   blameTruncated: '文件过长，追溯信息只显示了前面一部分。',
   crlfNotice: '这个文件的行尾是 CRLF，暂不支持在线编辑（编辑框会把行尾统一成 LF，保存时整份文件都会被改写）；建议把行尾统一成 LF。差异里的回车已用 ␍ 标出；查看和按块暂存/撤回不受影响。',
   encodingNotice: '这个文件不是 UTF-8 编码（可能是 GBK、Shift JIS 之类），暂不支持在线编辑：页面上看到的文字是一次有损解码，保存回去会把文件里每一个非 ASCII 字节都改写掉，包括你没动过的行。查看和按块暂存/撤回不受影响。',
+  phantomNotice: 'git 把这个文件列为已修改，但行尾归一化（CRLF / autocrlf / eol 属性）之后没有内容差异——这是 Windows 检出常见的「永远已修改」幻影，不是显示故障。统一行尾（建议把行尾统一成 LF）或让 git 重新比对后，这一条目就会消失。',
   saveFailed: '保存失败',
   saveUnavailable: '当前宿主还不支持保存（需要重启 dsh web 加载新版宿主端）。',
   saveRetry: '重试保存',
@@ -363,6 +365,7 @@ export const en: Record<WorkbenchKey, string> = {
   compareHead: 'Compare',
   comparePick: 'Pick two different branches to compare',
   compareCommits: '{count} commits since they diverged',
+  compareEmptyHint: '{base}...{head} compares from the fork point up to {head} and found no differences; to see what changed on the other side, swap the two ends.',
   loadingCompare: 'Loading comparison…',
   noBranches: 'No branches to compare',
   refSearch: 'Filter branches…',
@@ -529,6 +532,7 @@ export const en: Record<WorkbenchKey, string> = {
   blameTruncated: 'The file is long, so blame is shown for the first part only.',
   crlfNotice: 'This file has CRLF line endings, which the editor does not support yet (the edit box would turn every ending into LF, so a save rewrites the whole file); normalising the endings to LF is recommended. Carriage returns are marked ␍ in the diff; viewing and block staging/rolling back still work.',
   encodingNotice: 'This file is not UTF-8 (GBK, Shift JIS or similar), so the editor is unavailable: the text shown is a lossy decode of it, and saving that back would rewrite every non-ASCII byte in the file, including lines you never touched. Viewing and block staging/rolling back still work.',
+  phantomNotice: 'git lists this file as modified, but after line-ending normalisation (CRLF / autocrlf / eol attributes) there is no content difference — the classic "modified forever" phantom of a Windows checkout, not a broken view. Once the endings agree (normalising the endings to LF is recommended) the entry disappears.',
   saveFailed: 'Save failed',
   saveUnavailable: 'This host does not support saving yet — restart dsh web to load the new host half.',
   saveRetry: 'Retry save',

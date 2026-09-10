@@ -52,11 +52,11 @@ describe('the CR marker wiring', () => {
     expect(body).toMatch(/\.crMark\s*\{[^}]*--gs-fg-faint[^}]*user-select:\s*none[^}]*\}/)
   })
 
-  it('recommends normalising to LF from both refusal notices, both languages', () => {
+  it('recommends normalising to LF from both refusal notices and the phantom notice, both languages', () => {
     const body = code(locales)
     const zh = (body.match(/建议把行尾统一成 LF/g) ?? []).length
     const en = (body.match(/normalising the endings to LF is recommended/g) ?? []).length
-    expect(zh, 'zh: crlfNotice and fileReadOnlyCrlf should each advise LF').toBe(2)
-    expect(en, 'en: crlfNotice and fileReadOnlyCrlf should each advise LF').toBe(2)
+    expect(zh, 'zh: crlfNotice, fileReadOnlyCrlf and phantomNotice should each advise LF').toBe(3)
+    expect(en, 'en: crlfNotice, fileReadOnlyCrlf and phantomNotice should each advise LF').toBe(3)
   })
 })

@@ -75,3 +75,4 @@ scripts/verify_second_open.py
 scripts/verify_search_panel.py
 scripts/verify_vocabulary.py
 scripts/verify_gutter.py
+scripts/verify_crlf_display.py

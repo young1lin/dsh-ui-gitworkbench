@@ -241,7 +241,7 @@ function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactN
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, onBlockAction, onSaved, onDirtyChange }: {
+export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, phantomListed, onBlockAction, onSaved, onDirtyChange }: {
   t: Translate
   path: string
   palette: string
@@ -262,6 +262,10 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
    *  refresh generations — this is how the poll reaches a dirty buffer. */
   fallbackSegment: string
   fallbackLoading: boolean
+  /** The open file is listed modified while its whole-file diff is empty —
+   *  the line-ending phantom. The empty states then explain themselves
+   *  instead of showing the generic "no text changes" a broken pane shows. */
+  phantomListed: boolean
   /** Run one block action; a discard routes to the drawer's confirmation. */
   onBlockAction: (mode: BlockMode, ask: BlockAsk) => Promise<GitOpResult>
   /** After a successful save: refresh the tree and the pane together. */
@@ -724,7 +728,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   /** The pane the drawer had before this view existed, notice included. */
   const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
     ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} wrap={wrap} />
-    : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : t('noTextDiff')}</div>
+    : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : phantomListed ? t('phantomNotice') : t('noTextDiff')}</div>
 
   if (failed) return unifiedFallback()
   if (sides === null) return <div className={css.empty}>{t('loadingDiff')}</div>
@@ -923,7 +927,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           layout only decides how much width each side gets. */}
       <div ref={scrollRef} className={css.sideScroll}>
       {bodyState.kind === 'empty' ? (
-        <div className={css.empty}>{t('noTextDiff')}</div>
+        <div className={css.empty}>{phantomListed ? t('phantomNotice') : t('noTextDiff')}</div>
       ) : (
       <>
       <div
