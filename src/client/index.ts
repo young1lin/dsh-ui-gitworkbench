@@ -140,6 +140,18 @@ export function apply(ctx: ClientContext): void {
           ) as { ok: true; value: FileImage } | { ok: false; error: { message?: string } }
           return result.ok ? result.value : null
         },
+        // The same question for a blob: a file's bytes at a commit, at a ref,
+        // or in the index, for the diff pane's history, compare and staged
+        // views. Same null contract as `fetchFileImage`.
+        fetchRevImage: async (worktreePath: string | undefined, rev: string, path: string, signal: AbortSignal): Promise<FileImage | null> => {
+          const result = await connection.rpc.call(
+            '/api',
+            'gitWorkbench/revImage',
+            { args: { worktreePath: worktreePath ?? '', rev, path } },
+            signal,
+          ) as { ok: true; value: FileImage } | { ok: false; error: { message?: string } }
+          return result.ok ? result.value : null
+        },
         // Save the side pane's editor buffer. The buffer travels with the blob
         // sha it was opened with and the host re-derives that sha at the moment
         // of the write, so a file that moved underneath the editor comes back

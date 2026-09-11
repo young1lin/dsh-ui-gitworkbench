@@ -100,6 +100,7 @@ describe('path-carrying RPCs run at the repository root', () => {
       'fileDiff',
       'fileImage',
       'fileSides',
+      'revImage',
       'stage',
       'unstage',
       'writeChecked',

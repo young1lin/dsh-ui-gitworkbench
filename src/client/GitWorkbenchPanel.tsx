@@ -61,6 +61,8 @@ import {
   type LeaveGuard, type WriteResult,
 } from './side-edit.ts'
 import { FileBrowser } from './FileBrowser.tsx'
+import { BinaryFilePane } from './BinaryFilePane.tsx'
+import { imageSourceFor } from './image-source.ts'
 import { ColumnsGlyph, CommitList, LayoutButton, StackedGlyph } from './CommitHistory.tsx'
 import { FileTree } from './ChangesFileTree.tsx'
 import { DiffView, LeaveEditsConfirm, SideBySideView } from './DiffViews.tsx'
@@ -107,6 +109,10 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
   /** One file's bytes, when they are an image. Null when the host half is
    *  older than this client: the view then falls back to the text answer. */
   readonly fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
+  /** The same for a blob — a commit's, a ref's or the index's copy of the
+   *  file — so the diff pane can show a picture where the Files tab already
+   *  does. Same null contract. */
+  readonly fetchRevImage: (worktreePath: string | undefined, rev: string, path: string, signal: AbortSignal) => Promise<FileImage | null>
   /** Where the symbol at a zero-based protocol position is defined. */
   readonly fetchWorktreeStatus: (sessionId: string, repoPath: string | undefined, signal: AbortSignal) => Promise<WorktreeStatus | null>
   /** Binding only, no git — the probe the shut chip can afford to poll. */
@@ -337,7 +343,7 @@ function defaultBase(branches: readonly string[], head: string): string {
 
 
 
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchIgnoredDir, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchIgnoredDir, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -1318,6 +1324,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           writeChecked={writeChecked}
           fetchBlame={fetchBlame}
           fetchFileImage={fetchFileImage}
+          fetchRevImage={fetchRevImage}
           fetchIgnoredDir={fetchIgnoredDir}
           viewKey={viewKey}
           gen={gen}
@@ -1494,6 +1501,7 @@ interface DrawerProps {
   writeChecked: (worktreePath: string | undefined, path: string, text: string, expectedSha: string, signal: AbortSignal) => Promise<WriteResult | null>
   fetchBlame: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<BlameAnswer | null>
   fetchFileImage: (worktreePath: string | undefined, path: string, signal: AbortSignal) => Promise<FileImage | null>
+  fetchRevImage: (worktreePath: string | undefined, rev: string, path: string, signal: AbortSignal) => Promise<FileImage | null>
   /** Identifies the view the per-file diff cache belongs to (working tree, or one commit). */
   viewKey: string
   gen: number
@@ -1505,7 +1513,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2149,7 +2157,25 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
             ) : null}
             {(shown === null && tab !== 'changes') || (tab === 'compare' && !comparable) ? null
               : activeFile !== null && activeFile.binary ? (
-                <div className={css.empty}>{t('binaryFile')}</div>
+                // A picture where there is one; the "binary file" sentence
+                // where there is not. Which blob holds it is the view's to
+                // say (image-source.ts); the pane only asks and draws.
+                <BinaryFilePane
+                  t={t}
+                  statsPath={statsPath}
+                  path={activeFile.path}
+                  source={imageSourceFor(
+                    tab,
+                    activeFile.status,
+                    commitHash,
+                    commits.find(commit => commit.hash === commitHash)?.parents ?? NO_PATHS,
+                    baseRef,
+                    headRef,
+                  )}
+                  gen={gen}
+                  fetchFileImage={fetchFileImage}
+                  fetchRevImage={fetchRevImage}
+                />
               ) : tab === 'changes' && active !== null ? (
                 <SideBySideView
                   t={t}

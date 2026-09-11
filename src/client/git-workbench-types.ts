@@ -211,6 +211,8 @@ export interface FileSides {
 /**
  * `gitWorkbench/fileImage`: one working-tree file's bytes, when the host's
  * signature check confirms they are an image a browser can draw.
+ * `gitWorkbench/revImage` answers in the same shape for a blob — the file at
+ * a commit, at a ref, or in the index.
  *
  * Every field is present in both outcomes — an image and a refusal — because
  * the gateway's payloads carry no `undefined`. `reason` is '' exactly when

@@ -959,6 +959,56 @@ export class GitWorkbenchService extends TypertRemoteService {
   }
 
   /**
+   * One file's bytes AT A REVISION, when those bytes are an image — the
+   * history, compare and staged-layer answer to {@link fileImage}.
+   *
+   * `fileImage` reads the working tree, which is the only place the Files tab
+   * looks. A commit's icon, a branch's screenshot or the index's copy of
+   * either is not on disk under its own name: it is a blob, reached as
+   * `<rev>:<path>` and read through `git cat-file` — never through the
+   * filesystem, so the path lock does not apply and git's own refusal to leave
+   * the repository is the boundary. The size is asked for first (`-s`) so an
+   * oversize blob is declined without being read, the way both file readers
+   * decline off the stat.
+   *
+   * Read-only — nothing is written.
+   *
+   * @param worktreePath - directory the session opened; git runs at its repository root.
+   * @param rev - commit hash or ref name; '' means the index (`:path`).
+   * @param path - repository-relative path, as the drawer lists it.
+   * @param signal - abort signal.
+   */
+  @Remote('revImage')
+  async revImage(worktreePath: string, rev: string, path: string, signal: AbortSignal): Promise<FileImage> {
+    if (typeof path !== 'string' || !isSafeRelativePath(path)) {
+      throw new Error(`unsafe path argument: ${JSON.stringify(path)}`)
+    }
+    if (typeof rev !== 'string' || (rev.length > 0 && !isRefName(rev))) return declined('missing', 0)
+    const root = await this.rootedDirOf(worktreePath, signal)
+    const spec = `${rev}:${path}`
+    const sized = await this.git(root, ['cat-file', '-s', spec], signal)
+    const size = Number(sized.stdout.trim())
+    if (sized.exitCode !== 0 || !Number.isSafeInteger(size)) return declined('missing', 0)
+    if (size > IMAGE_BYTE_CAP) return declined('tooLarge', size)
+    // `blob` rather than `-p`: a tree at this path is pretty-printed by the
+    // latter and refused by the former, and a directory is not a picture.
+    const shown = await this.gitBytes(root, ['cat-file', 'blob', spec], signal)
+    if (shown.exitCode !== 0) return declined('missing', 0)
+    const bytes = shown.stdout
+    if (bytes.length > IMAGE_BYTE_CAP) return declined('tooLarge', bytes.length)
+    const found = sniffImage(bytes)
+    if (found === null) return declined('notImage', bytes.length)
+    return {
+      ok: true,
+      mime: found.mime,
+      kind: found.kind,
+      base64: bytes.toString('base64'),
+      bytes: bytes.length,
+      reason: '',
+    }
+  }
+
+  /**
    * Whether git has never seen this path: no index entry and no HEAD entry.
    * Those are the files whose diff has to be synthesized rather than asked of
    * `git diff`, which reports nothing for them.
@@ -1961,6 +2011,32 @@ export class GitWorkbenchService extends TypertRemoteService {
       return { stdout: '', exitCode: 1, stderr: error instanceof Error ? error.message : String(error) }
     }
   }
+
+  /**
+   * {@link git} with stdout kept as BYTES. The one caller is `revImage`,
+   * whose payload is a blob: `git()` decodes stdout as UTF-8, which is right
+   * for every listing and diff and silently corrupts a picture.
+   */
+  private async gitBytes(cwd: string, argv: readonly string[], signal: AbortSignal): Promise<{ readonly stdout: Buffer; readonly exitCode: number }> {
+    try {
+      const handle = this.ctx.subprocess.spawn({
+        argv: ['git', '-c', 'core.quotepath=false', ...argv],
+        cwd,
+        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+        graceMs: 30_000,
+        signal,
+        env: { ...NON_INTERACTIVE_ENV },
+      })
+      const [stdout, , outcome] = await Promise.all([
+        readAllBytes(handle.stdout),
+        readAll(handle.stderr), // drained for the same reason `git()` drains it
+        handle.done,
+      ])
+      return { stdout, exitCode: outcome.exitCode ?? 0 }
+    } catch {
+      return { stdout: Buffer.alloc(0), exitCode: 1 }
+    }
+  }
 }
 
 export default GitWorkbenchService
@@ -2053,10 +2129,16 @@ async function untrackedSegment(root: string, path: string, byteCap: number = UN
 }
 
 async function readAll(stream: Readable | undefined): Promise<string> {
-  if (stream === undefined) return ''
+  return (await readAllBytes(stream)).toString('utf8')
+}
+
+/** The stream's bytes as they came: a blob is not text, and a utf8 decode
+ *  of a PNG is a different PNG. */
+async function readAllBytes(stream: Readable | undefined): Promise<Buffer> {
+  if (stream === undefined) return Buffer.alloc(0)
   const chunks: Buffer[] = []
   for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array))
-  return Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks)
 }
 
 /** Random hex string for generated worktree names (`wt-<hex>`). */
