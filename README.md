@@ -6,10 +6,10 @@
 
 每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，右侧滑出一张工作台面板，当前 worktree 的改动一览无余：
 
-- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；
+- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；二进制文件按字节嗅探，是图片就直接显示（删除的文件显示 HEAD 那份）；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；
 - **文件**：仓库目录树与可编辑文件查看器，支持搜索、图片预览、CodeMirror 编辑和 blame 行信息；
-- **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
-- **对比**：任选两个分支互相比较；
+- **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；diff 内 Ctrl/Cmd+F 查找（Enter / Shift+Enter 上下一个、`当前 / 总数` 计数、命中着色），图片显示该提交的那份（删除的显示父提交那份）；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
+- **对比**：任选两个分支互相比较，diff 内同样可查找，图片显示 head 那份（删除的显示 base 那份）；
 - **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；
 - **外观**：七套主题族各带亮暗，默认跟随系统；支持虚化背景图和自定义 CSS，按「项目 / 全局」两个作用域保存，项目优先。
 
@@ -102,6 +102,8 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 | 主题 7 族 × 亮暗 + 跟随系统明暗 | ✅ | `tests/theme-palettes.test.ts` 把 `themes.ts` 与 `.module.css` 互扣（两个方向都验过会红）；`lib/client.js` 含全部 14 套调色板 |
 | 背景图 / 自定义 CSS 的项目+全局存储 | ✅ | 对**构建产物** `lib/index.js` 跑 styleGet/styleSet 全流程（临时 HOME，18/18 PASS）：读写、项目优先、越界钳制、恶意 image 拒绝、清空删记录、非仓库拒绝、两作用域并发写不互相覆盖 |
 | Ctrl/Cmd+F 查找面板穿抽屉的控件，并报 `当前 / 总数` | ✅ | `python scripts/verify_search_panel.py`：24 项实机检查（条随调色板重绘、控件同高同圆角、命中底色非库自带、窄窗格回流、计数随 Enter 前进） |
+| diff 窗格里的图片（变更 / 历史 / 对比）与统一 diff 的 Ctrl+F | ✅ | `python scripts/verify_pane_image_find.py`：18 项实机检查，scratch worktree `imghist`（工作区改动 / 未跟踪 / 该提交 / 父提交 / 对比 head 各一张图；Ctrl+F 开条、计数、Enter 逐个走完 22 个命中、下折时滚动、绕回、Esc 关闭并还焦点） |
+| 历史过滤框按键不再随已加载行数变贵 | ✅ | `python scripts/verify_history_filter_perf.py`（CDP CPU profile + 帧卡顿计数）：同一会话 116 行已加载、12 个按键，脚本时间 449ms → 150ms，`formatCommitDate` 从 profile 首位消失 |
 | 抽屉视觉词汇表单一（圆角 / 字号 / 控件高度 / 悬停 / 选中） | ✅ | `tests/drawer-chrome.test.ts` 逐条声明扫描全表，六个变异全红；`python scripts/verify_vocabulary.py` 实机复核（18 个筛选控件同高、17 处小字同号、树行圆角与选中 chip） |
 | 行号槽不再把代码压在底下 | ✅ | `python scripts/verify_gutter.py`：窗格拖窄后横向滚动 400px，63 行钻到槽下，槽有自身底色且向左溢出；可编辑轨条仍在槽之上 |
 
@@ -213,9 +215,9 @@ harness-worktree/
   tsdown.config.ts          客户端 closure-factory bundle + CSS Modules 构建
   vitest.config.ts          排除 .agents/**，避免 worktree 副本重复收集测试
   src/
-    index.ts                GitWorkbenchService + 27 个 @Remote + worktree 三个 agent 工具
-                            stats/fileDiff/fileSides/applyBlocks/writeChecked/blame/fileImage/commitStats/
-                            commits/authors/repoTree/compareRefs/sessionWorktree/worktreeEnter/worktreeExit/
+    index.ts                GitWorkbenchService + 29 个 @Remote + worktree 三个 agent 工具
+                            stats/fileDiff/fileSides/applyBlocks/writeChecked/blame/fileImage/revImage/commitStats/
+                            commits/authors/repoTree/ignoredDir/compareRefs/sessionWorktree/worktreeEnter/worktreeExit/
                             worktreeStatus/styleGet/styleSet/syncStatus/stage/unstage/discardPlan/discardFile/
                             commit/fetch/pull/push
     atomic-json.ts          崩溃安全 JSON 写入（tmp+rename + Windows EPERM 退避）
@@ -241,6 +243,8 @@ harness-worktree/
       DiffViews.tsx         unified/side diff、块操作、虚拟窗口与编辑态
       WorkbenchControls.tsx 同步条、设置、来源选择器与反馈
       FileBrowser.tsx/CodeEditor.tsx/ImageView.tsx  文件页、编辑器与图片预览
+      BinaryFilePane.tsx/image-source.ts  diff 窗格里的图片：按页签与状态决定读工作区、HEAD、该提交、父提交还是对比两端
+      DiffFindBar.tsx/use-diff-find.ts/diff-find.ts  统一 diff 的 Ctrl+F：纯规则（字面量、不分大小写、5000 命中封顶）+ 停顿后扫描 + 按可视行着色
       PaneDivider.tsx + *Glyph.tsx  拖拽分隔条与共享图标
       git-workbench-types.ts       面板组件/RPC 共享类型
       row-window.ts/use-row-window.ts  视口窗口纯规则与 React 桥接
@@ -550,11 +554,11 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 
 - 「此次变更」= **工作区相对 HEAD 的未提交改动**（`git diff HEAD` + `git status --untracked-files=all`）。行数:tracked 来自 `--numstat`,untracked 来自宿主合成时的精确行数统计。
 - 未跟踪文件:宿主 `fs.readFile` 合成 diff 段(见 §6.0),单文件 >1MB 只计数不合 diff;随包总量上限 160KB,超出部分点击时走 `gitWorkbench/fileDiff` RPC **按需加载**(tracked 用 `git diff HEAD -- <path>`)。
-- 二进制判定:numstat 的 `-` 计数,或未跟踪文件前 8KB 含 NUL 字节。二进制文件显示占位、不计行数。
+- 二进制判定:numstat 的 `-` 计数,或未跟踪文件前 8KB 含 NUL 字节。二进制文件不计行数；字节嗅探为图片（8 种浏览器能画的格式）的直接显示——变更页读工作区、删除的读 HEAD；历史页读该提交、删除的读第一父提交；对比页读 head、删除的读 base（`image-source.ts`）——其余显示占位。
 - diff 文本总量上限 400 KB（`DIFF_CHAR_CAP`），超出截断。
 - 环境**卡**（非状态卡）常驻会话头:branch/detached + ↑↓ ahead-behind + `+N −M 文件数`。
 - 左侧为**可折叠文件树**:目录节点带文件数徽章与聚合 +N/−N;>12 文件的目录默认折叠;「展开全部/收起全部」;选中文件自动展开祖先链;展开状态会话级持久(见 §6.0c)。
-- 词级高亮 = 相邻 −/+ 行按 token LCS 对齐(`diff-model.ts`),行底色之上叠加强调色;语法着色 = **Shiki**(`highlight.ts`:本地包、JS regex 引擎、语法按需分包加载)——`lib/client.js` 2.3MB 的主因即它。bundle 纯度门禁的是 `@deepseek-ai/*` 的**值导入**(运行时由 profile 提供),不是第三方库;早期「正则单遍扫描」的实现已被替换。
+- 词级高亮 = 相邻 −/+ 行按 token LCS 对齐(`diff-model.ts`),行底色之上叠加强调色;语法着色 = **Shiki**(`highlight.ts`:本地包、Oniguruma WASM 引擎（内联进包、异步实例化，抽屉一打开就预热）、语法按需分包加载)——`lib/client.js` 2.3MB 的主因即它。bundle 纯度门禁的是 `@deepseek-ai/*` 的**值导入**(运行时由 profile 提供),不是第三方库;早期「正则单遍扫描」的实现已被替换。
 - **状态卡是会话的环境信息位**：git 仓库内常驻显示分支（或 detached sha）+↑↓+计数，**干净树也显示**；仅 `stats.error`（非 git 目录 / git 不可用）时隐藏。绑定标记 = 树形图标：插件所建 worktree 的分支就是名字本身（旧绑定为 `wt/<name>`），徽标印名只会把分支名说两遍，所以只留图标；外部建的 worktree 徽标 = 图标+name——那是唯一点名目录的地方。
 - **面板是浮起的卡片**（四边留白 + 圆角 + 投影），左缘可拖拽改宽、有最大化满屏；宽度与外观都存 localStorage，且读回时校验（旧版本写的族名不会漏到 `data-gs-theme` 上）。
 - **明暗默认跟随操作系统**（`prefers-color-scheme`），可显式覆盖；主题族 7 套（GitHub / IntelliJ IDEA / VS Code / One / Solarized / Nord / Cyberpunk）各带亮暗。面板内滚动条也按当前调色板重绘——**按类名逐个列举是不行的**：文件树那栏改过名之后就一直漏在外面、保持系统原生的浅色滚动条，所以规则写成 `.drawer *`。
