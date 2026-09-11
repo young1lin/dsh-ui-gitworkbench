@@ -562,6 +562,8 @@ describe('the drawer keeps one vocabulary', () => {
     const rest = allow(literals.filter(decl => !glyphs.has(decl)), [
       { selector: '.wordAdd', why: 'a tint behind a run of text, sized by the text' },
       { selector: '.wordDel', why: 'a tint behind a run of text, sized by the text' },
+      { selector: '.findHit', why: 'a tint behind a run of text, sized by the text' },
+      { selector: '.findHitCurrent', why: 'a tint behind a run of text, sized by the text' },
     ], 'radius')
     expect(rest.map(decl => `${decl.at} ${decl.selector} { border-radius: ${decl.value} }`)).toEqual([])
   })

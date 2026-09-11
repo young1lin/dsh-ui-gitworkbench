@@ -1,6 +1,7 @@
 /**
- * The side-by-side pane's leaf cells: what one row's four boxes are called and
- * what goes inside them.
+ * The two diff panes' leaf cells: what one row's boxes are called and what
+ * goes inside them — the side-by-side pane's four, and the unified pane's
+ * one painted code span.
  *
  * Split out of `DiffViews.tsx` because that file holds two whole views and a
  * module the reviewer cannot hold in their head is the thing the size guard in
@@ -15,8 +16,10 @@
 import type { MouseEventHandler, ReactNode } from 'react'
 
 import css from './GitWorkbenchPanel.module.css'
-import { CR_GLYPH, splitOnCr } from './cr-mark.ts'
+import { CR, CR_GLYPH, splitOnCr } from './cr-mark.ts'
 import { blockEdge, type SideCell, type SideRow } from './side-rows.ts'
+import { overlayRanges, type Row, type RowWithRanges } from './diff-model.ts'
+import { overlayHits, type HitTok } from './diff-find.ts'
 import type { HighlightRun } from './highlight.ts'
 
 /** Classes that paint only a block's OUTER perimeter. Internal rows carry the
@@ -144,4 +147,59 @@ export function SideCells({ row, side, index, rows, current, tokens, mark, minHe
       </span>
     </>
   )
+}
+
+/* ---------- the unified pane's rows (history and compare) ---------- */
+
+/** No find hits on a row — one shared empty list, so a row with none keeps a
+ *  stable prop identity. */
+export const NO_RANGES: readonly (readonly [number, number])[] = []
+
+export function unifiedRowClass(kind: Row['kind']): string {
+  switch (kind) {
+    case 'add': return css.lineAdd
+    case 'del': return css.lineDel
+    case 'hunk': return css.lineHunk
+    default: return css.lineContext
+  }
+}
+
+export function renderUnifiedCode(
+  row: RowWithRanges,
+  tokens: readonly HighlightRun[],
+  hits: readonly (readonly [number, number])[],
+  currentCol: number | null,
+): ReactNode {
+  // A hunk header is searchable too — it names the function the hunk is in —
+  // so it takes the hit overlay even though it takes no syntax.
+  const base = row.kind === 'hunk'
+    ? overlayRanges([{ text: row.text }], [])
+    : overlayRanges(tokens.length > 0 ? tokens : [{ text: row.text }], row.ranges ?? [])
+  const painted = overlayHits(base, hits, currentCol)
+  // The trailing-CR marker rides AFTER everything painted: word ranges are
+  // char offsets into the row text, so a mid-line glyph would shift them.
+  // Mid-line CRs (a CR-only file) stay invisible here; the side pane draws those.
+  const crTail = row.kind !== 'hunk' && row.text.endsWith(CR)
+    ? <span className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>
+    : null
+  if (painted.length === 1 && painted[0]!.color === undefined && !painted[0]!.mark && painted[0]!.hit === 0) {
+    return crTail === null ? row.text : <>{row.text}{crTail}</>
+  }
+  return (<>
+    {painted.map((tok, i) => (
+      <span
+        key={i}
+        className={tokClass(row.kind, tok)}
+        style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
+      >{tok.text}</span>
+    ))}
+    {crTail}
+  </>)
+}
+
+/** A token's classes: the word-change tint, the find hit, both, or neither. */
+function tokClass(kind: Row['kind'], tok: HitTok): string | undefined {
+  const word = tok.mark ? (kind === 'add' ? css.wordAdd : css.wordDel) : undefined
+  const hit = tok.hit === 2 ? css.findHitCurrent : tok.hit === 1 ? css.findHit : undefined
+  return word === undefined ? hit : hit === undefined ? word : `${word} ${hit}`
 }

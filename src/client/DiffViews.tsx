@@ -3,13 +3,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode,
 } from 'react'
 
-import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from './diff-model.ts'
-import { CR, CR_GLYPH, splitOnCr } from './cr-mark.ts'
+import { attachWordRanges, gutterSides, parseRows } from './diff-model.ts'
 import { parsePatch } from '../patch-model.ts'
 import { alignRows, allBlockLines, allBlockTally, blockActionsDisabled, blockCount, blockEdge, blockIsWholeFile, blockLines, blockTally, currentActionBlock, needsFirstBlockClearance, sideBodyState, type SideCell, type SideRow } from './side-rows.ts'
 import { anchorFor, blockNearestTo, blockTopsFromRows, blockTopsFromSideRows, countBlocks, scrollTopFor, stepBlockIndex, unifiedBlocks } from './diff-nav.ts'
 import { DIFF_GRID_PAD_TOP, DIFF_ROW_H } from './row-window.ts'
 import { useChangeNav } from './use-change-nav.ts'
+import { useDiffFind } from './use-diff-find.ts'
+import { rowHitRanges } from './diff-find.ts'
+import { DiffFindBar, NavGlyph } from './DiffFindBar.tsx'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, isDirty, markConflict, reloadSides, resetSides,
   type EditState, type WriteResult,
@@ -18,36 +20,16 @@ import { PaneDivider } from './PaneDivider.tsx'
 import { SideRails } from './SideRails.tsx'
 import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
-import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded, type HighlightRun } from './highlight.ts'
+import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { useRowWindow } from './use-row-window.ts'
 import { rowMark, useVariableRowWindow } from './use-variable-row-window.ts'
-import { RowSpacer, SideCells } from './diff-cells.tsx'
+import { NO_RANGES, renderUnifiedCode, RowSpacer, SideCells, unifiedRowClass } from './diff-cells.tsx'
 import type { BlockAsk, BlockMode, FileSides, GitOpResult, SideLayer, Translate } from './git-workbench-types.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 const SPLIT_MIN = 0.15
 const SPLIT_MAX = 0.85
 const BLOCK_BAR_CLEARANCE = 21
-
-/**
- * Change-to-change navigation, as two chevrons.
- *
- * Bootstrap Icons again, at the same 16 viewBox — a pair of arrows is what
- * every editor spells this with, and the words would be longer than the
- * controls beside them.
- */
-const NAV_GLYPH = {
-  prev: 'M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z',
-  next: 'M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z',
-} as const
-
-function NavGlyph({ of }: { of: keyof typeof NAV_GLYPH }): ReactNode {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d={NAV_GLYPH[of]} />
-    </svg>
-  )
-}
 
 /* ---------- diff rendering: rows, word-level ranges, syntax pass ---------- */
 
@@ -116,6 +98,11 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   // ever touches refs, but pinning it here says so rather than relying on it.
   const walk = useRef(goToChange)
   walk.current = goToChange
+  // Find. History and Compare have no editor to supply a panel, and the
+  // browser's own cannot see rows a windowed pane has not rendered — so the
+  // pane carries its own (diff-find.ts, use-diff-find.ts).
+  const find = useDiffFind(texts, scrollRef, win.start, placeRow)
+  const finding = find.open && find.query.trim().length > 0
 
   // F7 / Shift+F7, the spelling IDEA's diff viewer taught, on the same element
   // that scrolls — so the key and the buttons cannot disagree about which pane
@@ -135,9 +122,17 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   }, [])
 
   return (
-    <div className={css.diffWrap}>
-      {changes > 0 ? (
-        <div className={css.diffNav}>
+    <div className={css.diffWrap} onKeyDown={find.onPaneKeyDown}>
+      <div className={css.diffNav}>
+        <button
+          type="button"
+          className={css.blockBtn}
+          title={t('findHint')}
+          aria-label={t('findInDiff')}
+          aria-pressed={find.open}
+          onClick={() => { if (find.open) find.close(); else find.show() }}
+        ><NavGlyph of="find" /></button>
+        {changes > 0 ? (<>
           <button
             type="button"
             className={css.blockBtn}
@@ -153,21 +148,28 @@ export function DiffView({ segment, path, palette, t, wrap }: {
             onClick={() => { goToChange(1) }}
           ><NavGlyph of="next" /></button>
           <span className={css.sideNavCount}>{t('changeCount', { n: changes })}</span>
-        </div>
-      ) : null}
+        </>) : null}
+      </div>
+      {find.open ? <DiffFindBar find={find} t={t} /> : null}
       <div ref={scrollRef} className={css.diffScroll} tabIndex={-1}>
     <pre ref={preRef} className={wrap ? `${css.diffPre} ${css.diffPreWrap}` : css.diffPre}>
       {win.padTop > 0 ? <div className={css.diffSpacer} style={{ height: `${win.padTop}px` }} aria-hidden="true" /> : null}
       {rowsWithWords.slice(win.start, win.end).map((row, k) => {
         const i = win.start + k
         return (
-        <div key={i} className={`${css.line} ${rowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined} {...rowMark('u', i)}>
+        <div key={i} className={`${css.line} ${unifiedRowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined} {...rowMark('u', i)}>
           {sides.old ? <span className={css.lnOld}>{row.kind === 'add' || row.kind === 'hunk' ? '' : row.oldL}</span> : null}
           {sides.new ? <span className={css.lnNew}>{row.kind === 'del' || row.kind === 'hunk' ? '' : row.newL}</span> : null}
           <span className={`${css.gutter} ${row.kind === 'add' ? css.signAdd : row.kind === 'del' ? css.signDel : ''}`}>
             {row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''}
           </span>
-          <span className={css.code}>{renderCode(row, syntax[i] ?? [])}</span>
+          <span className={css.code}>{renderUnifiedCode(
+            row,
+            syntax[i] ?? [],
+            // Per visible row: the cost is the viewport's, not the diff's.
+            finding ? rowHitRanges(row.text, find.query) : NO_RANGES,
+            find.currentHit !== null && find.currentHit.row === i ? find.currentHit.col : null,
+          )}</span>
         </div>
         )
       })}
@@ -176,39 +178,6 @@ export function DiffView({ segment, path, palette, t, wrap }: {
       </div>
     </div>
   )
-}
-
-function rowClass(kind: Row['kind']): string {
-  switch (kind) {
-    case 'add': return css.lineAdd
-    case 'del': return css.lineDel
-    case 'hunk': return css.lineHunk
-    default: return css.lineContext
-  }
-}
-
-function renderCode(row: RowWithRanges, tokens: readonly HighlightRun[]): ReactNode {
-  if (row.kind === 'hunk') return row.text
-  const painted = overlayRanges(tokens.length > 0 ? tokens : [{ text: row.text }], row.ranges ?? [])
-  // The trailing-CR marker rides AFTER everything painted: word ranges are
-  // char offsets into the row text, so a mid-line glyph would shift them.
-  // Mid-line CRs (a CR-only file) stay invisible here; the side pane draws those.
-  const crTail = row.text.endsWith(CR)
-    ? <span className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>
-    : null
-  if (painted.length === 1 && painted[0]!.color === undefined && !painted[0]!.mark) {
-    return crTail === null ? row.text : <>{row.text}{crTail}</>
-  }
-  return (<>
-    {painted.map((tok, i) => (
-      <span
-        key={i}
-        className={tok.mark ? (row.kind === 'add' ? css.wordAdd : css.wordDel) : undefined}
-        style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
-      >{tok.text}</span>
-    ))}
-    {crTail}
-  </>)
 }
 
 /* ---------- side-by-side diff rendering (working tree only) ---------- */

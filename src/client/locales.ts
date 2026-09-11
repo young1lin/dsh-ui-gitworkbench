@@ -29,6 +29,8 @@ export type WorkbenchKey =
   | 'blameWhileEditing' | 'blameLine' | 'blamePick' | 'blameInHistory'
   | 'imageBroken' | 'imageFit' | 'imageActual' | 'imageTooLarge' | 'imageSource' | 'imagePreview'
   | 'prevChange' | 'nextChange' | 'prevChangeHint' | 'nextChangeHint' | 'changeCount' | 'changePosition'
+  // find in the unified diff (history and compare), where no editor supplies one
+  | 'findInDiff' | 'findHint' | 'findPrev' | 'findNext' | 'findClose'
   | 'sourceLabel' | 'workingTree'
   | 'loadingCommit' | 'renamedFrom' | 'binaryFile' | 'loadingDiff' | 'noTextDiff'
   | 'noCommits' | 'historyLabel' | 'historyEnd' | 'loading' | 'maximize' | 'restore'
@@ -176,6 +178,11 @@ export const zh: Record<WorkbenchKey, string> = {
   nextChange: '下一处变更',
   prevChangeHint: '上一处变更（Shift+F7）',
   nextChangeHint: '下一处变更（F7）',
+  findInDiff: '在 diff 中查找',
+  findHint: '查找（Ctrl+F）',
+  findPrev: '上一个匹配（Shift+Enter）',
+  findNext: '下一个匹配（Enter）',
+  findClose: '关闭查找（Esc）',
   changeCount: '变更 {n} 处',
   changePosition: '第 {current} / {total} 处变更',
   loadingDiff: '加载 diff…',
@@ -423,6 +430,11 @@ export const en: Record<WorkbenchKey, string> = {
   nextChange: 'Next change',
   prevChangeHint: 'Previous change (Shift+F7)',
   nextChangeHint: 'Next change (F7)',
+  findInDiff: 'Find in diff',
+  findHint: 'Find (Ctrl+F)',
+  findPrev: 'Previous match (Shift+Enter)',
+  findNext: 'Next match (Enter)',
+  findClose: 'Close find (Esc)',
   changeCount: 'changes: {n}',
   changePosition: 'change {current} / {total}',
   loadingDiff: 'Loading diff…',

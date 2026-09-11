@@ -38,7 +38,7 @@ describe('the CR marker wiring', () => {
   })
 
   it('keeps the unified view marker behind the painted content', () => {
-    const body = code(tsx)
+    const body = code(cells)
     // Trailing only: `endsWith` is the guard that keeps the glyph out of the
     // text; and the marker rides right after the mapped spans close — never
     // between them, which would shift the word ranges past it.

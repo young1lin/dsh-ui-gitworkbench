@@ -8,6 +8,7 @@ import { PANEL_CSS_ENTRY, readPanelCss } from './helpers/panel-css.ts'
 const MODULES = [
   'environment.css', 'themes.css', 'shell.css', 'history-filters.css', 'history.css',
   'changes.css', 'rails.css', 'operations.css', 'controls.css', 'files.css', 'image.css',
+  'find.css',
 ]
 
 describe('modular panel stylesheet', () => {
