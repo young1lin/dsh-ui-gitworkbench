@@ -42,7 +42,7 @@ import { highlightRange, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } fro
 import type { PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
 import {
-  DISARMED, applySaveOk, applySides, armEdit, armRefusal, isDirty, markConflict,
+  DISARMED, applySaveOk, applySides, armRefusal, isDirty, markConflict, openSides,
   type EditState, type WriteResult,
 } from './side-edit.ts'
 import type { BlameAnswer, BlameLine, FileImage, FileSides, FilesTree, RepoTreeAnswer, SideLayer, Translate } from './GitWorkbenchPanel.tsx'
@@ -208,14 +208,14 @@ export function FileBrowser({
         // only records that the file moved underneath. Without that split,
         // every poll silently threw away whatever had been typed since the
         // last one. Armed straight away because this view IS an editor and
-        // there is no gesture to arm with; armEdit still refuses a payload
-        // it must not hold.
+        // there is no gesture to arm with; openSides adopts a payload it
+        // must not hold disarmed, so the text is on screen under the notice.
         const fresh = openRef.current !== open
         openRef.current = open
         // An empty target sha means git has no blob for it: the path is not a
         // file on disk, so this view never showed it.
         if (answer.targetSha.length > 0 && open !== null) shownRef.current.add(open)
-        setEdit(prev => fresh ? armEdit(DISARMED, answer) : applySides(prev, answer))
+        setEdit(prev => fresh ? openSides(answer) : applySides(prev, answer))
       })
       .catch(() => { if (alive) { setSides(null); setEdit(DISARMED) } })
       .finally(() => { if (alive) setLoading(false) })

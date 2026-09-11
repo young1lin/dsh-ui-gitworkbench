@@ -113,9 +113,27 @@ export function editableSides(sides: EditSides): boolean {
   return armRefusal(sides) === null
 }
 
+/**
+ * The text a buffer holds for a payload.
+ *
+ * An editor holds LF: CodeMirror splits its document on any line ending, so
+ * a CRLF payload put into it comes back out with every ending changed — which
+ * is why arming refuses such a payload. The Files tab shows the buffer whether
+ * or not it is armed, so a refused payload is still adopted, with its endings
+ * normalised up front: the editor's document then IS the buffer (nothing to
+ * write back into it, no line tinted as changed, the painter's lines aligned
+ * with the editor's), and because a refused payload is never armed, the
+ * normalised text cannot reach a save. An editable payload carries no
+ * carriage return, so on the armed path this changes nothing.
+ */
+function bufferText(sides: EditSides): string {
+  return sides.targetText.includes('\r') ? sides.targetText.replace(/\r\n?/g, '\n') : sides.targetText
+}
+
 /** The adopt core: buffer and basis become the payload, conflict cleared. */
 function adopt(armed: boolean, sides: EditSides): EditState {
-  return { armed, buffer: sides.targetText, baseSha: sides.targetSha, baseText: sides.targetText, conflict: false }
+  const text = bufferText(sides)
+  return { armed, buffer: text, baseSha: sides.targetSha, baseText: text, conflict: false }
 }
 
 /**
@@ -126,6 +144,17 @@ function adopt(armed: boolean, sides: EditSides): EditState {
  */
 export function armEdit(edit: EditState, sides: EditSides): EditState {
   return editableSides(sides) ? adopt(true, sides) : edit
+}
+
+/**
+ * A file opened from scratch in a view whose editor IS the view (the Files
+ * tab): armed when the payload may be edited, and otherwise adopted disarmed
+ * — the notice says why the editor is withheld, and the text is still there
+ * to read. {@link armEdit} is the other gesture, the Edit button over a diff,
+ * where a refusal leaves the diff on screen and there is nothing to adopt.
+ */
+export function openSides(sides: EditSides): EditState {
+  return adopt(editableSides(sides), sides)
 }
 
 /**

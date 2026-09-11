@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { armRefusal,
-  DISARMED, LEAVE_GUARD_CLEAR, applySaveOk, applySides, armEdit, editableSides, gateLeave,
+  DISARMED, LEAVE_GUARD_CLEAR, applySaveOk, applySides, armEdit, editableSides, gateLeave, openSides,
   isDirty, leaveAnswered, leaveAsked, markConflict, paneDirtyReport, reloadSides, resetSides,
 } from '../src/client/side-edit.ts'
 
@@ -145,15 +145,17 @@ describe('editableSides — the CRLF gate', () => {
   it('disarms a clean armed editor whose file turned CRLF underneath', () => {
     // The poll adopts while clean; a file rewritten with CRLF since must not
     // leave an armed editor holding text the textarea would normalise.
+    // Adopted with LF endings: a disarmed buffer is what the Files tab
+    // shows, and an editor's document holds LF whatever it was handed.
     const armed = armEdit(DISARMED, SIDES_V1)
     const next = applySides(armed, { ...SIDES_V1, targetText: 'one\r\ntwo\r\n', targetSha: 'sha-crlf' })
-    expect(next).toMatchObject({ armed: false, buffer: 'one\r\ntwo\r\n', baseSha: 'sha-crlf', conflict: false })
+    expect(next).toMatchObject({ armed: false, buffer: 'one\ntwo\n', baseText: 'one\ntwo\n', baseSha: 'sha-crlf', conflict: false })
   })
 
   it('disarms on reload into CRLF content, and still adopts the text', () => {
     const dirty = { ...armEdit(DISARMED, SIDES_V1), buffer: 'my edit\n', conflict: true }
     const next = reloadSides(dirty, { ...SIDES_V1, targetText: 'one\r\n', targetSha: 'sha-crlf' })
-    expect(next).toMatchObject({ armed: false, buffer: 'one\r\n', baseSha: 'sha-crlf', conflict: false })
+    expect(next).toMatchObject({ armed: false, buffer: 'one\n', baseSha: 'sha-crlf', conflict: false })
   })
 
   it('still keeps a dirty buffer over a CRLF refresh — the save refuses anyway', () => {
@@ -164,6 +166,31 @@ describe('editableSides — the CRLF gate', () => {
     expect(next.buffer).toBe('my edit\n')
     expect(next.armed).toBe(true)
     expect(next.conflict).toBe(true)
+  })
+})
+
+describe('openSides — a file opened where the editor is the view', () => {
+  it('arms an editable payload, exactly as armEdit would', () => {
+    expect(openSides(SIDES_V1)).toEqual(armEdit(DISARMED, SIDES_V1))
+  })
+
+  it('adopts a CRLF payload disarmed, with its endings normalised', () => {
+    // The Files tab used to hand a refused payload back as DISARMED — an
+    // empty buffer under a notice explaining why it could not be edited,
+    // which read as a file with nothing in it. The text is the point.
+    const next = openSides({ ...SIDES_V1, targetText: 'one\r\ntwo\rthree\n', targetSha: 'sha-crlf' })
+    expect(next).toEqual({ armed: false, buffer: 'one\ntwo\nthree\n', baseText: 'one\ntwo\nthree\n', baseSha: 'sha-crlf', conflict: false })
+    expect(isDirty(next)).toBe(false)
+  })
+
+  it('adopts a lossily decoded payload disarmed, text intact', () => {
+    const next = openSides({ ...SIDES_V1, lossyEncoding: true })
+    expect(next).toMatchObject({ armed: false, buffer: SIDES_V1.targetText, baseSha: SIDES_V1.targetSha })
+  })
+
+  it('leaves an LF payload byte for byte alone', () => {
+    const text = 'no\ncarriage\nreturns\n'
+    expect(openSides({ ...SIDES_V1, targetText: text }).buffer).toBe(text)
   })
 })
 
