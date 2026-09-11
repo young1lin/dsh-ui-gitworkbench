@@ -31,48 +31,8 @@ docs/superpowers/
 
 # Local integration probes: they drive a live dsh instance and the scratch
 # fixture worktrees, so they embed machine-local paths — dev-machine only.
-scripts/probe_worktree.py
-scripts/verify_worktree_ui.py
-scripts/llm_smoke.py
+# Every Python file under scripts/ is one; the installers (.sh/.ps1) are the
+# only scripts the repository keeps.
+scripts/*.py
 # Python virtualenv (uv / venv) -- machine-specific, never commit
 .venv/
-scripts/verify_turn_refresh.py
-scripts/verify_history_feature.py
-scripts/verify_side_pane.py
-scripts/verify_encoding_probe.py
-scripts/verify_tab_key.py
-scripts/verify_pane_header.py
-scripts/verify_cm_editor.py
-scripts/verify_live_tint.py
-scripts/verify_divider.py
-scripts/verify_blame.py
-scripts/verify_file_browser.py
-scripts/verify_file_perf.py
-scripts/verify_file_scale.py
-scripts/verify_file_worktree.py
-scripts/verify_file_scale_ui.py
-scripts/verify_files_place.py
-scripts/verify_place_scope.py
-scripts/verify_place_persist.py
-scripts/verify_image_view.py
-scripts/verify_diff_nav.py
-scripts/verify_stacked_history.py
-scripts/verify_editable_cue.py
-scripts/verify_stacked_drag.py
-scripts/verify_history_nav.py
-scripts/verify_tree_divider.py
-scripts/verify_files_perf.py
-scripts/verify_history_layout.py
-scripts/verify_bigdiff_perf.py
-scripts/verify_click_perf.py
-scripts/verify_unified_perf.py
-scripts/verify_perf_profile.py
-scripts/peek_drawer.py
-scripts/make_realcode_fixture.py
-scripts/mutate_token_cache.py
-scripts/verify_paint_window.py
-scripts/verify_second_open.py
-scripts/verify_search_panel.py
-scripts/verify_vocabulary.py
-scripts/verify_gutter.py
-scripts/verify_crlf_display.py
