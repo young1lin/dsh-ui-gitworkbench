@@ -76,6 +76,7 @@ import {
 import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
 import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cache.ts'
 import { useIdleValue } from './idle-value.ts'
+import { warmHighlighter } from './highlight.ts'
 import { emptyQueryFilter, parseLogQuery, serializeLogQuery } from './log-filter-query.ts'
 import { nextAfterPlan, type DiscardAnswer, type DiscardPreview } from './discard-flow.ts'
 import { isPhantomModified } from './diff-model.ts'
@@ -354,6 +355,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
 
   const [stats, setStats] = useState<WorkbenchStats | null>(null)
   const [open, setOpen] = useState(false)
+  // The highlighter's engine is a wasm module that instantiates off-thread;
+  // started as the drawer opens, it is ready long before the first click on a
+  // file, so no diff is painted plain and then again in colour.
+  useEffect(() => { if (open) void warmHighlighter() }, [open])
   const [selected, setSelected] = useState<string | null>(null)
   /** Generation counter — bumped on drawer open, manual refresh and source switch:
    *  the events after which working-tree content can genuinely differ. Tab and
@@ -1231,10 +1236,6 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
 
   /** Selecting a commit changes which view is rendered; the working tree it is
    *  shown beside has not moved, so nothing about `stats` is refetched. */
-  const selectCommit = (hash: string): void => {
-    setCommitHash(hash)
-  }
-
   return (
     <>
       <EnvCard
@@ -1258,7 +1259,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onSwitchTab={switchTab}
           commits={historyCommits}
           commitHash={commitHash}
-          onSelectCommit={selectCommit}
+          // The setter itself, not a wrapper: its identity is stable, which is
+          // what lets the memoised commit rows skip a keystroke's re-render.
+          onSelectCommit={setCommitHash}
           hasMoreCommits={historyHasMore}
           loadingMore={loadingMore}
           onLoadMoreCommits={loadMoreCommits}

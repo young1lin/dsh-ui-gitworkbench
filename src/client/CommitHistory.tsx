@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 
 import { COMMIT_ROW_H, type HistoryLayout } from './history-layout.ts'
@@ -135,7 +135,16 @@ function GraphCell({ row, width, active, rowH }: { row: GraphRow; width: number;
   )
 }
 
-function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth, layout }: {
+/**
+ * One commit in the list.
+ *
+ * Memoised: the list is not windowed, and its props — the commit object, the
+ * lane geometry from the memoised graph, the stable `onSelect` — do not change
+ * when the reader types in the filter box above it. Without this, every
+ * keystroke re-rendered every loaded row; with a few pages scrolled in that
+ * was the whole cost of a keystroke.
+ */
+const CommitRow = memo(function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth, layout }: {
   t: Translate
   commit: GitCommit
   active: boolean
@@ -154,8 +163,11 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth, layout }
   const body = commit.body ?? ''
   const authorName = commit.authorName ?? ''
   const committerName = commit.committerName ?? ''
-  // The viewer's own locale and timezone — that is the whole point of the line.
-  const exactDate = formatCommitDate(commit.dateIso ?? '')
+  // The viewer's own locale and timezone — that is the whole point of the
+  // line. Formatted only for the card that is OPEN: the row itself never
+  // shows it, and a list of hundreds formatting a date each on every render
+  // was most of what a keystroke in the filter box cost.
+  const exactDate = open ? formatCommitDate(commit.dateIso ?? '') : ''
 
   const cancel = (): void => {
     window.clearTimeout(enterTimer.current)
@@ -288,7 +300,7 @@ function CommitRow({ t, commit, active, onSelect, graphRow, graphWidth, layout }
       ) : null}
     </>
   )
-}
+})
 
 /** The filter's own calendar — a hand-rolled 6×7 Monday-first grid (pure
  *  arithmetic in `calendar.ts`), because the native date input renders as the

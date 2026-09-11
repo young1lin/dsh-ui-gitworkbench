@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { highlightRange, highlightWindow, shikiThemeOf } from '../src/client/highlight.ts'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { highlightRange, highlightWindow, shikiThemeOf, warmHighlighter } from '../src/client/highlight.ts'
 import { CHUNK_LINES } from '../src/client/token-cache.ts'
 import type { HighlightRun } from '../src/client/highlight.ts'
 
 const THEME = shikiThemeOf('github-dark')
+
+// The engine is a wasm module that loads asynchronously; until it has, every
+// tokenizer answers plain text. The drawer warms it as it opens — here the
+// suite does.
+beforeAll(() => warmHighlighter())
 
 const colours = (runs: HighlightRun[] | undefined): string =>
   (runs ?? []).map(run => run.color ?? '-').join(',')

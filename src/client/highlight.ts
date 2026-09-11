@@ -1,15 +1,33 @@
 /**
- * Diff highlighter: Shiki core with the JavaScript regex engine (no Oniguruma
- * WASM) and a real TextMate theme per drawer palette. The css-variables theme
- * only has ~8 token slots, so identifiers, types and punctuation all collapsed
- * to the body colour — which is why a homemade four-kind pass looked the same
- * as "only keywords are coloured". Bundled themes emit a hex per scope.
+ * Diff highlighter: Shiki core on the Oniguruma engine (the WASM build, inlined
+ * in the bundle) and a real TextMate theme per drawer palette. The
+ * css-variables theme only has ~8 token slots, so identifiers, types and
+ * punctuation all collapsed to the body colour — which is why a homemade
+ * four-kind pass looked the same as "only keywords are coloured". Bundled
+ * themes emit a hex per scope.
+ *
+ * Oniguruma rather than Shiki's JavaScript regex engine because the engine IS
+ * the per-line cost, and the JavaScript one emulates Oniguruma's syntax on top
+ * of native RegExp — a translation the heavy grammars pay for on every line.
+ * Cold, in Node, same grammars, real files: the first 37 lines of C++ cost
+ * 900ms there and 172ms here; an 80-line window of this plugin's TSX, 175ms
+ * and 30ms; re-lexing those 80 lines one at a time, 75ms and 12ms. The drawer
+ * feels that first number as the freeze after a click, and the others as
+ * every scroll and every window that follows.
+ *
+ * The price is that the engine loads asynchronously (the wasm instantiates
+ * off-thread), so the highlighter does not exist for the first few tens of
+ * milliseconds after it is asked for. Every tokenizer here answers "no
+ * grammar" until then — plain text, the same answer a lazy grammar gives
+ * before it lands — and the panes repaint on the same subscription when it
+ * arrives. The drawer warms it as it opens ({@link warmHighlighter}), which
+ * is well ahead of the first click on a file.
  *
  * Boot grammars: TypeScript, shell, JSON. Everything else the drawer opens
  * loads lazily.
  */
 import { createHighlighterCoreSync } from 'shiki/core'
-import { createJavaScriptRegexEngine, defaultJavaScriptRegexConstructor } from 'shiki/engine/javascript'
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 import langTs from '@shikijs/langs/typescript'
 import langBash from '@shikijs/langs/shellscript'
 import langJson from '@shikijs/langs/json'
@@ -99,21 +117,34 @@ const PALETTE_THEMES: Record<string, string> = {
   'cyberpunk-light': 'synthwave-84',
 }
 
-const regexEngine = createJavaScriptRegexEngine({
-  forgiving: true,
-  regexConstructor: pattern => defaultJavaScriptRegexConstructor(pattern, {
-    lazyCompileLength: Number.POSITIVE_INFINITY,
-  }),
-})
-
 let singleton: HighlighterCore | undefined
+let starting: Promise<void> | undefined
 
-function highlighter(): HighlighterCore {
-  singleton ??= createHighlighterCoreSync({
-    themes: THEMES,
-    langs: LANGS,
-    engine: regexEngine,
-  })
+/**
+ * Start the engine, once, and resolve when the highlighter exists.
+ *
+ * Idempotent and cheap to call again, so the drawer calls it as it opens and
+ * every tokenizer calls it when it finds no highlighter — whichever comes
+ * first starts the load, and the rest join it. Failure leaves the drawer in
+ * plain text rather than broken: the promise settles either way, and the
+ * tokenizers keep answering "no grammar".
+ */
+export function warmHighlighter(): Promise<void> {
+  starting ??= createOnigurumaEngine(import('shiki/wasm'))
+    .then(engine => {
+      singleton = createHighlighterCoreSync({ themes: THEMES, langs: LANGS, engine })
+      loadCount += 1
+      for (const listener of listeners) listener()
+    })
+    .catch((error: unknown) => {
+      console.warn('[gitworkbench] syntax highlighting is off: the regex engine did not load', error)
+    })
+  return starting
+}
+
+/** The highlighter, or undefined while its engine is still loading. */
+function highlighter(): HighlighterCore | undefined {
+  if (singleton === undefined) void warmHighlighter()
   return singleton
 }
 
@@ -140,7 +171,8 @@ const requested = new Set<string>()
 const listeners = new Set<() => void>()
 let loadCount = 0
 
-/** Subscribe to lazy-grammar loads so a first render can re-highlight. */
+/** Subscribe to lazy-grammar loads — and the engine's own arrival — so a
+ *  first render can re-highlight. */
 export function subscribeGrammarLoaded(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
@@ -151,19 +183,23 @@ export function grammarLoadCount(): number {
   return loadCount
 }
 
-function ensureGrammar(resolved: string): boolean {
+/** The highlighter with this grammar loaded, or undefined while either is
+ *  still on its way — in which case the load has been started. */
+function ready(resolved: string): HighlighterCore | undefined {
+  const hl = highlighter()
+  if (hl === undefined) return undefined
   const load = LAZY_GRAMMARS.get(resolved)
-  if (load === undefined) return true
-  if (highlighter().getLoadedLanguages().includes(resolved)) return true
+  if (load === undefined) return hl
+  if (hl.getLoadedLanguages().includes(resolved)) return hl
   if (!requested.has(resolved)) {
     requested.add(resolved)
     void load().then(mod => {
-      highlighter().loadLanguageSync(mod.default)
+      hl.loadLanguageSync(mod.default)
       loadCount += 1
       for (const listener of listeners) listener()
     })
   }
-  return false
+  return undefined
 }
 
 export interface HighlightRun {
@@ -311,8 +347,9 @@ function soloRuns(line: string, lang: string | undefined, theme: string): Highli
 function chunkTokenizer(lang: string | undefined, theme: string): ChunkTokenizer {
   return (text, state) => {
     if (lang === undefined) return undefined
-    if (!ensureGrammar(lang)) return undefined
-    const got = highlighter().codeToTokens(text, { lang, theme, grammarState: state as never })
+    const hl = ready(lang)
+    if (hl === undefined) return undefined
+    const got = hl.codeToTokens(text, { lang, theme, grammarState: state as never })
     return { runs: runsOf(got.tokens, text.split('\n')), state: got.grammarState }
   }
 }
@@ -328,8 +365,9 @@ function tokenizeLines(
   theme: string,
 ): HighlightRun[][] | undefined {
   if (lang === undefined || lines.length === 0) return undefined
-  if (!ensureGrammar(lang)) return undefined
-  const { tokens } = highlighter().codeToTokens(lines.join('\n'), { lang, theme })
+  const hl = ready(lang)
+  if (hl === undefined) return undefined
+  const { tokens } = hl.codeToTokens(lines.join('\n'), { lang, theme })
   return runsOf(tokens, lines)
 }
 

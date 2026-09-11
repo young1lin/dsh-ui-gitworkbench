@@ -7,11 +7,16 @@
  * the compare direction, not rendering) — these tests keep it that way. If
  * shiki ever changes how it groups tokens per line, this fails first.
  */
-import { describe, expect, it } from 'vitest'
-import { highlightWindow, highlightForRowsWindow } from '../src/client/highlight.ts'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { highlightWindow, highlightForRowsWindow, warmHighlighter } from '../src/client/highlight.ts'
 import { parseRows } from '../src/client/diff-model.ts'
 
 const CR = String.fromCharCode(13)
+
+// The engine is a wasm module that loads asynchronously; until it has, every
+// tokenizer answers plain text. The drawer warms it as it opens — here the
+// suite does.
+beforeAll(() => warmHighlighter())
 
 describe('probe: CRLF through the real pipeline', () => {
   it('highlightWindow keeps each line self-aligned when lines end in CR', () => {

@@ -5,9 +5,9 @@
  * imported the panel pulled CSS modules + React and blew up. The model is a
  * plain module; the stylesheet is read as text.
  */
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { attachWordRanges, gutterSides, overlayRanges, parseRows, type Row, type RowWithRanges } from '../src/client/diff-model.ts'
-import { highlightFile, highlightForRows, shikiLangOf, shikiThemeOf } from '../src/client/highlight.ts'
+import { highlightFile, highlightForRows, shikiLangOf, shikiThemeOf, warmHighlighter } from '../src/client/highlight.ts'
 import { panelCssSource } from './helpers/panel-css.ts'
 
 const css = panelCssSource()
@@ -283,6 +283,10 @@ describe('drawer CSS invariants', () => {
 })
 
 describe('shiki highlight', () => {
+  // The engine is a wasm module that loads asynchronously; until it has,
+  // every tokenizer answers plain text. The drawer warms it as it opens.
+  beforeAll(() => warmHighlighter())
+
   it('maps extensions to grammars', () => {
     expect(shikiLangOf('a.tsx')).toBe('typescript')
     expect(shikiLangOf('a.py')).toBe('python')
