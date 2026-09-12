@@ -380,11 +380,28 @@ function runsOf(
   const rows = tokens.length > 1 && last !== undefined && last.length === 0
     ? tokens.slice(0, -1)
     : tokens
-  const out: HighlightRun[][] = rows.map(line => line.map(token => ({
-    text: token.content,
-    color: token.color,
-    italic: token.fontStyle !== undefined && (token.fontStyle & 1) !== 0 ? true : undefined,
-  })))
+  const out: HighlightRun[][] = rows.map((line, i) => {
+    const runs: HighlightRun[] = line.map(token => ({
+      text: token.content,
+      color: token.color,
+      italic: token.fontStyle !== undefined && (token.fontStyle & 1) !== 0 ? true : undefined,
+    }))
+    // Shiki splits the text it is given on `\r?\n`, so a CRLF line's CR is
+    // not in any token. The renderer draws the CR glyph from the runs, and a
+    // line's runs must add up to the line — so whatever the split dropped
+    // from the end goes back onto the last run.
+    const source = lines[i]
+    if (source !== undefined) {
+      const joined = runs.map(run => run.text).join('')
+      if (joined.length < source.length && source.startsWith(joined)) {
+        const tail = source.slice(joined.length)
+        const last = runs[runs.length - 1]
+        if (last === undefined) runs.push({ text: tail, color: undefined })
+        else runs[runs.length - 1] = { ...last, text: last.text + tail }
+      }
+    }
+    return runs
+  })
   while (out.length < lines.length) out.push([{ text: lines[out.length]!, color: undefined }])
   return out.slice(0, lines.length)
 }

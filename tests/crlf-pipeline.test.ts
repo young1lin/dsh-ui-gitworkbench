@@ -8,7 +8,7 @@
  * shiki ever changes how it groups tokens per line, this fails first.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { highlightWindow, highlightForRowsWindow, warmHighlighter } from '../src/client/highlight.ts'
+import { highlightRange, highlightWindow, highlightForRowsWindow, warmHighlighter } from '../src/client/highlight.ts'
 import { parseRows } from '../src/client/diff-model.ts'
 
 const CR = String.fromCharCode(13)
@@ -22,6 +22,19 @@ describe('probe: CRLF through the real pipeline', () => {
   it('highlightWindow keeps each line self-aligned when lines end in CR', () => {
     const lines = ['const a = 1' + CR, 'let b = 2' + CR, 'return a + b' + CR]
     const out = highlightWindow(lines, 'typescript', 'github-dark-default', 0, lines.length)
+    expect(out).toBeDefined()
+    for (let i = 0; i < lines.length; i += 1) {
+      const joined = (out![i] ?? []).map(run => run.text).join('')
+      expect(joined).toBe(lines[i])
+    }
+  })
+
+  it('highlightRange keeps each line self-aligned when lines end in CR', () => {
+    // The side-by-side pane paints with the file pass alone, so its alignment
+    // has to hold on its own — the per-line re-lex is no longer there to
+    // paper over a chunk that came back one line off.
+    const lines = ['const a = 1' + CR, 'let b = 2' + CR, 'return a + b' + CR, 'a' + CR + 'b', CR + CR, 'end' + CR]
+    const out = highlightRange('crlf', lines, 'typescript', 'github-dark-default', 0, lines.length)
     expect(out).toBeDefined()
     for (let i = 0; i < lines.length; i += 1) {
       const joined = (out![i] ?? []).map(run => run.text).join('')

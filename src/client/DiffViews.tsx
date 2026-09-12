@@ -20,7 +20,7 @@ import { PaneDivider } from './PaneDivider.tsx'
 import { SideRails } from './SideRails.tsx'
 import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
-import { grammarLoadCount, highlightForRowsWindow, highlightRange, highlightWindow, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
+import { grammarLoadCount, highlightForRowsWindow, highlightRange, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { useRowWindow } from './use-row-window.ts'
 import { rowMark, useVariableRowWindow } from './use-variable-row-window.ts'
 import { NO_RANGES, renderUnifiedCode, RowSpacer, SideCells, unifiedRowClass } from './diff-cells.tsx'
@@ -412,20 +412,21 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   })
   const win = wrap ? flow.win : fixedWin
   //
-  // Two passes with two lifetimes. The whole-file pass runs once per file and
-  // is what knows about block comments and template literals; the per-line
-  // re-lex — one Shiki call each, and the reason a 4,000-line file froze the
-  // pane for 2.8 seconds — runs only over the rows in the window, and so again
-  // whenever the reader scrolls.
+  // The file pass alone, over the rows in the window. Each column IS a whole
+  // file (`-U1000000` is one hunk covering everything), so the pass that knows
+  // about block comments and template literals is the exact answer here, and
+  // the per-line re-lex the unified diff needs for its hunks was wrong for
+  // it: a JSX `{/* … */}` whose continuation lines carry no `*` had its prose
+  // painted as keywords. One Shiki call per new chunk, none on scroll-back.
   const leftLines = useMemo(() => rows.map(row => row.left === null ? '' : row.left.text), [rows])
   const rightLines = useMemo(() => rows.map(row => row.right === null ? '' : row.right.text), [rows])
   const leftSyntax = useMemo(
-    () => highlightWindow(leftLines, lang, shikiTheme, win.start, win.end),
-    [leftLines, lang, shikiTheme, win.start, win.end, grammarGen],
+    () => highlightRange(rowWindowKey + '\x1fL', leftLines, lang, shikiTheme, win.start, win.end),
+    [rowWindowKey, leftLines, lang, shikiTheme, win.start, win.end, grammarGen],
   )
   const rightSyntax = useMemo(
-    () => highlightWindow(rightLines, lang, shikiTheme, win.start, win.end),
-    [rightLines, lang, shikiTheme, win.start, win.end, grammarGen],
+    () => highlightRange(rowWindowKey + '\x1fR', rightLines, lang, shikiTheme, win.start, win.end),
+    [rowWindowKey, rightLines, lang, shikiTheme, win.start, win.end, grammarGen],
   )
 
   /** The editor half of the pane, present only on the unstaged layer. */
