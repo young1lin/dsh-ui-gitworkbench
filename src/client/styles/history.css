@@ -92,6 +92,10 @@
   text-align: left; cursor: pointer;
 }
 .refRow:hover { background: var(--gs-raise); color: var(--gs-fg); }
+/* A branch another worktree holds: listed, so the reader learns where it is
+   (the path is on `title`), but not pickable — git would refuse it anyway. */
+.refRow:disabled { opacity: 0.45; cursor: not-allowed; }
+.refRow:disabled:hover { background: transparent; color: var(--gs-fg-muted); }
 /* .refRowActive: see the shared selected-state rule at the foot of the file. */
 /* Keeps a branch without a worktree aligned with one that has the glyph. */
 .refRowSpacer { flex: none; width: 12px; }

@@ -543,7 +543,7 @@ export function SettingsMenu({ t, mode, family, onMode, onFamily, settings, onSt
  * @param setOpen - the state setter, stable, so the effect binds once per open.
  * @returns the ref to put on the element that counts as "inside".
  */
-function useDismissable(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>): Ref<HTMLDivElement> {
+export function useDismissable(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>): Ref<HTMLDivElement> {
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return

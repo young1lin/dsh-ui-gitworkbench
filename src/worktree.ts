@@ -340,6 +340,25 @@ export function bindingNotice(name: string, branch: string | undefined, inherite
     + closing
 }
 
+/**
+ * The main worktree's path: the first entry `git worktree list --porcelain`
+ * prints, which is always the main one. Kept apart from
+ * {@link parseWorktreeList}, which drops a detached entry — and a detached
+ * main worktree is still the one place the drawer may switch a branch.
+ * @param porcelain - `git worktree list --porcelain` output.
+ * @returns the path, or null when the repository is bare (no tree to switch)
+ *          or the output is empty.
+ */
+export function mainWorktreePath(porcelain: string): string | null {
+  let path: string | null = null
+  for (const line of porcelain.split('\n')) {
+    if (line.length === 0) { if (path !== null) return path; continue }
+    if (path === null && line.startsWith('worktree ')) path = line.slice('worktree '.length)
+    else if (path !== null && line === 'bare') return null
+  }
+  return path
+}
+
 export function parseWorktreeList(porcelain: string): WorktreeEntry[] {
   const out: WorktreeEntry[] = []
   let path = ''

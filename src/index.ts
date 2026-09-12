@@ -54,10 +54,10 @@ import { saveJsonAtomic } from './atomic-json.js'
 import { runWriteChecked, type WriteCheckedIo, type WriteResult } from './write-checked.js'
 import { CommitPayloadCache, cacheKey } from './commit-cache.js'
 import {
-  NETWORK_GRACE_MS, NON_INTERACTIVE_ENV, capBranches, classifyFailure, clipDiff,
+  NETWORK_GRACE_MS, NON_INTERACTIVE_ENV, capBranches, capStderr, classifyFailure, clipDiff,
   commitArgv, countBufferLines, decodesAsUtf8, fetchArgv, isBinaryPrefix, isNoMergeBaseError,
   isSafePathArg, parseNameStatus, parseNumstat, parseStatus, parseTracking,
-  pullArgv, pushArgv, stageArgv, stageStateOf, unstageArgv,
+  pullArgv, pushArgv, remoteOnlyBranches, stageArgv, stageStateOf, switchArgv, unstageArgv,
   type GitFile, type GitFileStatus, type MutableGitFile,
   type OpFailure, type PullMode, type Tracking,
 } from './git-ops.js'
@@ -69,7 +69,7 @@ import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveInside } from './path-lock.js'
-import { resolveRepoRoot, rootedDir } from './repo-root.js'
+import { isMainWorktree, resolveRepoRoot, rootedDir } from './repo-root.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
@@ -80,7 +80,7 @@ import {
   type StyleEntry, type StyleFile,
 } from './style-store.js'
 import {
-  bindingNotice, bindingsPath, findRegisteredWorktree, isRefName, lineageEdgeOf, loadBindings, parseWorktreeList, resolveEffectiveBinding, resolveEnterBranch, sanitizeName, saveBindings, worktreeDir,
+  bindingNotice, bindingsPath, findRegisteredWorktree, isRefName, lineageEdgeOf, loadBindings, mainWorktreePath, parseWorktreeList, resolveEffectiveBinding, resolveEnterBranch, sanitizeName, saveBindings, worktreeDir,
   type BindingsFile, type WorktreeBinding, type WorktreeEntry, type WorktreeOpResult,
 } from './worktree.js'
 
@@ -177,7 +177,7 @@ export interface WorkbenchStats {
 interface GitResult {
   readonly stdout: string
   readonly exitCode: number
-  /** Last 300 chars of stderr, or the spawn exception message — for error reporting. */
+  /** Bounded stderr with both ends kept (see `capStderr`), or the spawn exception message — for error reporting. */
   readonly stderr: string
 }
 
@@ -1543,14 +1543,20 @@ export class GitWorkbenchService extends TypertRemoteService {
    * Branches come back most-recently-committed first. With hundreds of them the
    * order is what makes the list usable — the handful anyone is working on sit
    * at the top, so the picker is useful before a single character is typed.
+   *
+   * Remote-tracking branches with no local counterpart ride along for the
+   * branch switcher, and so does the main worktree's path: the switcher is
+   * offered only there, and a detached main worktree — which the worktree
+   * list drops — is still that place.
    * @param sessionId - session whose effective binding is looked up.
    * @param repoPath - caller's directory, used when the session is unbound.
    * @param signal - abort signal.
    * @returns the effective binding (with whether an ancestor lent it), the
-   * repository's worktrees, and its local branches.
+   * repository's worktrees, its local branches, the remote-only branches, and
+   * the main worktree's path (null outside a repo or for a bare one).
    */
   @Remote('worktreeStatus')
-  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; bindingInherited: boolean; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean }> {
+  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; bindingInherited: boolean; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean; remoteBranches: string[]; remoteBranchesTruncated: boolean; mainWorktreePath: string | null }> {
     const file = await this.bindingsIo().load()
     const effective = typeof sessionId === 'string' && sessionId.length > 0
       ? resolveEffectiveBinding(sessionId, this.parentOf, id => file.bindings[id])
@@ -1562,19 +1568,27 @@ export class GitWorkbenchService extends TypertRemoteService {
     const caller = typeof repoPath === 'string' && repoPath.length > 0 ? repoPath.replace(/\\/g, '/') : process.cwd()
     const cwd = binding?.repoRoot ?? caller
     const root = await this.repoRootOf(cwd, signal)
-    if (root === null) return { binding, bindingInherited, worktrees: [], branches: [], branchesTruncated: false }
-    const [listed, named] = await Promise.all([
+    if (root === null) return { binding, bindingInherited, worktrees: [], branches: [], branchesTruncated: false, remoteBranches: [], remoteBranchesTruncated: false, mainWorktreePath: null }
+    const [listed, named, remote] = await Promise.all([
       this.git(root, ['worktree', 'list', '--porcelain'], signal),
       this.git(root, ['branch', '--sort=-committerdate', '--format=%(refname:short)'], signal),
+      this.git(root, ['branch', '-r', '--sort=-committerdate', '--format=%(refname:short)'], signal),
     ])
-    const all = named.stdout.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+    const names = (stdout: string): string[] => stdout.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+    const all = names(named.stdout)
     const { branches, branchesTruncated } = capBranches(all, BRANCH_LIST_CAP)
+    // Filtered against EVERY local branch, not the capped list: a remote
+    // branch whose local twin fell past the cap is still not remote-only.
+    const remoteOnly = capBranches(remoteOnlyBranches(names(remote.stdout), all), BRANCH_LIST_CAP)
     return {
       binding,
       bindingInherited,
       worktrees: parseWorktreeList(listed.stdout),
       branches,
       branchesTruncated,
+      remoteBranches: remoteOnly.branches,
+      remoteBranchesTruncated: remoteOnly.branchesTruncated,
+      mainWorktreePath: mainWorktreePath(listed.stdout),
     }
   }
 
@@ -1864,6 +1878,37 @@ export class GitWorkbenchService extends TypertRemoteService {
     return this.writeOp(this.cwdOf(worktreePath), () => pushArgv(tracking.branch, tracking.upstream !== null), signal, NETWORK_GRACE_MS)
   }
 
+  /**
+   * Check out another branch in the MAIN worktree.
+   *
+   * Refused anywhere else, on the host and not only in what the client shows:
+   * a linked worktree is the agent's — it entered it and holds the branch the
+   * session works on — and moving that branch from a header menu would pull
+   * the tree out from under a running turn. Ask the agent instead.
+   *
+   * Never forces. Clean-merging local edits ride along the way `git switch`
+   * carries them by default; edits the target would overwrite make git refuse,
+   * and that refusal reaches the drawer as `dirty`. A branch another worktree
+   * has checked out is refused by git too, in its own words.
+   * @param worktreePath - directory to run in; must sit in the main worktree.
+   * @param branch - the local branch to end up on.
+   * @param track - for a branch that exists only on a remote, the remote ref
+   *                (`origin/<branch>`) the new local branch tracks; omit for
+   *                a branch that already exists locally.
+   * @param signal - abort signal.
+   */
+  @Remote('switchBranch')
+  async switchBranch(worktreePath: string, branch: string, track: string | undefined, signal: AbortSignal): Promise<GitOpResult> {
+    if (!isRefName(branch)) return { ok: false, failure: 'invalid', error: `not a branch name: ${JSON.stringify(branch)}` }
+    const remote = typeof track === 'string' && track.length > 0 ? track : undefined
+    if (remote !== undefined && !isRefName(remote)) return { ok: false, failure: 'invalid', error: `not a remote ref: ${JSON.stringify(remote)}` }
+    const dir = await this.rootedDirOf(worktreePath, signal)
+    if (!await isMainWorktree((cwd, argv) => this.git(cwd, argv, signal), dir)) {
+      return { ok: false, failure: 'invalid', error: 'branches are switched from the main worktree only; in a worktree, ask the agent to switch' }
+    }
+    return this.writeOp(dir, () => switchArgv(branch, remote), signal)
+  }
+
   /** Shared shape for every write op: run it, classify what went wrong.
    *
    * Takes the DIRECTORY to run in, already resolved: callers carrying
@@ -2006,7 +2051,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         readAll(handle.stderr), // drain so a chatty stderr cannot deadlock the pipe
         handle.done,
       ])
-      return { stdout, exitCode: outcome.exitCode ?? 0, stderr: stderr.slice(-300).trim() }
+      return { stdout, exitCode: outcome.exitCode ?? 0, stderr: capStderr(stderr).trim() }
     } catch (error) {
       return { stdout: '', exitCode: 1, stderr: error instanceof Error ? error.message : String(error) }
     }

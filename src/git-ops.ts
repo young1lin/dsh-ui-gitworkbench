@@ -129,6 +129,44 @@ export function pushArgv(branch: string, hasUpstream: boolean): string[] {
   return ['push', '--set-upstream', 'origin', branch]
 }
 
+/**
+ * @param branch - the local branch to end up on.
+ * @param track - for a branch that exists only on a remote, the remote ref
+ *                (`origin/feature`) a new local `branch` should track.
+ * @returns argv for `git switch`. A local pick passes `--no-guess`, because
+ *          without it a missing local name is quietly created from the remote
+ *          of the same name — and the drawer lists remote branches as rows of
+ *          their own, so a local row must mean the local branch and nothing
+ *          else. Neither form carries `--force`, `-C` or `--discard-changes`:
+ *          git keeps clean-merging local edits across a switch and refuses
+ *          the rest, and that refusal is the drawer's `dirty` message.
+ */
+export function switchArgv(branch: string, track?: string): string[] {
+  if (!isSafePathArg(branch)) throw new Error(`unsafe branch name: ${JSON.stringify(branch)}`)
+  if (track === undefined) return ['switch', '--no-guess', branch]
+  if (!isSafePathArg(track)) throw new Error(`unsafe remote ref: ${JSON.stringify(track)}`)
+  return ['switch', '-c', branch, '--track', track]
+}
+
+/**
+ * Remote-tracking branches worth offering as switch targets: those with no
+ * local branch of the same short name (the local one is the row to pick
+ * then), minus every remote's symbolic `HEAD`. Two remotes carrying the same
+ * name both stay — the second pick fails with git's own "already exists",
+ * which beats hiding one and leaving the user to wonder where it went.
+ * @param remotes - `git branch -r` short names, in the order to keep.
+ * @param locals - local branch names.
+ */
+export function remoteOnlyBranches(remotes: readonly string[], locals: readonly string[]): string[] {
+  const local = new Set(locals)
+  return remotes.filter(name => {
+    const slash = name.indexOf('/')
+    if (slash < 0) return false
+    const short = name.slice(slash + 1)
+    return short !== 'HEAD' && !local.has(short)
+  })
+}
+
 /** What `git status --branch --porcelain=v1` says about where this branch sits. */
 export interface Tracking {
   readonly branch: string
@@ -230,6 +268,31 @@ export type OpFailure =
   | 'stale'
   | 'invalid'
   | 'unknown'
+
+/** Total stderr a `GitResult` may carry; halves are what each end keeps. */
+export const STDERR_CAP = 1200
+
+/**
+ * Bound a command's stderr while keeping BOTH ends of it.
+ *
+ * Git puts the sentence that names the failure at the HEAD of stderr —
+ * `error: Your local changes ... would be overwritten by checkout:` — and the
+ * evidence (the file list, the trailing advice) after it, so a tail-only cap
+ * deletes exactly the half `classifyFailure` matches on once the list grows
+ * past the cap. The branch switcher's e2e probe caught this live: a six-file
+ * dirty refusal classified as `unknown` because the head line was sliced off
+ * by the old `slice(-300)`. Keeping head and tail preserves the phrase for
+ * classification AND the actionable advice for display; only a chatty middle
+ * (fetch progress counters) is dropped, and the marker says how much.
+ * @param stderr - everything the failed command printed on stderr.
+ * @returns stderr when it already fits, else its first and last halves
+ *          joined by an omission marker.
+ */
+export function capStderr(stderr: string): string {
+  if (stderr.length <= STDERR_CAP) return stderr
+  const half = STDERR_CAP / 2
+  return `${stderr.slice(0, half)}\n[… ${stderr.length - STDERR_CAP} chars omitted …]\n${stderr.slice(-half)}`
+}
 
 /**
  * Turn git's exit into a reason the UI can act on.

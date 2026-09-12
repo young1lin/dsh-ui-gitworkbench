@@ -11,6 +11,7 @@ import {
   NON_INTERACTIVE_ENV,
   decodesAsUtf8,
   isBinaryPrefix,
+  capStderr,
   classifyFailure,
   commitArgv,
   fetchArgv,
@@ -18,8 +19,10 @@ import {
   parseTracking,
   pullArgv,
   pushArgv,
+  remoteOnlyBranches,
   stageArgv,
   stageStateOf,
+  switchArgv,
   unstageArgv,
 } from '../src/git-ops.ts'
 
@@ -114,6 +117,60 @@ describe('network commands', () => {
   })
 })
 
+describe('switch', () => {
+  it('switches to a local branch without guessing one into existence', () => {
+    // Without `--no-guess`, `git switch foo` with no local `foo` quietly
+    // creates one from `origin/foo`. The drawer offers remote branches as
+    // their own rows, so a local pick must mean exactly the local branch.
+    expect(switchArgv('feature/x')).toEqual(['switch', '--no-guess', 'feature/x'])
+  })
+
+  it('creates a tracking branch for a remote pick', () => {
+    expect(switchArgv('feature/x', 'origin/feature/x'))
+      .toEqual(['switch', '-c', 'feature/x', '--track', 'origin/feature/x'])
+  })
+
+  it('refuses names git would read as flags', () => {
+    expect(() => switchArgv('--force')).toThrow(/branch/i)
+    expect(() => switchArgv('')).toThrow(/branch/i)
+    expect(() => switchArgv('feature/x', '-C')).toThrow(/remote/i)
+  })
+
+  it('never carries a spelling that discards local changes', () => {
+    // `git switch` keeps clean-merging local edits and refuses the rest; every
+    // flag below turns that refusal off, and the drawer must not have them.
+    const FORBIDDEN = [/^--force$/, /^-f$/, /^-C$/, /^--discard-changes$/, /^--force-create$/]
+    for (const argv of [switchArgv('main'), switchArgv('feature/x', 'origin/feature/x')]) {
+      for (const arg of argv) {
+        for (const pattern of FORBIDDEN) {
+          expect(pattern.test(arg), `${arg} in ${argv.join(' ')}`).toBe(false)
+        }
+      }
+    }
+  })
+})
+
+describe('remoteOnlyBranches', () => {
+  it('drops remote branches that already have a local branch of the same name', () => {
+    expect(remoteOnlyBranches(['origin/main', 'origin/feature/x', 'origin/hotfix'], ['main', 'hotfix']))
+      .toEqual(['origin/feature/x'])
+  })
+
+  it('drops the symbolic HEAD pointer of every remote', () => {
+    expect(remoteOnlyBranches(['origin/HEAD', 'origin/dev', 'upstream/HEAD'], [])).toEqual(['origin/dev'])
+  })
+
+  it('keeps both remotes when they carry the same short name', () => {
+    // The second pick fails with git's own "already exists" — better than
+    // hiding one of them and letting the user wonder where it went.
+    expect(remoteOnlyBranches(['origin/dev', 'upstream/dev'], [])).toEqual(['origin/dev', 'upstream/dev'])
+  })
+
+  it('preserves the order it was given', () => {
+    expect(remoteOnlyBranches(['origin/b', 'origin/a', 'origin/c'], [])).toEqual(['origin/b', 'origin/a', 'origin/c'])
+  })
+})
+
 describe('parseTracking', () => {
   const header = (line: string) => `${line}\n M src/index.ts\n`
 
@@ -174,6 +231,36 @@ describe('stageStateOf', () => {
     expect(stageStateOf('UU')).toEqual({ staged: false, unstaged: true })
     expect(stageStateOf('AA')).toEqual({ staged: false, unstaged: true })
     expect(stageStateOf('DU')).toEqual({ staged: false, unstaged: true })
+  })
+})
+
+describe('capStderr', () => {
+  it('passes short stderr through unchanged', () => {
+    expect(capStderr('fatal: bad revision')).toBe('fatal: bad revision')
+  })
+
+  it('keeps both ends of long stderr with an omission marker', () => {
+    const head = 'error: the first line names the failure'
+    const tail = 'Please commit your changes or stash them before you switch branches.'
+    const middle = Array.from({ length: 60 }, (_, i) => `\tfile-${i}-with-a-long-name.go`).join('\n')
+    const capped = capStderr(`${head}\n${middle}\n${tail}`)
+    expect(capped.startsWith(head)).toBe(true)
+    expect(capped.endsWith(tail)).toBe(true)
+    expect(capped).toContain('chars omitted')
+  })
+
+  it('keeps the dirty phrase classifiable when a long file list buries it', () => {
+    // The regression the branch-switcher e2e probe caught live: git puts
+    // 'would be overwritten' at the HEAD and the file list after it, so a
+    // tail-only cap deleted the phrase and the refusal classified as unknown.
+    const files = Array.from({ length: 40 }, (_, i) => `\tsamples/project/module/deep/file-${i}.java`).join('\n')
+    const stderr = [
+      'error: Your local changes to the following files would be overwritten by checkout:',
+      files,
+      'Please commit your changes or stash them before you switch branches.',
+      'Aborting',
+    ].join('\n')
+    expect(classifyFailure(1, capStderr(stderr), '')).toBe('dirty')
   })
 })
 

@@ -64,3 +64,30 @@ export async function resolveRepoRoot(git: RootGit, cwd: string): Promise<string
 export async function rootedDir(git: RootGit, cwd: string): Promise<string> {
   return (await resolveRepoRoot(git, cwd)) ?? cwd
 }
+
+/**
+ * Whether a directory sits in the repository's MAIN worktree — the one whose
+ * `.git` is a directory — as opposed to a linked `git worktree add` one.
+ *
+ * The drawer switches branches only there. A linked worktree is the agent's:
+ * it entered it, it holds the branch the session is working on, and moving
+ * that branch under it from a header menu would pull the tree out from under
+ * a running turn. So the client hides the control there, and this check is
+ * what makes the host refuse regardless of what a client renders.
+ *
+ * `--git-dir` and `--git-common-dir` name the same directory exactly in the
+ * main worktree; in a linked one the first is `.git/worktrees/<name>` and the
+ * second the shared `.git`. Both are asked in one spawn. `--path-format=
+ * absolute` is not decoration: from a subdirectory git prints the first
+ * absolute and the second RELATIVE (`../.git`), and the two would never
+ * compare equal (measured on git 2.45).
+ * @param git - how to run git.
+ * @param cwd - any directory inside the repository.
+ * @returns false outside a repository as well: there is nothing to switch.
+ */
+export async function isMainWorktree(git: RootGit, cwd: string): Promise<boolean> {
+  const out = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])
+  if (out.exitCode !== 0) return false
+  const [gitDir, commonDir] = out.stdout.split(/\r?\n/).map(line => line.trim().replace(/\\/g, '/'))
+  return gitDir !== undefined && gitDir.length > 0 && gitDir === commonDir
+}

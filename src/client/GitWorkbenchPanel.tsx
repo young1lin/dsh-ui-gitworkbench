@@ -73,6 +73,8 @@ import {
   blockDiscardBodyText, branchLabel, CommitBox, CompareBar, DiscardConfirm, discardBodyText, Elided,
   opMessage, RefPicker, SettingsMenu, SourceChip, SyncBar,
 } from './WorkbenchControls.tsx'
+import { BranchSwitcher } from './BranchSwitcher.tsx'
+import { switchPayload } from './branch-switch.ts'
 import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
 import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cache.ts'
 import { useIdleValue } from './idle-value.ts'
@@ -552,6 +554,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const worktrees = wtStatus?.worktrees ?? []
   const branches = wtStatus?.branches ?? []
   const branchesTruncated = wtStatus?.branchesTruncated ?? false
+  const remoteBranches = wtStatus?.remoteBranches ?? []
+  const remoteBranchesTruncated = wtStatus?.remoteBranchesTruncated ?? false
+  const mainWorktreePath = wtStatus?.mainWorktreePath ?? null
   /** Branches that have a worktree — what the pickers group to the top. */
   const worktreeBranches = worktrees.map(entry => entry.branch).filter(branch => branch.length > 0)
   /** The session's own worktree: the bound one, else its cwd. The default view. */
@@ -1275,6 +1280,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           branches={branches}
           worktreeBranches={worktreeBranches}
           branchesTruncated={branchesTruncated}
+          remoteBranches={remoteBranches}
+          remoteBranchesTruncated={remoteBranchesTruncated}
+          mainWorktreePath={mainWorktreePath}
           baseRef={baseRef}
           headRef={headRef}
           onBaseRef={setCompareBase}
@@ -1420,6 +1428,10 @@ interface DrawerProps {
   worktreeBranches: readonly string[]
   /** Whether the host cut the branch list short. */
   branchesTruncated: boolean
+  /** The switcher's remote-only rows, and the one path it is offered at. */
+  remoteBranches: readonly string[]
+  remoteBranchesTruncated: boolean
+  mainWorktreePath: string | null
   baseRef: string
   headRef: string
   onBaseRef: (ref: string) => void
@@ -1516,7 +1528,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, remoteBranches, remoteBranchesTruncated, mainWorktreePath, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1869,6 +1881,17 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               fallbackBranch={stats.branch}
               onSwitch={leaveSource}
             />
+            {/* Only where the viewed tree IS the main worktree: a linked one's
+                branch is the agent's, and the host refuses the call there too. */}
+            {samePath(mainWorktreePath, statsPath) ? (
+              <BranchSwitcher
+                t={t} branches={branches} remoteBranches={remoteBranches} worktrees={worktrees}
+                truncated={branchesTruncated || remoteBranchesTruncated}
+                current={stats.detached ? '' : stats.branch}
+                busy={busy !== null}
+                onPick={row => { void runOp('switchBranch', switchPayload(row)) }}
+              />
+            ) : null}
             <Elided text={stats.worktreePath} className={css.headerPathMain} title={stats.worktreePath} />
             {tab === 'changes' && stats.detached ? <span className={css.headerDetached}>detached HEAD</span> : null}
             {tab === 'history' && commitHash !== null ? <span className={css.headerView}>{commitHash}</span> : null}

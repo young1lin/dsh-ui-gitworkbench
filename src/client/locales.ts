@@ -43,6 +43,7 @@ export type WorkbenchKey =
   | 'filterCalendarSets' | 'filterSelected' | 'filterLocale'
   | 'compareBase' | 'compareHead' | 'comparePick' | 'compareCommits' | 'compareEmptyHint' | 'loadingCompare' | 'noBranches'
   | 'refSearch' | 'refNone' | 'refCount' | 'refTruncated' | 'refWorktrees' | 'refBranches' | 'historyRefLabel'
+  | 'switchBranch' | 'switchLocal' | 'switchRemote' | 'switchCurrent' | 'switchHeldAt'
   | 'settings' | 'themeMode' | 'themePalette' | 'themeScope' | 'themeBackground' | 'themeCss'
   | 'modeSystem' | 'modeLight' | 'modeDark'
   | 'scopeProject' | 'scopeGlobal' | 'scopeGlobalHint' | 'scopeNoRepo'
@@ -60,7 +61,7 @@ export type WorkbenchKey =
   | 'stage' | 'unstage' | 'stageAll' | 'unstageAll' | 'stagedCount'
   | 'commit' | 'amend' | 'commitPlaceholder' | 'commitNeedMessage' | 'commitLead'
   | 'op.ok.stage' | 'op.ok.unstage' | 'op.ok.commit' | 'op.ok.fetch' | 'op.ok.pull' | 'op.ok.push'
-  | 'op.ok.discardFile' | 'op.ok.applyBlocks'
+  | 'op.ok.discardFile' | 'op.ok.applyBlocks' | 'op.ok.switchBranch'
   | 'discardAction' | 'discardTitle' | 'discardConfirm' | 'discardCancel'
   | 'discardBodyRestore' | 'discardBodyDelete' | 'discardBodyUnrename'
   // side-by-side block actions: the three buttons and the roll-back confirmation's wording
@@ -129,6 +130,11 @@ export const zh: Record<WorkbenchKey, string> = {
   refTruncated: '仅显示最近的若干分支',
   refWorktrees: '有工作树的分支',
   refBranches: '其他分支',
+  switchBranch: '切换分支',
+  switchLocal: '本地分支',
+  switchRemote: '远端分支（签出并跟踪）',
+  switchCurrent: '当前分支',
+  switchHeldAt: '已在工作树中签出：{path}',
   historyRefLabel: '分支',
   settings: '设置',
   themeMode: '明暗',
@@ -267,6 +273,7 @@ export const zh: Record<WorkbenchKey, string> = {
   'op.ok.push': '推送成功',
   'op.ok.discardFile': '已撤回',
   'op.ok.applyBlocks': '已应用',
+  'op.ok.switchBranch': '已切换分支',
   // The row action, and the dialog it opens. IDEA calls this Rollback and
   // means "take the file back to its committed state" — not "undo my last
   // edit", which is the editor's job and a different promise.
@@ -381,6 +388,11 @@ export const en: Record<WorkbenchKey, string> = {
   refTruncated: 'showing the most recent only',
   refWorktrees: 'With a worktree',
   refBranches: 'Other branches',
+  switchBranch: 'Switch branch',
+  switchLocal: 'Local branches',
+  switchRemote: 'Remote branches (check out and track)',
+  switchCurrent: 'current branch',
+  switchHeldAt: 'checked out in a worktree: {path}',
   historyRefLabel: 'Branch',
   settings: 'Settings',
   themeMode: 'Mode',
@@ -509,6 +521,7 @@ export const en: Record<WorkbenchKey, string> = {
   'op.ok.push': 'Pushed',
   'op.ok.discardFile': 'Rolled back',
   'op.ok.applyBlocks': 'Applied',
+  'op.ok.switchBranch': 'Switched branch',
   discardAction: 'Roll back changes',
   discardTitle: 'Roll back changes?',
   discardConfirm: 'Roll back',

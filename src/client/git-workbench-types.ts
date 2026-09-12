@@ -90,6 +90,17 @@ export interface WorktreeStatus {
   readonly branches: readonly string[]
   /** Whether the host cut {@link branches} short at its cap. */
   readonly branchesTruncated: boolean
+  /**
+   * Remote-tracking branches with no local branch of the same name, for the
+   * branch switcher: picking one creates the local branch and tracks it.
+   */
+  readonly remoteBranches: readonly string[]
+  readonly remoteBranchesTruncated: boolean
+  /**
+   * The main worktree's path — the only place the drawer switches branches.
+   * Null outside a repository or for a bare one.
+   */
+  readonly mainWorktreePath: string | null
 }
 
 /**
@@ -125,13 +136,17 @@ export interface GitOpResult {
 }
 
 /** The host endpoints under `gitWorkbench/` that change something. */
-export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'discardFile' | 'applyBlocks'
+export type GitOpName = 'stage' | 'unstage' | 'commit' | 'fetch' | 'pull' | 'push' | 'discardFile' | 'applyBlocks' | 'switchBranch'
 
 /** Extra arguments an operation needs beyond the worktree path. */
 export interface GitOpPayload {
   readonly paths?: readonly string[]
   readonly message?: string
   readonly amend?: boolean
+  /** `switchBranch`: the local branch to end up on, and — for a branch that
+   *  exists only on a remote — the remote ref the new local branch tracks. */
+  readonly branch?: string
+  readonly track?: string
   /** `pull` picks how to integrate; `applyBlocks` which block mutation. One
    *  field serves both because the payload is a flat bag keyed by op — the
    *  host narrows and validates it per endpoint. */

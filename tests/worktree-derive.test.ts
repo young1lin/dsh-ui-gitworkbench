@@ -1,6 +1,6 @@
 // tests/worktree-derive.test.ts
 import { describe, expect, it } from 'vitest'
-import { findRegisteredWorktree, parseWorktreeList, resolveEnterBranch, sanitizeName, worktreeDir } from '../src/worktree'
+import { findRegisteredWorktree, mainWorktreePath, parseWorktreeList, resolveEnterBranch, sanitizeName, worktreeDir } from '../src/worktree'
 
 describe('sanitizeName', () => {
   const rng = () => 'ab12cd'
@@ -143,6 +143,36 @@ describe('parseWorktreeList', () => {
       '',
     ].join('\n')
     expect(parseWorktreeList(porcelain).map(entry => entry.branch)).toEqual(['wt/hotfix', 'wt/stale'])
+  })
+})
+
+describe('mainWorktreePath', () => {
+  // `git worktree list` prints the main worktree first, always. The switcher
+  // needs that path even when parseWorktreeList would drop the entry — a
+  // detached main worktree is still the one place a branch may be switched.
+  it('names the first entry', () => {
+    const porcelain = [
+      'worktree C:/repo', 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '',
+      'worktree C:/repo/.agents/worktrees/demo', 'HEAD 2222222222222222222222222222222222222222', 'branch refs/heads/wt/demo', '',
+    ].join('\n')
+    expect(mainWorktreePath(porcelain)).toBe('C:/repo')
+  })
+  it('still names a detached main worktree', () => {
+    const porcelain = [
+      'worktree C:/repo', 'HEAD 1111111111111111111111111111111111111111', 'detached', '',
+      'worktree C:/repo/.agents/worktrees/demo', 'HEAD 2222222222222222222222222222222222222222', 'branch refs/heads/wt/demo', '',
+    ].join('\n')
+    expect(mainWorktreePath(porcelain)).toBe('C:/repo')
+  })
+  it('is null for a bare repository, which has no tree to switch', () => {
+    const porcelain = [
+      'worktree C:/repo.git', 'HEAD 1111111111111111111111111111111111111111', 'bare', '',
+      'worktree C:/work/demo', 'HEAD 2222222222222222222222222222222222222222', 'branch refs/heads/wt/demo', '',
+    ].join('\n')
+    expect(mainWorktreePath(porcelain)).toBeNull()
+  })
+  it('is null for empty output', () => {
+    expect(mainWorktreePath('')).toBeNull()
   })
 })
 
