@@ -2,6 +2,15 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.19] - 2026-09-13
+
+### Added
+
+- **Switch branches from the drawer header.** A branch picker beside the worktree chip, offered only while the viewed tree is the main worktree: a linked worktree's branch is the agent's (it entered that tree and holds the branch the session is working on), and moving it from a header menu would pull the tree out from under a running turn — the host refuses the call there too (`isMainWorktree` compares `--git-dir` with `--git-common-dir`); hiding the control says so before the click. Rows state what git would say after it: the current branch is marked; a branch another worktree holds is disabled with that worktree's path on hover; remote branches with no local twin form their own group whose pick creates the local branch and tracks it (`switch -c --track`); a local pick carries `--no-guess`, so a local row means exactly the local branch instead of quietly materialising one from the remote. No spelling carries `--force` / `-C` / `--discard-changes`: local edits git can carry ride along, edits it cannot stop — classified dirty, intact. A 12-step live probe (`scripts/verify_branch_switch.py`, local) covers rendering, row states, the refusal, the carry, remote tracking, the way back, linked-worktree hiding and the host guards, over the fixture repo with full restore.
+
+### Fixed
+
+- **A long refusal used to lose its name.** `git()` kept the last 300 chars of a failed command's stderr, and git puts the classification phrase (`would be overwritten`) at the head with the file list after it — six files push the phrase out of the window and `classifyFailure` falls back to "the operation failed". Caught live by the switcher's probe; `capStderr` now bounds the payload at 1200 chars keeping **both ends** — the phrase for the classifier and the advice for the reader — with a unit test reproducing the original failure shape.
 ## [0.1.18] - 2026-09-12
 
 ### Added

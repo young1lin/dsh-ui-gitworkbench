@@ -10,7 +10,7 @@
 - **文件**：仓库目录树与可编辑文件查看器，支持搜索、图片预览、CodeMirror 编辑和 blame 行信息；
 - **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；diff 内 Ctrl/Cmd+F 查找（Enter / Shift+Enter 上下一个、`当前 / 总数` 计数、命中着色），图片显示该提交的那份（删除的显示父提交那份）；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
 - **对比**：任选两个分支互相比较，diff 内同样可查找，图片显示 head 那份（删除的显示 base 那份）；
-- **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；
+- **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；头部另有分支切换器（仅主工作树）——当前分支打点、被其他工作树占用的置灰并注明去向、远端独有分支一键签出并跟踪，本地改动带得动就随行、带不动 git 拒绝并归类提示，绝不 force；
 - **外观**：七套主题族各带亮暗，默认跟随系统；支持虚化背景图和自定义 CSS，按「项目 / 全局」两个作用域保存，项目优先。
 
 另带 **worktree 仿真**：模型在会话里调用 `worktree_enter` / `worktree_exit` / `worktree_status` 三个工具，即可在 `.agents/worktrees/<name>` 下建立或退出隔离 worktree，并把会话绑定过去。**子代理会话不写自己的绑定，而是沿谱系借用最近绑定祖先的 worktree**——standing 提示、芯片与 `worktree_status` 对无自有绑定的会话统一解析「有效绑定」，外层退出后子树自动失去借用。绑定后状态卡点亮绑定标记，面板头部出现 worktree 切换器（按分支列出仓库全部 worktree），统计随之切换。
@@ -94,7 +94,8 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 | 状态卡在 git 仓库会话常驻显示（分支/↑↓/计数），仅非 git 目录或 git 失败时隐藏 | ✅ | 干净树也显示分支名（状态卡即会话的环境信息位）；绑定徽标见 §9 |
 | agent 工具 `worktree_enter/exit/status`（模型可调） | ✅ | 真实会话冒烟 `scripts/llm_smoke.py`：模型调 enter → `.agents/worktrees/llm-smoke` 出现；exit(remove) → 消失 |
 | 宿主 worktree RPC（enter/exit/status/sessionWorktree）+ 绑定文件 | ✅ | `python scripts/probe_worktree.py`：scratch 仓库断言 + 真仓库冒烟 + 再进入分支复用，ALL PASS |
-| 状态卡绑定标记（树形图标；徽标文字与分支重名时省略）+ 头部 worktree 选择器 | ✅ | `python scripts/verify_worktree_ui.py`：6 步 UI 探针（绑定标记、头部路径、选择器切换、折叠/选中回归） |
+| 状态卡绑定标记（树形图标；徽标文字与分支重名时省略）+ 头部 worktree 选择器 | ✅ | `python scripts/verify_worktree_ui.py`：6 步 UI 探针（绑定标记、头部路径、选择器切换、折叠/
+| 头部分支切换（主工作树限定 / 占用置灰 / 远端签出跟踪 / 拒绝与随行） | ✅ | `python scripts/verify_branch_switch.py`：12 步实机探针（fixture 仓库，HEAD 与改动全程可还原） |选中回归） |
 | 历史过滤（作者 / 日期 / 路径下推 `git log`、「全部分支」、日历与三态路径树） | ✅ | `python scripts/verify_history_feature.py`：11 步 UI + host 探针全过（中文作者、All-branches、日历选界、目录吸收文件勾选、诚实空态） |
 | 单文件撤回（Rollback）与文件列表关键字过滤 | ✅ | 对 live app 实测：撤回弹窗措辞随 host 实时推导的后果变化、取消不动手、执行后 fixture 回静息态；过滤框多词 AND、忽略折叠、根勾选只动可见行 |
 | 变更块导航与 Staged 恢复出口 | ✅ | `tests/edit-hunk-actions.test.ts` + scratch fixture live probe：Staged 常驻 Unstage file，多块另有 Unstage hunk；操作后回到 Unstaged，页面无错误 |
@@ -215,11 +216,11 @@ harness-worktree/
   tsdown.config.ts          客户端 closure-factory bundle + CSS Modules 构建
   vitest.config.ts          排除 .agents/**，避免 worktree 副本重复收集测试
   src/
-    index.ts                GitWorkbenchService + 29 个 @Remote + worktree 三个 agent 工具
+    index.ts                GitWorkbenchService + 30 个 @Remote + worktree 三个 agent 工具
                             stats/fileDiff/fileSides/applyBlocks/writeChecked/blame/fileImage/revImage/commitStats/
                             commits/authors/repoTree/ignoredDir/compareRefs/sessionWorktree/worktreeEnter/worktreeExit/
                             worktreeStatus/styleGet/styleSet/syncStatus/stage/unstage/discardPlan/discardFile/
-                            commit/fetch/pull/push
+                            commit/fetch/pull/push/switchBranch
     atomic-json.ts          崩溃安全 JSON 写入（tmp+rename + Windows EPERM 退避）
     apply-blocks.ts         hunk patch 选择、正反向 apply 与 stale diff 防线
     blame.ts                porcelain blame 解析与路径/提交信息
@@ -227,7 +228,7 @@ harness-worktree/
     discard-ops.ts          IDEA Rollback 的计划推导与路径防线
     fs-remove.ts            受工作区边界保护的文件删除
     git-log.ts/log-filter.ts/shortlog.ts  历史解析、过滤参数与作者名单
-    git-ops.ts              写操作 argv + stderr 归类（纯函数，不 spawn）
+    git-ops.ts              写操作 argv + stderr 归类（纯函数，不 spawn；截断保首尾——关键词在头、建议在尾）
     image-sniff.ts          图片类型嗅探与读取上限
     patch-model.ts          Git patch 解析、行选择与重发射
     side-guard.ts           side diff / write 的路径与 stale-sha 校验
@@ -242,6 +243,7 @@ harness-worktree/
       CommitHistory.tsx     历史列表、车道图、筛选与分页
       DiffViews.tsx         unified/side diff、块操作、虚拟窗口与编辑态
       WorkbenchControls.tsx 同步条、设置、来源选择器与反馈
+      BranchSwitcher.tsx/branch-switch.ts  头部分支切换器：行规则（当前/占用/远端）纯函数化，仅主工作树渲染
       FileBrowser.tsx/CodeEditor.tsx/ImageView.tsx  文件页、编辑器与图片预览
       BinaryFilePane.tsx/image-source.ts  diff 窗格里的图片：按页签与状态决定读工作区、HEAD、该提交、父提交还是对比两端
       DiffFindBar.tsx/use-diff-find.ts/diff-find.ts  统一 diff 的 Ctrl+F：纯规则（字面量、不分大小写、5000 命中封顶）+ 停顿后扫描 + 按可视行着色
