@@ -2,6 +2,11 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.20] - 2026-09-13
+
+### 修复
+
+- **并排 diff 把 JSX 块注释的散文涂成了关键字，CRLF 行的着色段拼不回原行。** 一个原因：side-by-side 的每一列本来就是整文件（`-U1000000` 是覆盖全部的一个 hunk），该用整文件 pass；`highlightWindow` 的逐行 re-lex 是给 unified diff 的重建规则，被套在了没有重建发生的地方——块注释的续行逐行冷启动重 lex，句里的 `switch`、`in` 就发了亮。两列与编辑器统一走 `highlightRange`（左右列缓存键分开，经分块缓存，新 chunk 一次调用、回滚不重算）。另一半：Shiki 按 `\r?\n` 切分输入，CRLF 行的 CR 不进任何 token，而 CR 字形要从 runs 里画、「一行的 runs 必须拼回该行」——`runsOf` 把丢掉的尾部补回最后一个 run。新守卫用 **AST** 提取 `DiffViews.tsx` 的全部调用名断言 `highlightWindow` 不再被调用——文本扫描已被注释里的散文满足过两次（`tests/side-pane-syntax.test.ts`；CRLF 管线测试同步覆盖 `highlightRange` 的逐行自对齐）。
 ## [0.1.19] - 2026-09-13
 
 ### 新增

@@ -1,6 +1,6 @@
 # stats-drawer Overview
 
-> last_verified_commit: bdc8ad5
+> last_verified_commit: 9bd37fc
 > source_packages:
 > - src/client/**（面板全部）+ src/style-store.ts + src/commit-cache.ts + src/git-log.ts + src/repo-root.ts（仓库根解析）
 
@@ -45,6 +45,7 @@ flowchart LR
 - 轮询每次返回**新数组引用**：树展开状态提升到会话级组件，gen 只在手动刷新时 bump（README §6.0c）
 - diff 双上限：整体 `DIFF_CHAR_CAP` 400KB、untracked 合成段 `UNTRACKED_TOTAL_CHAR_CAP` 160KB；单 untracked >1MB 只计数
 - 词级高亮 = 相邻 −/+ 行 token LCS（`attachWordRanges`，>200k 单元格退化整行）；语法色 = Shiki 本地包（`highlight.ts`，语法按需分包）
+- **side-by-side 两列用整文件 pass，不用逐行 re-lex**：每列即整文件（`-U1000000` 单 hunk），`highlightWindow` 的 re-lex 是 unified diff 的重建规则，误用会把块注释无星号续行的散文涂成关键字；两列与编辑器统一 `highlightRange`（左右列缓存键分开）。Shiki 按 `\r?\n` 切分，CRLF 的 CR 不进 token，`runsOf` 把丢掉的尾部补回最后一个 run（一行的 runs 必须拼回该行）。守卫用 AST 提取调用名（`tests/side-pane-syntax.test.ts`，README §6.24）
 - **回车必须画出来**（`cr-mark.ts`）：diff 行文本原样携带 CR 字节（按块暂存/撤回的 patch 往返需要它），而浏览器对 CR 不着墨——只改行尾的变更两侧渲染成一模一样的文本。渲染时在每个 CR 处画 U+240D `␍`：side pane 逐个交错（它没有按字符偏移定位的浮层）；unified 只画行尾（词级范围是行内字符偏移，行中插字形会推偏它们）。无 CR 的行只多付一次 `includes`。编辑仍拒绝 CRLF（`armRefusal`），两条拒绝提示（`crlfNotice`/`fileReadOnlyCrlf`）都建议统一成 LF
 - 主题 7 族 × 亮暗（`themes.ts` `THEME_FAMILIES` ↔ CSS `[data-gs-theme]` 选择器，`tests/theme-palettes.test.ts` 互扣）；明暗默认跟随 dsh 宿主 `body` 属性而非 `prefers-color-scheme`
 - **每套调色板必须定义完整核心 token 集**：漏一个不报错——它会继承上一主题留在 `.overlay` 上的值，渲染成两主题混色（`theme-palettes.test.ts` 守完整性）。GitHub 两套逐值对住 Primer `diffBlob`（暗色 alpha 已在 `#0d1117` 上拍平，见 `drawer-chrome.test.ts` 的 `GITHUB_DIFF`）；IDEA 套读自 New UI 界面而非公开 token 文件，精度不同（源码注释写明）

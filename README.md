@@ -520,6 +520,9 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 被排除，钉住它继续被排除）；活体验证 `scripts/verify_crlf_display.py`（本地，5 项断言：
 幻影提示出现、fileDiff 空返回、真差异照常渲染、方向提示出现、仅行尾对比带 ␍ 渲染）。
 
+### 6.24 side-by-side 两列必须用整文件 pass 着色；Shiki 的 token 里没有 CRLF 的 CR
+并排视图的每一列本来就是**整文件**（`git diff -U1000000` 是覆盖全部的一个 hunk），所以知道块注释与模板字面量边界的整文件 pass 才是它的答案；`highlightWindow` 的逐行 re-lex 是给 unified diff 的**重建**规则——列没有被重建过，逐行冷启动重 lex 会把 JSX `{/* … */}` 无星号续行里的散文涂成关键字（`switch`、`in` 在句子里发亮）。两列与编辑器统一走 `highlightRange`（左右列缓存键分开，经 `token-cache.ts` 分块，新 chunk 一次调用、回滚不重算）。另一半：Shiki 按 `\r?\n` 切分输入，CRLF 行的 CR 不进任何 token，而渲染器从 runs 画 CR 字形且「一行的 runs 必须拼回该行」——`runsOf` 把丢掉的尾部补回最后一个 run。守卫 `tests/side-pane-syntax.test.ts` 用 **AST** 提取 `DiffViews.tsx` 的全部调用名断言 `highlightWindow` 不再被调用（文本扫描已被注释里的散文满足过两次）。
+
 ---
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）

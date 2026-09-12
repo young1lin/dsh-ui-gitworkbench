@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.20] - 2026-09-13
+
+### Fixed
+
+- **The side-by-side diff painted prose inside a JSX block comment as keywords, and a CRLF line's coloured runs did not add up to the line.** One cause: each column of the side-by-side view IS a whole file (`-U1000000` is one hunk covering everything), which the file pass — the one that knows block-comment and template-literal boundaries — is the exact answer for; `highlightWindow`'s per-line re-lex is the reconstruction rule for unified diffs, applied where no reconstruction had happened, so a block comment's continuation lines re-lexed cold and `switch`/`in` lit up inside a sentence. Both columns and the editor now paint through `highlightRange` (left and right cache keys apart, chunked through the token cache — one Shiki call per new chunk, none on scroll-back). The other half: Shiki splits its input on `\r?\n`, so a CRLF line's CR is in no token at all, while the CR glyph is drawn from the runs and a line's runs must add up to the line — `runsOf` puts the dropped tail back onto the last run. The new guard extracts every callee in `DiffViews.tsx` from the **AST** and asserts `highlightWindow` is never called — a text scan has been satisfied by prose in a comment twice before (`tests/side-pane-syntax.test.ts`; the CRLF pipeline test covers `highlightRange`'s per-line self-alignment too).
 ## [0.1.19] - 2026-09-13
 
 ### Added
