@@ -2,6 +2,16 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.21] - 2026-09-14
+
+### 新增
+
+- **未武装的并排视图有自己的 Ctrl/Cmd+F 了，两列都搜。** 此前 Changes 页点开文件、在武装编辑器之前没有任何查找：查找条随 CodeMirror 编辑器而来，浏览器自带的又搜不到窗口化之外的行——左列（更改前）无从搜起。现在并排面板在未武装时复用统一 diff 的查找条：`findInSides` 按阅读顺序逐行先左后右走两列（同一个 5000 命中封顶、同一个停顿 180ms 的延迟走查），命中按可视行在两列着色（`overlayHits`，保留颜色与词级标记），Enter / Shift+Enter 跨列步进，头部多一枚放大镜开关；武装编辑器时条收起、Ctrl/Cmd+F 交还 CodeMirror，两个查找 UI 不同时出现。
+
+### 修复
+
+- **武装后的 Ctrl+F 条跟着第 1 行滚出了视野。** CodeMirror 把 `.cm-panels` 挂成 `.cm-editor` 的第一个子节点、`position: sticky; top: 0`，而 sticky 对**最近的滚动容器**生效——并排面板里那是列（`overflow-x: auto` 就足以成为滚动容器），不是真正滚动的 `.sideScroll`；列和文件一样高、纵向永远不滚，条于是随第 1 行离场：Enter 找到下一个命中，找到它的输入框却没了，条高还把右列压低而左列不动、行对齐就此破掉（Files 页没有这问题，`.fbBody` 既是编辑器的父级也是它的滚动容器）。现在条经库自带的 `panels({ topContainer })` 挂进 `SideFindSeat`：`.sideScroll` 上方一行，**只压在工作树列上方**——条搜的是缓冲区，横跨两列的条会谎报搜索范围；行镜像 `.sideCols` 的几何（split 匹配的占位、与分隔条等宽的槽、剩余的宿主），右侧让出滚动条槽（`use-scroll-gutter.ts` 量 `offsetWidth - clientWidth`，ResizeObserver 跟随滚动条出现与消失），计数插件先在宿主里找面板、回落 `view.dom`，`3/128` 不消失。守卫 `tests/find-panel-host.test.ts`（剥注释源扫描，9 处变异验证全红）。
+
 ## [0.1.20] - 2026-09-13
 
 ### 修复

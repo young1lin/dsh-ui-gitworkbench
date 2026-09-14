@@ -6,7 +6,7 @@
 
 每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，右侧滑出一张工作台面板，当前 worktree 的改动一览无余：
 
-- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；二进制文件按字节嗅探，是图片就直接显示（删除的文件显示 HEAD 那份）；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；
+- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；二进制文件按字节嗅探，是图片就直接显示（删除的文件显示 HEAD 那份）；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；Ctrl/Cmd+F 两列查找——未武装时搜左右两列（先左后右、跨列步进），武装后查找条只压在工作树列上方；
 - **文件**：仓库目录树与可编辑文件查看器，支持搜索、图片预览、CodeMirror 编辑和 blame 行信息；
 - **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；diff 内 Ctrl/Cmd+F 查找（Enter / Shift+Enter 上下一个、`当前 / 总数` 计数、命中着色），图片显示该提交的那份（删除的显示父提交那份）；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
 - **对比**：任选两个分支互相比较，diff 内同样可查找，图片显示 head 那份（删除的显示 base 那份）；
@@ -246,7 +246,7 @@ harness-worktree/
       BranchSwitcher.tsx/branch-switch.ts  头部分支切换器：行规则（当前/占用/远端）纯函数化，仅主工作树渲染
       FileBrowser.tsx/CodeEditor.tsx/ImageView.tsx  文件页、编辑器与图片预览
       BinaryFilePane.tsx/image-source.ts  diff 窗格里的图片：按页签与状态决定读工作区、HEAD、该提交、父提交还是对比两端
-      DiffFindBar.tsx/use-diff-find.ts/diff-find.ts  统一 diff 的 Ctrl+F：纯规则（字面量、不分大小写、5000 命中封顶）+ 停顿后扫描 + 按可视行着色
+      DiffFindBar.tsx/use-diff-find.ts/diff-find.ts  统一 diff 与未武装并排的 Ctrl+F：纯规则（字面量、不分大小写、5000 命中封顶；findInSides 两列先左后右）+ 停顿后扫描 + 按可视行着色；SideFindSeat/use-scroll-gutter.ts 把武装编辑器的 CodeMirror 查找面板钉在工作树列上方
       PaneDivider.tsx + *Glyph.tsx  拖拽分隔条与共享图标
       git-workbench-types.ts       面板组件/RPC 共享类型
       row-window.ts/use-row-window.ts  视口窗口纯规则与 React 桥接
@@ -524,6 +524,9 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 并排视图的每一列本来就是**整文件**（`git diff -U1000000` 是覆盖全部的一个 hunk），所以知道块注释与模板字面量边界的整文件 pass 才是它的答案；`highlightWindow` 的逐行 re-lex 是给 unified diff 的**重建**规则——列没有被重建过，逐行冷启动重 lex 会把 JSX `{/* … */}` 无星号续行里的散文涂成关键字（`switch`、`in` 在句子里发亮）。两列与编辑器统一走 `highlightRange`（左右列缓存键分开，经 `token-cache.ts` 分块，新 chunk 一次调用、回滚不重算）。另一半：Shiki 按 `\r?\n` 切分输入，CRLF 行的 CR 不进任何 token，而渲染器从 runs 画 CR 字形且「一行的 runs 必须拼回该行」——`runsOf` 把丢掉的尾部补回最后一个 run。守卫 `tests/side-pane-syntax.test.ts` 用 **AST** 提取 `DiffViews.tsx` 的全部调用名断言 `highlightWindow` 不再被调用（文本扫描已被注释里的散文满足过两次）。
 
 ---
+
+### 6.25 sticky 只对最近的滚动容器负责；CodeMirror 的面板要指 topContainer，且条只认它搜的那列
+`position: sticky` 解析到**最近的滚动容器**——任何 `overflow` 非 `visible` 的元素都算（并排列的 `overflow-x: auto` 就算），不一定是真正滚动的那个（`.sideScroll`）。CodeMirror 把查找面板 `.cm-panels` 挂成 `.cm-editor` 的第一个子节点并 `sticky; top: 0`，于是并排面板里面板粘在列上：列和文件一样高、纵向永远不滚，面板随第 1 行滚出视野（Enter 找到下一个命中、输入框没了），面板高度还把右列压低而左列不动、行对齐破掉；Files 页没有这问题（`.fbBody` 既是父级也是滚动容器）。修法是库自带的 `panels({ topContainer })`：面板挂进 `SideFindSeat`（`DiffFindBar.tsx`），位于 `.sideScroll` 上方、**只压工作树列**——条搜的是缓冲区，横跨两列等于谎报搜索范围；行镜像 `.sideCols` 的几何（split 占位 + 与 `.paneDivider` 等宽的槽 + 宿主，`css-modules.test.ts` 把三处 7px 绑在一起），右侧让出 `.sideScroll` 的滚动条槽（`use-scroll-gutter.ts` 量 `offsetWidth - clientWidth`）。两处易漏：计数插件的 `querySelector` 要先查宿主再回落 `view.dom`，否则 `3/128` 消失；Ctrl/Cmd+F 只能在未武装时交给 `DiffFindBar`（CodeMirror 不吞武装后的键，不设卫会两个查找同时开）。守卫 `tests/find-panel-host.test.ts`（剥注释源扫描 + 变异验证），实机探针 `scripts/verify_side_find.py`（本地）。
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）
 

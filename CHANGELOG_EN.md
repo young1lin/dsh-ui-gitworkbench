@@ -2,6 +2,16 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.21] - 2026-09-14
+
+### Added
+
+- **The un-armed side-by-side view has its own Ctrl/Cmd+F, over both columns.** Opening a file in the Changes pane had no find at all until the editor was armed: the find bar comes with the CodeMirror editor, and the browser's own Ctrl+F cannot see rows a windowed pane has not rendered — so the left (before) column could not be searched at all. The pane now reuses the unified diff's bar while no editor is armed: `findInSides` walks both columns row by row, left cell then right, in reading order (same 5000-hit cap, same walk deferred to the 180ms pause); hits are painted per visible cell in both columns through `overlayHits` (colour and word marks kept), Enter / Shift+Enter step across columns, and the header gains a magnifier toggle. Arming the editor takes the bar down and hands Ctrl/Cmd+F back to CodeMirror — the two find UIs never coexist.
+
+### Fixed
+
+- **The armed editor's Ctrl+F strip rode off screen with line 1.** CodeMirror mounts `.cm-panels` as the first child of `.cm-editor` with `position: sticky; top: 0`, and sticky resolves against the NEAREST scroll container — in this pane that is the column (`overflow-x: auto` is enough to make one), not the `.sideScroll` that actually moves. The column is as tall as the file and never scrolls vertically, so the strip left with line 1: Enter found the next match and the field that found it was gone, and the strip's height pushed the right column down while the left stood still, breaking row alignment (the Files tab never saw this — `.fbBody` is both the editor's parent and its scroller). The strip now mounts through the library's own `panels({ topContainer })` into SideFindSeat: a row above `.sideScroll`, over the WORKING-TREE column alone — the panel searches the buffer, and a strip across both columns would claim more than it does. The row mirrors `.sideCols`' geometry (a split-matched spacer, a gap as wide as the divider, the host for the rest) and gives the scroller's own scrollbar gutter back on the right (`use-scroll-gutter.ts` measures `offsetWidth - clientWidth`, a ResizeObserver following the gutter as it comes and goes); the match-count plugin looks for the panel in the host first, falling back to `view.dom`, so `3/128` does not vanish. Guard: `tests/find-panel-host.test.ts` (comment-stripped source scan, mutation-tested on nine lines).
+
 ## [0.1.20] - 2026-09-13
 
 ### Fixed
