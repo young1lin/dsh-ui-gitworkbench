@@ -10,8 +10,8 @@ import { anchorFor, blockNearestTo, blockTopsFromRows, blockTopsFromSideRows, co
 import { DIFF_GRID_PAD_TOP, DIFF_ROW_H } from './row-window.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import { useDiffFind } from './use-diff-find.ts'
-import { rowHitRanges } from './diff-find.ts'
-import { DiffFindBar, NavGlyph } from './DiffFindBar.tsx'
+import { currentColIn, findInSides, findInTexts, rowHitRanges } from './diff-find.ts'
+import { DiffFindBar, FindToggle, NavGlyph, SideFindSeat } from './DiffFindBar.tsx'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, isDirty, markConflict, reloadSides, resetSides,
   type EditState, type WriteResult,
@@ -101,7 +101,7 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   // Find. History and Compare have no editor to supply a panel, and the
   // browser's own cannot see rows a windowed pane has not rendered — so the
   // pane carries its own (diff-find.ts, use-diff-find.ts).
-  const find = useDiffFind(texts, scrollRef, win.start, placeRow)
+  const find = useDiffFind(useCallback((query: string) => findInTexts(texts, query), [texts]), scrollRef, win.start, placeRow)
   const finding = find.open && find.query.trim().length > 0
 
   // F7 / Shift+F7, the spelling IDEA's diff viewer taught, on the same element
@@ -124,14 +124,7 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   return (
     <div className={css.diffWrap} onKeyDown={find.onPaneKeyDown}>
       <div className={css.diffNav}>
-        <button
-          type="button"
-          className={css.blockBtn}
-          title={t('findHint')}
-          aria-label={t('findInDiff')}
-          aria-pressed={find.open}
-          onClick={() => { if (find.open) find.close(); else find.show() }}
-        ><NavGlyph of="find" /></button>
+        <FindToggle find={find} t={t} />
         {changes > 0 ? (<>
           <button
             type="button"
@@ -252,6 +245,9 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   const colsRef = useRef<HTMLDivElement>(null)
   /** The pane's one vertical scroller — what "next change" moves. */
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** Where the armed editor mounts its Ctrl/Cmd+F panel — `SideFindSeat`,
+   *  over the working-tree column; see `panelHost` in CodeEditor.tsx. */
+  const findHostRef = useRef<HTMLDivElement>(null)
   /** The block currently addressed by the fixed editor toolbar. Navigation and
    *  a direct click both update it; a refreshed diff is normalized by
    *  currentActionBlock before any Git action may use it. */
@@ -429,6 +425,13 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     [rowWindowKey, rightLines, lang, shikiTheme, win.start, win.end, grammarGen],
   )
 
+  // Find, while no editor is armed: both columns, in reading order, through
+  // the same bar the unified pane carries. Armed, Ctrl/Cmd+F is CodeMirror's
+  // and searches the buffer alone — seated over that column by SideFindSeat.
+  const placeRow = useRef<((index: number) => number) | undefined>(undefined)
+  placeRow.current = wrap ? flow.rowTop : undefined
+  const find = useDiffFind(useCallback((query: string) => findInSides(leftLines, rightLines, query), [leftLines, rightLines]), scrollRef, win.start, placeRow)
+
   /** The editor half of the pane, present only on the unstaged layer. */
   const editable = layer === 'unstaged' && edit.armed
   const dirty = isDirty(edit)
@@ -513,6 +516,8 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     const viewport = scrollRef.current === null ? 0 : anchorFor(scrollRef.current.scrollTop)
     setBlockSelection({ key: rowWindowKey, block: block ?? blockNearestTo(alignedBlockTops, viewport)?.block ?? 0 })
     setEdit(prev => armEdit(prev, sides))
+    // The editor brings its own find; two bars for one pane would be noise.
+    find.close()
   }
 
   /**
@@ -612,6 +617,8 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
       event.preventDefault()
       goToChange(event.shiftKey ? -1 : 1)
     }
+    // Armed, the key is CodeMirror's, and it must not open both finds.
+    if (!editable) find.onPaneKeyDown(event)
   }
 
   /**
@@ -719,6 +726,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
   const bodyState = sideBodyState(rows, editable)
+  const finding = find.open && bodyState.kind !== 'editor' && find.query.trim().length > 0
   // The fixed toolbar exists for both layers: unstaged offers Stage/Revert,
   // staged offers Unstage. Edit changes geometry and disabled state, not the
   // existence of the escape route.
@@ -800,8 +808,11 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
             model knows where every change is, so these two say so. The count
             is the other half of the answer — "there is one place to look" is
             what stops the hunt. */}
-        {changes > 0 ? (
+        {bodyState.kind === 'rows' || changes > 0 ? (
           <span className={css.sideNav}>
+            {/* The armed editor's find is CodeMirror's, opened from inside it. */}
+            {bodyState.kind === 'rows' ? <FindToggle find={find} t={t} /> : null}
+            {changes > 0 ? (<>
             <button
               type="button"
               className={css.blockBtn}
@@ -819,6 +830,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
             <span className={css.sideNavCount}>{currentBlock === null
               ? t('changeCount', { n: changes })
               : t('changePosition', { current: currentBlock + 1, total: changes })}</span>
+            </>) : null}
           </span>
         ) : null}
         {currentBlock !== null ? (
@@ -895,7 +907,10 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           alignment survives the split because both columns render one row per
           aligned row at the same line height — the diff decides the rows, the
           layout only decides how much width each side gets. */}
-      <div ref={scrollRef} className={css.sideScroll}>
+      {find.open && bodyState.kind === 'rows' ? <DiffFindBar find={find} t={t} /> : null}
+      {bodyState.kind === 'editor' ? <SideFindSeat hostRef={findHostRef} scrollRef={scrollRef} split={split} /> : null}
+      {/* Focusable so the bar can hand focus back on Escape; F7 bubbles up. */}
+      <div ref={scrollRef} className={css.sideScroll} tabIndex={-1}>
       {bodyState.kind === 'empty' ? (
         <div className={css.empty}>{phantomListed ? t('phantomNotice') : t('noTextDiff')}</div>
       ) : (
@@ -951,6 +966,8 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
                     row={row} side="left" index={i} rows={rows}
                     current={row.block >= 0 && row.block === currentBlock}
                     tokens={leftSyntax?.[i]}
+                    hits={finding && row.left !== null ? rowHitRanges(row.left.text, find.query) : NO_RANGES}
+                    currentCol={currentColIn(find.currentHit, i, 'left')}
                     mark={wrap ? rowMark('a', i) : undefined}
                     minHeight={wrap ? flow.rowHeight(i) : undefined}
                     // The block's action bar rides in this column only for a
@@ -981,6 +998,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
               ariaLabel={path}
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
               wrap={wrap}
+              panelHost={findHostRef}
             />
           ) : (
             <div className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}>
@@ -994,6 +1012,8 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
                     row={row} side="right" index={i} rows={rows}
                     current={row.block >= 0 && row.block === currentBlock}
                     tokens={rightSyntax?.[i]}
+                    hits={finding && row.right !== null ? rowHitRanges(row.right.text, find.query) : NO_RANGES}
+                    currentCol={currentColIn(find.currentHit, i, 'right')}
                     mark={wrap ? rowMark('a', i) : undefined}
                     minHeight={wrap ? flow.rowHeight(i) : undefined}
                     bar={hot && i === hotFirst && row.right !== null ? blockBar(row.block) : null}

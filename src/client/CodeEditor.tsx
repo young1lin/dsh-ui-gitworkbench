@@ -24,9 +24,9 @@
  * @module @young1lin/dsh-ui-gitworkbench/client/CodeEditor
  */
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { Compartment, EditorState, Facet, StateEffect, StateField, type Extension } from '@codemirror/state'
-import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
+import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, panels, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { getSearchQuery, search, searchKeymap, searchPanelOpen, type SearchQuery } from '@codemirror/search'
@@ -69,6 +69,13 @@ const paintCompartment = new Compartment()
 /** Soft wrap, in and out without rebuilding the view — the caret, the undo
  *  stack and the selection all survive the toggle. */
 const wrapCompartment = new Compartment()
+/** Where the find panel is mounted when it is not inside the editor — see the
+ *  `panelHost` prop. `null` is the library's default, the editor's own top
+ *  edge. Kept in a facet so {@link SearchCount} can find the panel wherever
+ *  it went. */
+const panelHostFacet = Facet.define<HTMLElement | null, HTMLElement | null>({
+  combine: values => values.length > 0 ? values[0]! : null,
+})
 
 /**
  * How long after the last keystroke the editor recomputes what it paints.
@@ -209,7 +216,7 @@ class SearchCount implements PluginValue {
   }
 
   private mount(view: EditorView): void {
-    const panel = view.dom.querySelector('.cm-panel.cm-search')
+    const panel = (view.state.facet(panelHostFacet) ?? view.dom).querySelector('.cm-panel.cm-search')
     if (panel === null || this.label.parentElement === panel) return
     // Beside the field it is about, rather than at the end of a row whose
     // width the checkboxes decide.
@@ -425,7 +432,7 @@ const paneTheme = EditorView.theme({
   ...SEARCH_PANEL_THEME,
 })
 
-export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, wrap }: {
+export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, wrap, panelHost }: {
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -458,6 +465,17 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
    *  so this is the whole change here, unlike the diff panes, whose windowing
    *  assumes a fixed row height. */
   wrap?: boolean
+  /** An element to mount the find panel in, when the editor's own top edge is
+   *  not a place that stays on screen. CodeMirror puts the panel at the top
+   *  of `.cm-editor` with `position: sticky`, and sticky resolves against the
+   *  NEAREST scroll container — in the side-by-side pane that is the column
+   *  (`overflow-x: auto`), which is as tall as the file and never scrolls
+   *  vertically, so the panel rides away with line 1. The Files tab needs
+   *  none of this: `.fbBody` is both the editor's parent and its scroller.
+   *  A ref rather than an element because the host and the editor land in
+   *  the same commit, and the element only exists once refs are attached —
+   *  which is before the mount effect below reads it. */
+  panelHost?: RefObject<HTMLElement>
 }): ReactNode {
   /**
    * Editable, and SAID to be editable, from one boolean.
@@ -491,6 +509,8 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
       lineNumbers(),
       history(),
       search({ top: true }),
+      panels({ topContainer: panelHost?.current ?? undefined }),
+      panelHostFacet.of(panelHost?.current ?? null),
       searchCount,
       highlightActiveLine(),
       paintCompartment.of(paintFacet.of(paint)),

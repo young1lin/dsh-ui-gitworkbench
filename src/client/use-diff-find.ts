@@ -1,10 +1,12 @@
 /**
- * Find in the unified diff pane — the wiring half of `diff-find.ts`.
+ * Find in a windowed diff pane — the wiring half of `diff-find.ts`.
  *
  * The rules (what matches, which hit is next, where a fresh query lands) are
  * pure and live next door. What is left is what cannot be: the timer that
  * keeps the walk off the keystroke path, the scroll that brings a hit into
- * view, and the keys.
+ * view, and the keys. The walk itself is the caller's — one text per row
+ * for the unified pane, two for the side-by-side pane — so this knows only
+ * that a hit has a row.
  *
  * The walk is deferred by the same idle the editor's count uses
  * (`REPAINT_IDLE_MS` in CodeEditor.tsx — 180ms): a query grows a character at
@@ -18,7 +20,7 @@
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type RefObject } from 'react'
 
-import { EMPTY_FIND, findInTexts, nearestHit, stepHit, type FindHit, type FindIndex } from './diff-find.ts'
+import { EMPTY_FIND, nearestHit, stepHit, type FindHit, type FindIndex } from './diff-find.ts'
 import { scrollTopFor } from './diff-nav.ts'
 import { DIFF_GRID_PAD_TOP, DIFF_ROW_H } from './row-window.ts'
 
@@ -46,7 +48,8 @@ export interface DiffFind {
 }
 
 /**
- * @param texts - every row's text, in order. A new identity means a new diff.
+ * @param walk - the whole diff for a query (`findInTexts`, `findInSides`),
+ *   bound to the pane's rows. A new identity means a new diff, and re-walks.
  * @param scrollRef - the element that scrolls the rows.
  * @param firstRow - the first row currently rendered, so a fresh query lands
  *   near what the reader is looking at rather than at the top.
@@ -54,7 +57,7 @@ export interface DiffFind {
  *   `DIFF_ROW_H` tall and the arithmetic is exact.
  */
 export function useDiffFind(
-  texts: readonly string[],
+  walk: (query: string) => FindIndex,
   scrollRef: MutableRefObject<HTMLDivElement | null>,
   firstRow: number,
   rowTop: MutableRefObject<((index: number) => number) | undefined>,
@@ -78,12 +81,12 @@ export function useDiffFind(
       return
     }
     const id = window.setTimeout(() => {
-      const found = findInTexts(texts, query)
+      const found = walk(query)
       setIndex(found)
       setCurrent(nearestHit(found.hits, firstRowRef.current))
     }, FIND_IDLE_MS)
     return () => { window.clearTimeout(id) }
-  }, [open, query, texts])
+  }, [open, query, walk])
 
   // Bring the current hit into view, when it is not already. A hit the reader
   // can see is left where it is: jumping the scroll under a visible match

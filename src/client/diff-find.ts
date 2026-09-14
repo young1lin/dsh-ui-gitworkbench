@@ -1,11 +1,15 @@
 /**
- * Find in a rendered diff — the rules behind the unified pane's Ctrl+F.
+ * Find in a rendered diff — the rules behind the unified pane's Ctrl+F, and
+ * the side-by-side pane's while no editor is armed.
  *
- * The Files tab and the Changes pane get their find panel from CodeMirror,
- * because they hold an editor. History and Compare hold a windowed diff with
- * no editor under it, so they had no find at all — and the browser's own
- * Ctrl+F cannot stand in, because a windowed pane keeps only the rows near
- * the viewport in the DOM and native find searches the DOM.
+ * The Files tab gets its find panel from CodeMirror, because it holds an
+ * editor; so does the Changes pane once its editor is armed, and that panel
+ * searches the buffer — the working-tree column — alone. History and Compare
+ * hold a windowed diff with no editor under it, and the side-by-side pane
+ * before arming is two windowed columns: none of those had a find at all —
+ * and the browser's own Ctrl+F cannot stand in, because a windowed pane keeps
+ * only the rows near the viewport in the DOM and native find searches the
+ * DOM.
  *
  * Same discipline as `search-count.ts`, which this shares its cap with: the
  * walk is proportional to the diff, so it never runs on the keystroke path —
@@ -26,10 +30,15 @@
 import { MATCH_CAP } from './search-count.ts'
 import type { PaintedTok } from './diff-model.ts'
 
-/** One match: which row, and the character it starts at. */
+/** Which column of a side-by-side row a hit is in. */
+export type FindSide = 'left' | 'right'
+
+/** One match: which row, and the character it starts at. `side` is set only
+ *  by {@link findInSides}; a unified row has one cell. */
 export interface FindHit {
   readonly row: number
   readonly col: number
+  readonly side?: FindSide
 }
 
 /** Every hit up to the cap, in row-then-column order. */
@@ -77,6 +86,41 @@ export function findInTexts(texts: readonly string[], query: string, cap: number
   return { hits, capped: false }
 }
 
+/**
+ * Walk every side-by-side row for the query — left cell, then right cell —
+ * stopping at `cap` hits. Same cap and same non-overlap as {@link findInTexts};
+ * the order is reading order, left before right within a row, so Enter walks
+ * the pane the way the eye does and `nearestHit` still finds the first hit at
+ * or below a row by binary search. A row's absent side (a pure deletion has
+ * no right cell) is skipped, not searched as an empty string.
+ */
+export function findInSides(
+  left: readonly (string | null)[],
+  right: readonly (string | null)[],
+  query: string,
+  cap: number = MATCH_CAP,
+): FindIndex {
+  const re = matcherFor(query)
+  if (re === null) return EMPTY_FIND
+  const hits: FindHit[] = []
+  const rows = Math.max(left.length, right.length)
+  for (let row = 0; row < rows; row += 1) {
+    for (const side of SIDES) {
+      const text = (side === 'left' ? left : right)[row]
+      if (text === null || text === undefined) continue
+      re.lastIndex = 0
+      for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+        if (hits.length >= cap) return { hits, capped: true }
+        hits.push({ row, side, col: m.index })
+      }
+    }
+  }
+  return { hits, capped: false }
+}
+
+/** Reading order within a row. */
+const SIDES: readonly FindSide[] = ['left', 'right']
+
 /** The character ranges of one row's matches — asked per visible row, so the
  *  painting cost is the viewport's, not the diff's. */
 export function rowHitRanges(text: string, query: string): readonly (readonly [number, number])[] {
@@ -85,6 +129,14 @@ export function rowHitRanges(text: string, query: string): readonly (readonly [n
   const out: (readonly [number, number])[] = []
   for (let m = re.exec(text); m !== null; m = re.exec(text)) out.push([m.index, m.index + m[0].length])
   return out
+}
+
+/** The current hit's column when it is in the cell at (`row`, `side`), else
+ *  null — what one cell paints its current hit from. A hit with no side is a
+ *  unified row's, and that row has one cell. */
+export function currentColIn(hit: FindHit | null, row: number, side: FindSide): number | null {
+  if (hit === null || hit.row !== row) return null
+  return hit.side === undefined || hit.side === side ? hit.col : null
 }
 
 /** A painted token with its find state: 0 none, 1 a hit, 2 the current hit. */

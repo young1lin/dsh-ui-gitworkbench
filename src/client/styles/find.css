@@ -28,6 +28,18 @@
   border-radius: var(--gs-r-control);
 }
 .findField:focus { outline: none; border-color: var(--gs-accent); }
+/* The armed editor's CodeMirror panel, seated over the working-tree column
+   (SideFindSeat in DiffFindBar.tsx says why it is not inside the column and
+   why not across both). The row mirrors `.sideCols`: spacer for the left
+   column, a gap as wide as `.paneDivider` (shell.css — css-modules.test.ts
+   holds the three widths together), host for the rest. CodeMirror fills the
+   host through `panels({ topContainer })` and copies the editor's theme
+   classes onto it, so cm-search-theme.ts still dresses the strip; empty
+   until Ctrl/Cmd+F, and empty is zero height. */
+.sideFindRow { flex: none; display: flex; align-items: stretch; position: relative; z-index: 1; }
+.sideFindSpacer { flex: 0 0 auto; }
+.sideFindGap { flex: none; width: 7px; }
+.sideFindHost { flex: 1 1 0; min-width: 0; }
 /* A hit, and the hit the reader is on — the editor panel's two colours, so a
    match reads the same whichever pane found it. */
 .findHit { background: color-mix(in srgb, var(--gs-warn) 30%, transparent); border-radius: 2px; }

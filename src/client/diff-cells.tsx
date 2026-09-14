@@ -65,11 +65,35 @@ export function renderWithCrMarks(text: string): ReactNode {
   return out
 }
 
+/** No find hits on a row — one shared empty list, so a row with none keeps a
+ *  stable prop identity. */
+export const NO_RANGES: readonly (readonly [number, number])[] = []
+
 /** One cell's Shiki runs, or its plain text when no tokens exist; either way
  * each carriage return in the cell is drawn, so a line whose only change is
- * its ending shows the difference instead of two identical-looking cells. */
-export function renderSideCode(cell: SideCell | null, tokens: readonly HighlightRun[] | undefined): ReactNode {
+ * its ending shows the difference instead of two identical-looking cells.
+ *
+ * With find hits the runs are cut at the hit boundaries first, the way the
+ * unified rows are: colour and CR marks survive, and only the pieces inside
+ * a hit take the tint. A cell with no hits — every cell, until the reader
+ * searches — never pays for the cut. */
+export function renderSideCode(
+  cell: SideCell | null,
+  tokens: readonly HighlightRun[] | undefined,
+  hits: readonly (readonly [number, number])[] = NO_RANGES,
+  currentCol: number | null = null,
+): ReactNode {
   if (cell === null) return ''
+  if (hits.length > 0) {
+    const base = overlayRanges(tokens !== undefined && tokens.length > 0 ? tokens : [{ text: cell.text }], [])
+    return overlayHits(base, hits, currentCol).map((tok, i) => (
+      <span
+        key={i}
+        className={tok.hit === 2 ? css.findHitCurrent : tok.hit === 1 ? css.findHit : undefined}
+        style={tok.color === undefined && !tok.italic ? undefined : { color: tok.color, fontStyle: tok.italic ? 'italic' : undefined }}
+      >{renderWithCrMarks(tok.text)}</span>
+    ))
+  }
   if (tokens === undefined || tokens.length === 0) return renderWithCrMarks(cell.text)
   if (tokens.length === 1 && tokens[0]!.color === undefined && !tokens[0]!.italic) return renderWithCrMarks(cell.text)
   return tokens.map((tok, i) => (
@@ -103,7 +127,7 @@ export function RowSpacer({ height }: { height: number }): ReactNode {
  * the block outline to the CR markers, is the same in all three and was
  * previously the same three times.
  */
-export function SideCells({ row, side, index, rows, current, tokens, mark, minHeight, bar, armable, onArm }: {
+export function SideCells({ row, side, index, rows, current, tokens, hits, currentCol, mark, minHeight, bar, armable, onArm }: {
   row: SideRow
   side: 'left' | 'right'
   /** Index into `rows`, which is what the block outline keys on. */
@@ -112,6 +136,10 @@ export function SideCells({ row, side, index, rows, current, tokens, mark, minHe
   /** Whether this row belongs to the block the change walk is standing on. */
   current: boolean
   tokens: readonly HighlightRun[] | undefined
+  /** This cell's find hits, as character ranges; absent means none. */
+  hits?: readonly (readonly [number, number])[]
+  /** The column of the current hit when it is in THIS cell, else null. */
+  currentCol?: number | null
   /**
    * What marks this cell for measurement ({@link rowMark}), or undefined for
    * "do not measure".
@@ -131,7 +159,7 @@ export function SideCells({ row, side, index, rows, current, tokens, mark, minHe
 }): ReactNode {
   const hot = blockHotClass(rows, index, side, current)
   const cell = side === 'left' ? row.left : row.right
-  const code = renderSideCode(cell, tokens)
+  const code = renderSideCode(cell, tokens, hits, currentCol)
   const box = minHeight !== undefined && minHeight > 0 ? { minHeight: `${minHeight}px` } : undefined
   return (
     <>
@@ -150,10 +178,6 @@ export function SideCells({ row, side, index, rows, current, tokens, mark, minHe
 }
 
 /* ---------- the unified pane's rows (history and compare) ---------- */
-
-/** No find hits on a row — one shared empty list, so a row with none keeps a
- *  stable prop identity. */
-export const NO_RANGES: readonly (readonly [number, number])[] = []
 
 export function unifiedRowClass(kind: Row['kind']): string {
   switch (kind) {

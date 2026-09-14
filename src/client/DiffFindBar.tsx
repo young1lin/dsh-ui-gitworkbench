@@ -1,6 +1,7 @@
 /**
- * The unified diff pane's find bar, and the glyphs the pane's toolbar shares
- * with it.
+ * The windowed diff panes' find bar, the toolbar toggle that opens it, the
+ * glyphs the toolbars share with it — and the seat the side-by-side pane
+ * gives the armed editor's CodeMirror panel instead.
  *
  * Rendering only: what the bar shows and which handler each control calls.
  * The state behind it is `use-diff-find.ts`, the rules `diff-find.ts`. The
@@ -10,10 +11,11 @@
  * @module @young1lin/dsh-ui-gitworkbench/client/DiffFindBar
  */
 
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 
 import { formatHits } from './diff-find.ts'
 import type { DiffFind } from './use-diff-find.ts'
+import { useScrollGutter } from './use-scroll-gutter.ts'
 import type { Translate } from './git-workbench-types.ts'
 import css from './GitWorkbenchPanel.module.css'
 
@@ -66,6 +68,54 @@ export function DiffFindBar({ find, t }: { find: DiffFind; t: Translate }): Reac
       <button type="button" className={css.blockBtn} title={t('findPrev')} aria-label={t('findPrev')} disabled={none} onClick={() => { find.step(-1) }}><NavGlyph of="prev" /></button>
       <button type="button" className={css.blockBtn} title={t('findNext')} aria-label={t('findNext')} disabled={none} onClick={() => { find.step(1) }}><NavGlyph of="next" /></button>
       <button type="button" className={css.blockBtn} title={t('findClose')} aria-label={t('findClose')} onClick={find.close}>×</button>
+    </div>
+  )
+}
+
+/** The toolbar's magnifier: opens the bar, or closes it when it is up. The
+ *  same control in both panes, so the reader learns it once. */
+export function FindToggle({ find, t }: { find: DiffFind; t: Translate }): ReactNode {
+  return (
+    <button
+      type="button"
+      className={css.blockBtn}
+      title={t('findHint')}
+      aria-label={t('findInDiff')}
+      aria-pressed={find.open}
+      onClick={() => { if (find.open) find.close(); else find.show() }}
+    ><NavGlyph of="find" /></button>
+  )
+}
+
+/**
+ * Where the armed editor's Ctrl/Cmd+F panel sits: a row above the scroller,
+ * with the panel's host over the WORKING-TREE column and nothing over the
+ * other — the panel searches the buffer, and a strip across both columns
+ * would claim to search both.
+ *
+ * Left inside the column, the panel rides away with line 1: CodeMirror mounts
+ * it with `position: sticky`, sticky resolves against the nearest scroll
+ * container, and the column (`overflow-x: auto`) is one that never scrolls
+ * vertically. So the editor is handed this host through `panels({
+ * topContainer })` (`panelHost` in CodeEditor.tsx) instead.
+ *
+ * The row mirrors `.sideCols`: a `split%` spacer for the left column, a gap
+ * the width of `.paneDivider`, and the host for the rest — minus the
+ * scroller's own scrollbar on the right, which the columns inside it never
+ * had. The host is empty until the panel opens, and empty is zero height.
+ */
+export function SideFindSeat({ hostRef, scrollRef, split }: {
+  hostRef: RefObject<HTMLDivElement>
+  scrollRef: RefObject<HTMLDivElement>
+  /** The divider's position, as a fraction of the columns' width. */
+  split: number
+}): ReactNode {
+  const gutter = useScrollGutter(scrollRef)
+  return (
+    <div className={css.sideFindRow} style={{ paddingRight: gutter }}>
+      <span className={css.sideFindSpacer} style={{ flexBasis: `${split * 100}%` }} />
+      <span className={css.sideFindGap} />
+      <div ref={hostRef} className={css.sideFindHost} />
     </div>
   )
 }

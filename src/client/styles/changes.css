@@ -312,7 +312,7 @@
    which is what lets the divider mean something. A single scroller for both
    axes would tie the two sides' horizontal position together and size the
    whole grid to the widest line in the file. */
-.sideScroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.sideScroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; outline: none; }
 .sideCols { display: flex; align-items: stretch; min-height: 100%; }
 /* `min-width: 0` is what lets a flex column be narrower than its content —
    without it the column refuses to shrink and the divider stops moving. The

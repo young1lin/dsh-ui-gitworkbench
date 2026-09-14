@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { findInTexts, formatHits, nearestHit, overlayHits, rowHitRanges, stepHit } from '../src/client/diff-find.ts'
+import { currentColIn, findInSides, findInTexts, formatHits, nearestHit, overlayHits, rowHitRanges, stepHit } from '../src/client/diff-find.ts'
 import { MATCH_CAP } from '../src/client/search-count.ts'
 
 describe('findInTexts', () => {
@@ -44,6 +44,69 @@ describe('findInTexts', () => {
 
   it('honours a smaller cap', () => {
     expect(findInTexts(['a a a a'], 'a', 2)).toEqual({ hits: [{ row: 0, col: 0 }, { row: 0, col: 2 }], capped: true })
+  })
+})
+
+describe('findInSides', () => {
+  it('walks each row left cell then right cell, in reading order', () => {
+    const left = ['const a = test', 'same', null, 'test test']
+    const right = ['const a = TEST', 'same', 'test', null]
+    expect(findInSides(left, right, 'test')).toEqual({
+      hits: [
+        { row: 0, side: 'left', col: 10 },
+        { row: 0, side: 'right', col: 10 },
+        { row: 2, side: 'right', col: 0 },
+        { row: 3, side: 'left', col: 0 },
+        { row: 3, side: 'left', col: 5 },
+      ],
+      capped: false,
+    })
+  })
+
+  it('skips the empty side of a one-sided row rather than matching in it', () => {
+    // A deleted line has no right cell; a blank query on '' would be a
+    // zero-width match and the walk would never advance.
+    expect(findInSides(['x'], [null], 'x')).toEqual({ hits: [{ row: 0, side: 'left', col: 0 }], capped: false })
+    expect(findInSides([null], ['x'], 'x')).toEqual({ hits: [{ row: 0, side: 'right', col: 0 }], capped: false })
+  })
+
+  it('an empty query finds nothing', () => {
+    expect(findInSides(['abc'], ['abc'], ' ')).toEqual({ hits: [], capped: false })
+  })
+
+  it('stops at the cap across both sides and says so', () => {
+    const left = Array.from({ length: 3000 }, () => 'x x')
+    const right = Array.from({ length: 3000 }, () => 'x')
+    const found = findInSides(left, right, 'x')
+    expect(found.hits.length).toBe(MATCH_CAP)
+    expect(found.capped).toBe(true)
+    expect(findInSides(['x x'], ['x'], 'x', 3)).toEqual({
+      hits: [{ row: 0, side: 'left', col: 0 }, { row: 0, side: 'left', col: 2 }, { row: 0, side: 'right', col: 0 }],
+      capped: false,
+    })
+    expect(findInSides(['x x'], ['x'], 'x', 2).capped).toBe(true)
+  })
+
+  it('keeps hits ordered by row, so nearestHit still binary-searches them', () => {
+    const found = findInSides(['a', null, 'a'], ['a', 'a', null], 'a')
+    expect(found.hits.map(hit => hit.row)).toEqual([0, 0, 1, 2])
+    expect(nearestHit(found.hits, 1)).toBe(2)
+    expect(found.hits[nearestHit(found.hits, 1)]).toEqual({ row: 1, side: 'right', col: 0 })
+  })
+})
+
+describe('currentColIn', () => {
+  it('is the hit’s column only for the cell the hit is in', () => {
+    const hit = { row: 4, side: 'right', col: 7 } as const
+    expect(currentColIn(hit, 4, 'right')).toBe(7)
+    expect(currentColIn(hit, 4, 'left')).toBeNull()
+    expect(currentColIn(hit, 5, 'right')).toBeNull()
+    expect(currentColIn(null, 4, 'right')).toBeNull()
+  })
+
+  it('a unified hit has no side, and belongs to whichever cell asks', () => {
+    expect(currentColIn({ row: 1, col: 2 }, 1, 'left')).toBe(2)
+    expect(currentColIn({ row: 1, col: 2 }, 1, 'right')).toBe(2)
   })
 })
 

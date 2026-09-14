@@ -36,12 +36,14 @@ describe('modular panel stylesheet', () => {
     }
     expect(result.code.toString()).not.toMatch(/@import\s/)
   })
-  it('sits each rail under the column it scrolls', () => {
+  it('sits each rail under the column it scrolls, and the find seat over it', () => {
     // `.sideRailGap` stands in for the divider between the two columns. If the
     // two widths drift, every rail is offset from its column by the
     // difference, so the right one hangs off the edge of the pane. The value
     // lives in two files (shell.css draws the divider, changes.css the rails),
-    // which is exactly the kind of pair that drifts unwatched.
+    // which is exactly the kind of pair that drifts unwatched. `.sideFindGap`
+    // (find.css) is the same stand-in above the columns, for the armed
+    // editor's find panel.
     const { source } = readPanelCss()
     const widthOf = (selector: string): string => {
       const at = source.indexOf(`${selector} {`)
@@ -52,5 +54,6 @@ describe('modular panel stylesheet', () => {
       return found![1]!.trim()
     }
     expect(widthOf('.sideRailGap')).toBe(widthOf('.paneDivider'))
+    expect(widthOf('.sideFindGap')).toBe(widthOf('.paneDivider'))
   })
 })
