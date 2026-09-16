@@ -113,7 +113,9 @@ export interface WorktreeStatus {
    * The repository root of the directory the session opened (its bound
    * repository's, when bound), forward slashes — what names the session's
    * own tree in {@link worktrees} when the session sits in a subdirectory.
-   * Null outside a repository.
+   * Null outside a repository. Absent from hosts before 0.1.23 (the client
+   * bundle is re-read per request; the host is not, until restarted), so
+   * the panel reads it through `?? null`.
    */
   readonly repoRoot: string | null
 }

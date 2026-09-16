@@ -93,6 +93,16 @@ describe("the session's own tree", () => {
     expect(line).toContain('sessionRoot')
   })
 
+  it('clears the override, rather than pinning, on the session tree in EITHER spelling', () => {
+    // The source switch: a binding path is forward-slash (worktreeDir), the
+    // cwd arrives in the platform's own, so a raw `===` read the session's
+    // own worktree as a third tree on Windows and pinned it.
+    const at = panel.indexOf('const switchSource = ')
+    expect(at).toBeGreaterThanOrEqual(0)
+    const body = panel.slice(at, panel.indexOf('setGen(', at))
+    expect(body).toContain('setSourcePath(samePath(next, sessionPath) ? null : next)')
+  })
+
   it('the host hands the client that root on worktreeStatus, null-safe for JSON', () => {
     const status = code(host)
     const start = status.indexOf('async worktreeStatus(')
