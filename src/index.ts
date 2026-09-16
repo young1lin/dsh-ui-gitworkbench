@@ -405,6 +405,12 @@ export class GitWorkbenchService extends TypertRemoteService {
         error: { type: 'string' },
       },
     } as const
+    // Every key `worktreeStatus` returns is declared here: the schema is
+    // `additionalProperties: false` and dsh validates the tool's output
+    // against it, so an undeclared key is INVALID_TOOL_OUTPUT on every call,
+    // not an extra field (`worktree-status-schema.test.ts` pins the two lists
+    // equal). Nullable strings spell `oneOf` for the same subset reason as
+    // `binding`.
     const STATUS_SCHEMA = {
       type: 'object', additionalProperties: false,
       properties: {
@@ -415,6 +421,10 @@ export class GitWorkbenchService extends TypertRemoteService {
         worktrees: { type: 'array', items: { type: 'object', additionalProperties: true } },
         branches: { type: 'array', items: { type: 'string' } },
         branchesTruncated: { type: 'boolean' },
+        remoteBranches: { type: 'array', items: { type: 'string' } },
+        remoteBranchesTruncated: { type: 'boolean' },
+        mainWorktreePath: { oneOf: [{ type: 'null' }, { type: 'string' }] },
+        repoRoot: { oneOf: [{ type: 'null' }, { type: 'string' }] },
       },
     } as const
 
