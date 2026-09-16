@@ -1571,11 +1571,13 @@ export class GitWorkbenchService extends TypertRemoteService {
    * @param repoPath - caller's directory, used when the session is unbound.
    * @param signal - abort signal.
    * @returns the effective binding (with whether an ancestor lent it), the
-   * repository's worktrees, its local branches, the remote-only branches, and
-   * the main worktree's path (null outside a repo or for a bare one).
+   * repository's worktrees, its local branches, the remote-only branches, the
+   * main worktree's path (null outside a repo or for a bare one), and the
+   * repository root the list was read at — the session's own tree, spelled as
+   * the list spells it, for a session opened at a subdirectory.
    */
   @Remote('worktreeStatus')
-  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; bindingInherited: boolean; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean; remoteBranches: string[]; remoteBranchesTruncated: boolean; mainWorktreePath: string | null }> {
+  async worktreeStatus(sessionId: string, repoPath: string, signal: AbortSignal): Promise<{ binding: WorktreeBinding | null; bindingInherited: boolean; worktrees: WorktreeEntry[]; branches: string[]; branchesTruncated: boolean; remoteBranches: string[]; remoteBranchesTruncated: boolean; mainWorktreePath: string | null; repoRoot: string | null }> {
     const file = await this.bindingsIo().load()
     const effective = typeof sessionId === 'string' && sessionId.length > 0
       ? resolveEffectiveBinding(sessionId, this.parentOf, id => file.bindings[id])
@@ -1587,7 +1589,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     const caller = typeof repoPath === 'string' && repoPath.length > 0 ? repoPath.replace(/\\/g, '/') : process.cwd()
     const cwd = binding?.repoRoot ?? caller
     const root = await this.repoRootOf(cwd, signal)
-    if (root === null) return { binding, bindingInherited, worktrees: [], branches: [], branchesTruncated: false, remoteBranches: [], remoteBranchesTruncated: false, mainWorktreePath: null }
+    if (root === null) return { binding, bindingInherited, worktrees: [], branches: [], branchesTruncated: false, remoteBranches: [], remoteBranchesTruncated: false, mainWorktreePath: null, repoRoot: null }
     const [listed, named, remote] = await Promise.all([
       this.git(root, ['worktree', 'list', '--porcelain'], signal),
       this.git(root, ['branch', '--sort=-committerdate', '--format=%(refname:short)'], signal),
@@ -1608,6 +1610,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       remoteBranches: remoteOnly.branches,
       remoteBranchesTruncated: remoteOnly.branchesTruncated,
       mainWorktreePath: mainWorktreePath(listed.stdout),
+      repoRoot: root,
     }
   }
 

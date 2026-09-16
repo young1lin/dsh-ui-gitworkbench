@@ -109,6 +109,13 @@ export interface WorktreeStatus {
    * Null outside a repository or for a bare one.
    */
   readonly mainWorktreePath: string | null
+  /**
+   * The repository root of the directory the session opened (its bound
+   * repository's, when bound), forward slashes — what names the session's
+   * own tree in {@link worktrees} when the session sits in a subdirectory.
+   * Null outside a repository.
+   */
+  readonly repoRoot: string | null
 }
 
 /**

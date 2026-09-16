@@ -254,3 +254,26 @@ export function rootOfWorktree(
 ): string | undefined {
   return worktrees.find(entry => samePath(entry.path, path))?.path
 }
+
+/**
+ * The tree a session opened, spelled the way the worktree list spells it.
+ *
+ * A session opened at a subdirectory of the repository is in the tree whose
+ * root the host resolved for it, and every question the panel asks about
+ * "the session's own tree" — the picker's active row and its own-tree dot,
+ * whether a source pick clears the override or pins a third tree, whether
+ * the view follows the agent across `worktree_enter` — compares against a
+ * LISTED path. The raw cwd matched none of them for exactly that session.
+ *
+ * When the cwd IS the root, the cwd keeps its own spelling: same place either
+ * way, and the mount-time stats fetch is keyed on this string, so a spelling
+ * change alone would run it twice for every session header.
+ *
+ * @param cwd - the directory the session opened.
+ * @param repoRoot - that directory's repository root as the host reports it
+ *   on `worktreeStatus`; null outside a repository, undefined until it lands.
+ */
+export function sessionWorktree(cwd: string | undefined, repoRoot: string | null | undefined): string | undefined {
+  if (cwd === undefined || repoRoot === null || repoRoot === undefined) return cwd
+  return samePath(cwd, repoRoot) ? cwd : repoRoot
+}

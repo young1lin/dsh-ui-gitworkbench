@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.tsx', import.meta.url)), 'utf8')
+const host = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8')
 
 /** Comments stripped before anything is matched — see the file header. */
 function code(text: string): string {
@@ -54,5 +55,50 @@ describe('the branch switcher gate', () => {
     expect(gate()).not.toContain('statsPath')
     expect(gate()).not.toContain('sessionPath')
     expect(gate()).not.toContain('stats.worktreePath')
+  })
+})
+
+/**
+ * The same family, one level up: which tree is the SESSION's own. Every
+ * place the panel answers that — the picker's active row and its own-tree
+ * dot, the source switch that clears the override rather than pinning the
+ * session's tree, the effect that follows the agent across worktree_enter —
+ * compares against `sessionPath`, and for a session opened at a subdirectory
+ * the raw cwd matched nothing. `sessionWorktree` (worktree-view.ts) resolves
+ * it to the root the host reports on `worktreeStatus`.
+ */
+describe("the session's own tree", () => {
+  const panel = code(tsx)
+
+  /** The declaration line of `name` in the panel. */
+  function declaration(name: string): string {
+    const at = panel.indexOf(`const ${name} = `)
+    expect(at, `the panel does not declare ${name}`).toBeGreaterThanOrEqual(0)
+    return panel.slice(at, panel.indexOf('\n', at))
+  }
+
+  it('resolves the session tree through sessionWorktree, from the root the host reports', () => {
+    const line = declaration('sessionRoot')
+    expect(line).toContain('sessionWorktree(')
+    expect(line).toContain('repoRoot')
+    expect(declaration('sessionPath')).toContain('?? sessionRoot')
+  })
+
+  it('follows the agent from the session ROOT, not from the raw cwd', () => {
+    // The binding-follow effect: "the place the session used to be" must be
+    // spelled the way the list spells it, or a pinned main row survives the
+    // agent's enter for exactly the subdirectory session.
+    const line = declaration('prevSource')
+    expect(line).not.toMatch(/\?\?\s*worktreePath/)
+    expect(line).toContain('sessionRoot')
+  })
+
+  it('the host hands the client that root on worktreeStatus, null-safe for JSON', () => {
+    const status = code(host)
+    const start = status.indexOf('async worktreeStatus(')
+    expect(start).toBeGreaterThan(0)
+    const body = status.slice(start, status.indexOf('@Remote(', start))
+    expect(body).toContain('repoRoot: null')
+    expect(body).toContain('repoRoot: root')
   })
 })

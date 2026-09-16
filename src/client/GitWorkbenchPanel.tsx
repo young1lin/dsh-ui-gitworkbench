@@ -89,7 +89,7 @@ import {
   nextAction, nextBatch, pathsFor, settledTicks, withPendingTicks,
   type Tick, type TickAction,
 } from './stage-tree.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, sessionWorktree, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 export type * from './git-workbench-types.ts'
@@ -559,8 +559,10 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const mainWorktreePath = wtStatus?.mainWorktreePath ?? null
   /** Branches that have a worktree — what the pickers group to the top. */
   const worktreeBranches = worktrees.map(entry => entry.branch).filter(branch => branch.length > 0)
-  /** The session's own worktree: the bound one, else its cwd. The default view. */
-  const sessionPath = binding?.worktreePath ?? worktreePath
+  /** The tree the session opened, as the list spells it ({@link sessionWorktree}). */
+  const sessionRoot = sessionWorktree(worktreePath, wtStatus?.repoRoot ?? null)
+  /** The session's own worktree: the bound one, else its tree. The default view. */
+  const sessionPath = binding?.worktreePath ?? sessionRoot
   /** What everything here is about. The drawer's pin only counts while the
    *  drawer is open — see {@link viewedPath} for why that is a rule and not a
    *  reset in the close handler. */
@@ -813,11 +815,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     const prevBinding = lastBindingRef.current
     lastBindingRef.current = bindingPath
     if (prevBinding === bindingPath) return
-    const prevSource = prevBinding ?? worktreePath ?? null
-    if (sourcePath !== null && prevSource !== null && prevSource.replace(/\\/g, '/') === sourcePath.replace(/\\/g, '/')) {
-      setSourcePath(null)
-    }
-  }, [bindingPath, sourcePath, worktreePath])
+    const prevSource = prevBinding ?? sessionRoot ?? null
+    if (sourcePath !== null && samePath(prevSource, sourcePath)) setSourcePath(null)
+  }, [bindingPath, sourcePath, sessionRoot])
 
   // First page of the history list, reloaded whenever the worktree or the ref
   // changes. The selection is dropped with it — a hash from another ref's log
@@ -1085,7 +1085,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  per-source. Picking the session's own worktree clears the override rather
    *  than pinning it, so a later agent enter/exit still moves the default. */
   const switchSource = (next: string): void => {
-    setSourcePath(next === sessionPath ? null : next)
+    setSourcePath(samePath(next, sessionPath) ? null : next)
     setGen(g => g + 1)
   }
 
