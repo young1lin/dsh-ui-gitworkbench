@@ -65,6 +65,23 @@ describe('a first push at a repository whose remote is not origin', () => {
     expect(out.stderr).toMatch(/origin/)
   })
 
+  it('reads an unset config key as empty stdout and a set one as its value', async () => {
+    // What the RPC relies on: `--get` exits 1 with nothing on stdout for an
+    // unset key, so `stdout.trim()` is the "unset" spelling `pushRemote`
+    // takes; `branch.<name>.pushRemote` is read before `remote.pushDefault`,
+    // which is git's own precedence for a push destination.
+    const unset = await runGit(repo, ['config', '--get', 'branch.main.pushRemote'])
+    expect(unset.exitCode).not.toBe(0)
+    expect(unset.stdout.trim()).toBe('')
+    git('config', 'remote.pushDefault', 'stale')
+    git('config', 'branch.main.pushRemote', 'upstream')
+    const branch = await runGit(repo, ['config', '--get', 'branch.main.pushRemote'])
+    const repoWide = await runGit(repo, ['config', '--get', 'remote.pushDefault'])
+    const configured = branch.stdout.trim() || repoWide.stdout.trim()
+    expect(pushRemote(['upstream'], configured)).toEqual({ ok: true, remote: 'upstream' })
+    expect(pushRemote(['upstream'], repoWide.stdout.trim()).ok).toBe(false)
+  })
+
   it('lands, and tracks, at the remote the repository actually has', async () => {
     const chosen = pushRemote(names((await runGit(repo, ['remote'])).stdout), '')
     expect(chosen).toEqual({ ok: true, remote: 'upstream' })

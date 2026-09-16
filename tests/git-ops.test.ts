@@ -125,8 +125,22 @@ describe('network commands', () => {
       expect(pushRemote(['upstream'], '')).toEqual({ ok: true, remote: 'upstream' })
     })
 
-    it('honours remote.pushDefault over both', () => {
+    it('honours the configured push remote over both', () => {
+      // `branch.<name>.pushRemote`, else `remote.pushDefault` — the RPC reads
+      // them in git's order and hands over the first that is set.
       expect(pushRemote(['origin', 'gl'], 'gl')).toEqual({ ok: true, remote: 'gl' })
+    })
+
+    it('refuses a configured remote the repository does not have, naming the config', () => {
+      // A stale `remote.pushDefault` after a `git remote rename` would reach
+      // git's "'gl' does not appear to be a git repository"; saying which
+      // config key points at it is what makes the failure fixable.
+      const result = pushRemote(['origin'], 'gl')
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toContain('gl')
+      expect(result.error).toContain('pushRemote')
+      expect(result.error).toContain('pushDefault')
     })
 
     it('refuses to guess between several remotes without origin', () => {

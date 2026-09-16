@@ -139,15 +139,23 @@ export function pushArgv(branch: string, remote: string | null): string[] {
  * added by hand, has no `origin` — and `git push --set-upstream origin` there
  * is a fatal error, while the sync bar had offered the button because
  * `git remote` printed something. The order is git's own for a push with no
- * upstream: `remote.pushDefault` when set, else `origin`; the one addition
+ * upstream: the configured push remote (`branch.<name>.pushRemote`, else
+ * `remote.pushDefault` — the caller reads both and passes the first set)
+ * when it names a remote the repository has, else `origin`; the one addition
  * is a lone remote of any name, which is the only place the push could go.
  * Several remotes and no origin is a real ambiguity, and the answer names
- * them and the config key rather than picking one.
+ * them and the config key rather than picking one. A configured name that
+ * is not a remote (stale after `git remote rename`) is refused with the
+ * config keys that could hold it, rather than passed on to git's "does not
+ * appear to be a git repository".
  * @param remotes - `git remote` names.
- * @param pushDefault - `remote.pushDefault`, or '' when unset.
+ * @param configured - the configured push remote, or '' when none is set.
  */
-export function pushRemote(remotes: readonly string[], pushDefault: string): { ok: true; remote: string } | { ok: false; error: string } {
-  if (pushDefault.length > 0) return { ok: true, remote: pushDefault }
+export function pushRemote(remotes: readonly string[], configured: string): { ok: true; remote: string } | { ok: false; error: string } {
+  if (configured.length > 0) {
+    if (remotes.includes(configured)) return { ok: true, remote: configured }
+    return { ok: false, error: `the configured push remote "${configured}" (branch.<name>.pushRemote / remote.pushDefault) is not one of the remotes: ${remotes.join(', ') || 'none'}` }
+  }
   if (remotes.includes('origin')) return { ok: true, remote: 'origin' }
   if (remotes.length === 1) return { ok: true, remote: remotes[0]! }
   if (remotes.length === 0) return { ok: false, error: 'no remote to push to' }

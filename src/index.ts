@@ -1909,12 +1909,16 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (tracking.branch.length === 0) return { ok: false, failure: 'unknown', error: 'no branch to push' }
     if (tracking.upstream !== null) return this.writeOp(cwd, () => pushArgv(tracking.branch, null), signal, NETWORK_GRACE_MS)
     // A first push names its remote, and `origin` is only a convention of
-    // `git clone`: the repository's own remotes decide (`pushRemote`).
-    const [remotes, pushDefault] = await Promise.all([
+    // `git clone`: the branch's own push config, then the repository's, then
+    // its remotes decide (`pushRemote`). `--get` exits 1 for an unset key
+    // with empty stdout, which is the "unset" spelling `pushRemote` reads.
+    const [remotes, branchRemote, pushDefault] = await Promise.all([
       this.git(cwd, ['remote'], signal),
+      this.git(cwd, ['config', '--get', `branch.${tracking.branch}.pushRemote`], signal),
       this.git(cwd, ['config', '--get', 'remote.pushDefault'], signal),
     ])
-    const chosen = pushRemote(remotes.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0), pushDefault.stdout.trim())
+    const configured = branchRemote.stdout.trim() || pushDefault.stdout.trim()
+    const chosen = pushRemote(remotes.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0), configured)
     if (!chosen.ok) return { ok: false, failure: 'unknown', error: chosen.error }
     return this.writeOp(cwd, () => pushArgv(tracking.branch, chosen.remote), signal, NETWORK_GRACE_MS)
   }
