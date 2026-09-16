@@ -2,6 +2,15 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.23] - 2026-09-17
+
+### 修复
+
+- **子目录会话里 `worktree_enter` 教给 agent 的路径前缀是错的——文件会被静默写进主工作树。** worktree 建在**仓库根**下（`<root>/.agents/worktrees/<name>`），而 enter 返回的 hint、每轮注入的 `worktree:binding` 系统提示和工具描述都说「相对会话 cwd 用 `.agents/worktrees/<name>`」。会话开在仓库根时两者恰好一致；开在子目录（如 `<root>/server`）时那个目录并不存在，按提示加前缀的文件工具会把文件建到 `server/.agents/worktrees/<name>/…`——落在主树里、未跟踪，agent 却以为自己在 worktree 里干活，全程不报错。现在前缀由 `worktreeRel(cwd, worktreePath)`（worktree.ts）从会话 cwd 真正解析（子目录得 `../.agents/worktrees/<name>`），hint 与系统提示两处都用它，提示里「工作目录仍是仓库根」这句不成立的断言也去掉了。守卫：`worktreeRel` 单测（根、子目录、平台拼写、worktree 自身）与 `tests/worktree-rel-wiring.test.ts`（剥注释扫描 index.ts，钉两处调用点，逐点变异全红）。
+- **仓库的 remote 不叫 `origin` 时，首次 push 必失败。** 分支无 upstream 时 argv 写死 `push --set-upstream origin <branch>`，而同步条只要 `git remote` 有输出就显示按钮：clone 后改过名的、或手动 `remote add upstream` 的仓库，按钮照常出现、点下去 git 报 `'origin' does not appear to be a git repository`。现在由 `pushRemote(remotes, pushDefault)`（git-ops.ts）决定去处，顺序是 git 自己对无 upstream 分支的顺序——`branch.<name>.pushRemote`、其次 `remote.pushDefault`、再 `origin`——外加一条 git 不猜但抽屉可以猜的：只有一个 remote 就用它；多个且无 origin 才拒绝，并列出 remote 名和该设的配置键；配置指向的名字不在 remote 列表里（`remote rename` 之后的陈旧值）也拒绝，错误里点名两个配置键。`pushArgv` 改收 remote（有 upstream 传 null、仍是裸 `push`），并拒绝会被 git 读成参数的 remote 名。RPC 只在无 upstream 的路径上并行问一次 `git remote` 与配置键。守卫：纯规则单测；`tests/push-remote.git.test.ts` 在真 git 上复现——唯一 remote 叫 `upstream` 的仓库，旧 argv 失败、新 argv 落地并跟踪 `upstream/main`。
+- **agent 工具 `worktree_status` 自 0.1.19 起每次调用都报 `INVALID_TOOL_OUTPUT`。** dsh 在模型看到结果之前按工具声明的 output schema 校验，而该 schema 是 `additionalProperties: false`：`worktreeStatus` RPC 为分支切换器长出的 `remoteBranches`/`remoteBranchesTruncated`/`mainWorktreePath`（以及本版新增的 `repoRoot`）都没进 schema，工具于是一直失败——抽屉直接读 RPC 所以没人发现，agent 要 worktree 列表拿到的是错误。code review 用 dsh 自己的 `validateJsonSchemaValue` 复现（四条 `is not a declared property`）。schema 现在列全十一个键，可空字符串按子集要求写 `oneOf`（README 6.11）。守卫 `tests/worktree-status-schema.test.ts`：剥注释后把 schema 属性表与 `worktreeStatus` 的返回类型键钉成相等；本机能解析 `@deepseek-ai/dsh-tools` 时再用真校验器过 schema 与三种完整返回值（CI 无 peer、自动跳过）。
+- **子目录会话认不出「自己的树」：选择器不标当前行，点回主树是钉住而非清除，之后不再跟随 agent 进 worktree。** 面板三处回答「这是不是会话自己的树」——源选择器的当前行与 `●`、切源时「选中自己的树则清除覆盖」、以及绑定变化时丢掉这种钉住让视图跟着 agent 走——比的都是**原始会话 cwd**，子目录会话的 `A/B` 在 worktree 列表里谁也不是：没有行亮起、点主树行变成钉住 `A`、agent `worktree_enter` 后抽屉留在原地；按源存的折叠状态也把 `A` 与 `A/B` 当两棵树。宿主 `worktreeStatus` 本就为读列表解析了调用方的根，现在把它作为 `repoRoot` 返回（仓库外为 `null`，绝不 `undefined`）；客户端 `sessionTree(cwd, repoRoot)`（worktree-view.ts）在 cwd 比根深时用根、cwd 就是根时保留 cwd 自己的拼写——挂载时的 stats 抓取按这个字符串做 key，只改拼写会让每个会话头多抓一次；子目录会话则在根到手时多抓一次，芯片计数闪一下 `—` 再回来，仅挂载时一次。三处改读 `sessionRoot`、经 `samePath` 比较（顺带收掉跟随效应里手写的分隔符比较）。旧宿主不返回 `repoRoot` 时回落到原行为。守卫：纯规则单测；`tests/switcher-gate.test.ts` 追加剥注释扫描钉面板三处接线与宿主返回字段，逐点变异全红；面板仍在单体阈值之下。
+
 ## [0.1.22] - 2026-09-16
 
 ### 修复

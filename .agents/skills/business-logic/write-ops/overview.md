@@ -1,6 +1,6 @@
 # write-ops Overview
 
-> last_verified_commit: ba48ced
+> last_verified_commit: ad6bbeb
 > source_packages:
 > - src/git-ops.ts、src/client/stage-tree.ts、src/client/op-feedback.ts（+ src/index.ts 的 write ops 区）
 
@@ -30,7 +30,7 @@ sequenceDiagram
 
 ## Business Rules
 - **argv 硬化**（`git-ops.ts`）：数组构造无 shell；路径一律 `--` 之后且 `isSafePathArg` 拒绝前导 `-`；空路径表拒绝（防整树 add）；`commitArgv` 绝不 `-a`（抽屉有暂存区，分区不能是摆设）；全库无 `--force`/`reset --hard`/`clean` 任何拼写
-- **push 绝不 force**：无 upstream 时 `pushArgv` 用 `--set-upstream origin <branch>`；被拒归类 `diverged`（答案是先 pull）
+- **push 绝不 force，首次 push 的 remote 不写死 `origin`**：有 upstream 时裸 `push`（尊重用户 push 配置）；无 upstream 时 `pushRemote(remotes, configured)` 决定去处——配置的 push remote（`branch.<name>.pushRemote` 优先于 `remote.pushDefault`，RPC 读两者取先设的）且必须真在 remote 列表里（陈旧值拒绝并点名配置键）、其次 `origin`、否则唯一的那个 remote、多个且无 origin 才拒绝并列出名字与配置键（`origin` 是 `git clone` 的习惯不是 git 的要求，同步条只看 `git remote` 有无输出就显示按钮，remote 叫 `upstream` 的仓库曾必失败；README §6.28）；`pushArgv(branch, remote | null)`，remote 名同样过 `isSafePathArg`；RPC 只在无 upstream 路径上并行问 `git remote` 与两个配置键；被拒归类 `diverged`（答案是先 pull）。守卫 `tests/push-remote.git.test.ts`（真 git：唯一 remote 叫 `upstream`，旧 argv 失败、新 argv 落地并跟踪）
 - **pull 模式永远显式**（`--ff-only`/`--rebase`/`--no-rebase`）：按钮写什么跑什么，不读用户 pull.rebase 配置
 - **syncStatus 读 `git status` 而非 `rev-list --count`**：'没配 upstream' 和 '与 upstream 齐平' 计数都是 0，只有前者决定 push 参数
 - **防挂死**：`NON_INTERACTIVE_ENV`（GIT_TERMINAL_PROMPT=0 / GCM_INTERACTIVE=never / askpass 置空）——stdin:'ignore' 把交互提示变成没人能答的等待，挂在宿主进程里；网络操作 grace 120s
@@ -39,7 +39,7 @@ sequenceDiagram
 - **锁是 ref 不是 state**：`busyRef` 防 drain 循环内闭包看不到彼此（handoff Task 1 踩过）；源切换 epoch 退役旧 drain
 
 ## Code Location
-`stageArgv/unstageArgv/commitArgv/fetchArgv/pullArgv/pushArgv/switchArgv/remoteOnlyBranches/capStderr`（git-ops）、`tickedFlags/withPendingTicks/settledTicks/nextBatch`（stage-tree，各有单测）、`stageStateOf`（冲突 XY 一律算 unstaged——带冲突标记的文件不该被提交）、`parseTracking`（`##` 头解析，分支含点时按最后一个 `...` 切）
+`stageArgv/unstageArgv/commitArgv/fetchArgv/pullArgv/pushArgv/pushRemote/switchArgv/remoteOnlyBranches/capStderr`（git-ops）、`tickedFlags/withPendingTicks/settledTicks/nextBatch`（stage-tree，各有单测）、`stageStateOf`（冲突 XY 一律算 unstaged——带冲突标记的文件不该被提交）、`parseTracking`（`##` 头解析，分支含点时按最后一个 `...` 切）
 
 ## Database
 无（写操作直达 git 索引/远端）

@@ -1,6 +1,6 @@
 # stats-drawer Overview
 
-> last_verified_commit: ba48ced
+> last_verified_commit: ad6bbeb
 > source_packages:
 > - src/client/**（面板全部）+ src/style-store.ts + src/commit-cache.ts + src/git-log.ts + src/repo-root.ts（仓库根解析）
 
@@ -59,7 +59,7 @@ flowchart LR
 - **历史过滤框每个按键的代价与已加载行数无关**：`CommitRow` 是 `memo`，`onSelectCommit` 直接传 `setCommitHash`（setter 身份稳定，包一层函数就白 memo 了），悬浮卡的精确时间只在卡**打开**时格式化，`formatCommitDate` 的 `Intl.DateTimeFormat` 按 locale+timeZone 缓存（构造一次 ~1.5ms，曾经每行每渲染一次：116 行 12 个按键脚本 449ms，其中 190ms 在构造器、120ms 在回收它们；改后 150ms）。探针 `scripts/verify_history_filter_perf.py`
 
 ## Code Location
-`GitWorkbenchPanel`（面板状态编排）、`DiffViews`（diff / CodeMirror / 区块操作）、`BinaryFilePane` + `image-source`（diff 窗格里的图片，按页签/状态选 rev）、`DiffFindBar` + `use-diff-find` + `diff-find`（统一 diff 查找）、`ChangesFileTree`（变更树）、`CommitHistory`（历史与过滤）、`WorkbenchControls`（面板控制）、`parseRows/gutterSides`（diff-model）、`samePath/viewedPath/showsPending/badgeRepeatsBranch/splitPath/branchOfWorktree`（worktree-view，纯函数、不 import React/CSS 才可测）、`resolveTheme/effectiveBackground/effectiveCss`（themes）、`sanitizeEntry/IMAGE_PATTERN`（style-store，image 只收 base64 data: URL）、`CommitPayloadCache`（commit-hash 内容寻址 LRU）、`parseLog`（git-log，`--pretty=format:` 解析）
+`GitWorkbenchPanel`（面板状态编排）、`DiffViews`（diff / CodeMirror / 区块操作）、`BinaryFilePane` + `image-source`（diff 窗格里的图片，按页签/状态选 rev）、`DiffFindBar` + `use-diff-find` + `diff-find`（统一 diff 查找）、`ChangesFileTree`（变更树）、`CommitHistory`（历史与过滤）、`WorkbenchControls`（面板控制）、`parseRows/gutterSides`（diff-model）、`samePath/viewedPath/sessionTree/showsPending/badgeRepeatsBranch/splitPath/branchOfWorktree/rootOfWorktree`（worktree-view，纯函数、不 import React/CSS 才可测）、`resolveTheme/effectiveBackground/effectiveCss`（themes）、`sanitizeEntry/IMAGE_PATTERN`（style-store，image 只收 base64 data: URL）、`CommitPayloadCache`（commit-hash 内容寻址 LRU）、`parseLog`（git-log，`--pretty=format:` 解析）
 逐处变更：`client/diff-nav.ts` 管两套几何。History/Compare 的 unified diff 用 `stepToBlock` + `anchorFor`/`anchorFrom`/`scrollTopFor` 按视口环形前后跳；working-tree side pane 用 `stepBlockIndex` 按显式 current block 前后跳，阅读模式从固定行高的 aligned rows 推导块顶，编辑模式从 working-tree 真实行号推导 CodeMirror dense 行的块顶。点击差异块会选中它，当前块画完整外框；选择以 diff identity 为键，刷新后不复用旧块号。pane 头部常驻 F7 / Shift+F7 与 `current / total`：Unstaged 提供 Stage/Revert hunk，Staged 提供 Unstage hunk，多块文件另有 Unstage file（同一 stale-sha patch 路径一次选齐所有块）；buffer dirty 时区块按钮保持可见但禁用，Save/Discard edits 仍可用
 结构不变量守卫：`tests/drawer-chrome.test.ts`（按钮词汇表/修饰类序/省略规则/quiet 标记/showsPending 单点）、`tests/diff-regression.test.ts`（栈序/设置浮层/图标按钮/diff 行高）、`tests/edit-hunk-actions.test.ts`（两层 current block、固定 Stage/Revert/Unstage 出口与 dirty 禁用分层）
 
