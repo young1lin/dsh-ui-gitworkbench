@@ -273,7 +273,7 @@ export function rootOfWorktree(
  * @param repoRoot - that directory's repository root as the host reports it
  *   on `worktreeStatus`; null outside a repository, undefined until it lands.
  */
-export function sessionWorktree(cwd: string | undefined, repoRoot: string | null | undefined): string | undefined {
+export function sessionTree(cwd: string | undefined, repoRoot: string | null | undefined): string | undefined {
   if (cwd === undefined || repoRoot === null || repoRoot === undefined) return cwd
   return samePath(cwd, repoRoot) ? cwd : repoRoot
 }

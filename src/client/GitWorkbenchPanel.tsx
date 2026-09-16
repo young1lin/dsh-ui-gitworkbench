@@ -89,7 +89,7 @@ import {
   nextAction, nextBatch, pathsFor, settledTicks, withPendingTicks,
   type Tick, type TickAction,
 } from './stage-tree.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, sessionWorktree, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, sessionTree, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 export type * from './git-workbench-types.ts'
@@ -559,8 +559,8 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   const mainWorktreePath = wtStatus?.mainWorktreePath ?? null
   /** Branches that have a worktree — what the pickers group to the top. */
   const worktreeBranches = worktrees.map(entry => entry.branch).filter(branch => branch.length > 0)
-  /** The tree the session opened, as the list spells it ({@link sessionWorktree}). */
-  const sessionRoot = sessionWorktree(worktreePath, wtStatus?.repoRoot ?? null)
+  /** The tree the session opened, as the list spells it ({@link sessionTree}). */
+  const sessionRoot = sessionTree(worktreePath, wtStatus?.repoRoot ?? null)
   /** The session's own worktree: the bound one, else its tree. The default view. */
   const sessionPath = binding?.worktreePath ?? sessionRoot
   /** What everything here is about. The drawer's pin only counts while the

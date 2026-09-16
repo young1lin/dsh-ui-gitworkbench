@@ -64,7 +64,7 @@ describe('the branch switcher gate', () => {
  * dot, the source switch that clears the override rather than pinning the
  * session's tree, the effect that follows the agent across worktree_enter —
  * compares against `sessionPath`, and for a session opened at a subdirectory
- * the raw cwd matched nothing. `sessionWorktree` (worktree-view.ts) resolves
+ * the raw cwd matched nothing. `sessionTree` (worktree-view.ts) resolves
  * it to the root the host reports on `worktreeStatus`.
  */
 describe("the session's own tree", () => {
@@ -77,9 +77,9 @@ describe("the session's own tree", () => {
     return panel.slice(at, panel.indexOf('\n', at))
   }
 
-  it('resolves the session tree through sessionWorktree, from the root the host reports', () => {
+  it('resolves the session tree through sessionTree, from the root the host reports', () => {
     const line = declaration('sessionRoot')
-    expect(line).toContain('sessionWorktree(')
+    expect(line).toContain('sessionTree(')
     expect(line).toContain('repoRoot')
     expect(declaration('sessionPath')).toContain('?? sessionRoot')
   })

@@ -8,7 +8,7 @@
  * it is worth an assertion that survives the next edit to the header.
  */
 import { describe, expect, it } from 'vitest'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, rootOfWorktree, samePath, sessionWorktree, showsPending, splitPath, turnSettled, viewedPath } from '../src/client/worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, rootOfWorktree, samePath, sessionTree, showsPending, splitPath, turnSettled, viewedPath } from '../src/client/worktree-view.ts'
 
 describe('samePath', () => {
   it('reads a windows path and a posix one as the same place', () => {
@@ -277,26 +277,26 @@ describe('rootOfWorktree', () => {
   })
 })
 
-describe('sessionWorktree', () => {
+describe('sessionTree', () => {
   it('is the ROOT of a session opened at a subdirectory', () => {
     // The worktree list names `C:/repo`; a session at `C:/repo/server` is in
     // that tree. Read raw, the picker marked no row as the session's own,
     // choosing the main row pinned it instead of clearing the override, and
     // the drawer no longer followed the agent's worktree_enter.
-    expect(sessionWorktree('C:/repo/server', 'C:/repo')).toBe('C:/repo')
-    expect(sessionWorktree('C:\\repo\\server', 'C:/repo')).toBe('C:/repo')
+    expect(sessionTree('C:/repo/server', 'C:/repo')).toBe('C:/repo')
+    expect(sessionTree('C:\\repo\\server', 'C:/repo')).toBe('C:/repo')
   })
 
   it('keeps the cwd, in its own spelling, when the cwd IS the root', () => {
     // Same place either way; keeping the cwd string means the mount-time
     // stats fetch, keyed on this value, does not run twice for every session.
-    expect(sessionWorktree('C:\\repo', 'C:/repo')).toBe('C:\\repo')
-    expect(sessionWorktree('C:/repo/', 'C:/repo')).toBe('C:/repo/')
+    expect(sessionTree('C:\\repo', 'C:/repo')).toBe('C:\\repo')
+    expect(sessionTree('C:/repo/', 'C:/repo')).toBe('C:/repo/')
   })
 
   it('is the cwd while the root is unknown, and outside a repository', () => {
-    expect(sessionWorktree('C:/repo/server', undefined)).toBe('C:/repo/server')
-    expect(sessionWorktree('C:/somewhere', null)).toBe('C:/somewhere')
-    expect(sessionWorktree(undefined, 'C:/repo')).toBeUndefined()
+    expect(sessionTree('C:/repo/server', undefined)).toBe('C:/repo/server')
+    expect(sessionTree('C:/somewhere', null)).toBe('C:/somewhere')
+    expect(sessionTree(undefined, 'C:/repo')).toBeUndefined()
   })
 })
