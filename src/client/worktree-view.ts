@@ -232,3 +232,25 @@ export function branchOfWorktree(
 ): string {
   return worktrees.find(entry => samePath(entry.path, path))?.branch ?? ''
 }
+
+/**
+ * The root of a worktree the list already names — its own path, spelled as
+ * the LIST spells it.
+ *
+ * The sibling of {@link branchOfWorktree}, for the same reason: a source
+ * switch installs placeholder stats until the fetch lands, and the branch
+ * switcher is rendered only when the viewed root is the main worktree's
+ * path. Seeded from the list, the control is there at once for a listed
+ * worktree; unseeded it would pop in seconds later on a large repository.
+ *
+ * @returns the path, or undefined when the list does not name it — a session
+ *   opened at a subdirectory, whose root is git's to report through the
+ *   stats fetch. Guessing (the path itself, say) would hide the switcher for
+ *   exactly that session.
+ */
+export function rootOfWorktree(
+  path: string | null | undefined,
+  worktrees: readonly { readonly path: string }[],
+): string | undefined {
+  return worktrees.find(entry => samePath(entry.path, path))?.path
+}

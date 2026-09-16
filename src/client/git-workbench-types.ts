@@ -38,6 +38,14 @@ export interface GitCommit {
 
 export interface WorkbenchStats {
   readonly worktreePath: string
+  /**
+   * The repository root the view's paths are relative to — `--show-toplevel`
+   * of `worktreePath`, forward slashes — on the working-tree view. This, not
+   * `worktreePath`, is what the branch switcher compares with the main
+   * worktree's path: a session opened at a subdirectory is still the main
+   * worktree. Absent on commit and compare views and before the first fetch.
+   */
+  readonly repoRoot?: string
   readonly branch: string
   readonly ahead: number
   readonly behind: number

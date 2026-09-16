@@ -15,7 +15,8 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { isMainWorktree, type RootGit } from '../src/repo-root.ts'
+import { isMainWorktree, resolveRepoRoot, type RootGit } from '../src/repo-root.ts'
+import { mainWorktreePath } from '../src/worktree.ts'
 
 let repo = ''
 let linked = ''
@@ -73,5 +74,29 @@ describe('isMainWorktree', () => {
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * The client renders the switcher when `stats.repoRoot` — `--show-toplevel`
+ * of the viewed tree — is the main worktree's path as `worktree list` prints
+ * it. Two git commands, one spelling: if they ever disagreed (a separator, a
+ * trailing slash, a case), the control would vanish from every drawer at
+ * once, with nothing to say why. Pinned here so a git upgrade would say so.
+ */
+describe('the root the switcher compares', () => {
+  it('show-toplevel from a subdirectory spells the main path as worktree list does', async () => {
+    const listed = await runGit(repo, ['worktree', 'list', '--porcelain'])
+    const main = mainWorktreePath(listed.stdout)
+    expect(main).not.toBeNull()
+    await expect(resolveRepoRoot(runGit, join(repo, 'server'))).resolves.toBe(main)
+  })
+
+  it('a linked worktree\u2019s root is its own path, not the main one', async () => {
+    const listed = await runGit(repo, ['worktree', 'list', '--porcelain'])
+    const main = mainWorktreePath(listed.stdout)
+    const root = await resolveRepoRoot(runGit, linked)
+    expect(root).not.toBe(main)
+    expect(root).toBe(linked.replace(/\\/g, '/'))
   })
 })

@@ -8,7 +8,7 @@
  * it is worth an assertion that survives the next edit to the header.
  */
 import { describe, expect, it } from 'vitest'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, samePath, showsPending, splitPath, turnSettled, viewedPath } from '../src/client/worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, probesClosedBinding, rootOfWorktree, samePath, showsPending, splitPath, turnSettled, viewedPath } from '../src/client/worktree-view.ts'
 
 describe('samePath', () => {
   it('reads a windows path and a posix one as the same place', () => {
@@ -248,5 +248,31 @@ describe('branchOfWorktree', () => {
     expect(branchOfWorktree('C:/elsewhere', worktrees)).toBe('')
     expect(branchOfWorktree(undefined, worktrees)).toBe('')
     expect(branchOfWorktree('C:/repo', [])).toBe('')
+  })
+})
+
+describe('rootOfWorktree', () => {
+  const worktrees = [
+    { path: 'C:/repo', branch: 'main' },
+    { path: 'C:/repo/.agents/worktrees/demo', branch: 'wt/demo' },
+  ]
+
+  it('names a listed worktree\u2019s path as its root, spelled as the list spells it', () => {
+    // A listed worktree IS a root, so a source switch can seed `repoRoot`
+    // before the stats fetch lands and the branch switcher does not pop in
+    // late. The LIST's spelling is returned, not the caller's: that is what
+    // `mainWorktreePath` is compared against.
+    expect(rootOfWorktree('C:\\repo', worktrees)).toBe('C:/repo')
+    expect(rootOfWorktree('C:/repo/.agents/worktrees/demo', worktrees)).toBe('C:/repo/.agents/worktrees/demo')
+  })
+
+  it('answers nothing for a path the list does not name', () => {
+    // A session opened at a subdirectory is not a worktree the list knows;
+    // its root is git's to say, through the stats fetch. Guessing here (the
+    // path itself, say) would hide the switcher for exactly the session
+    // this exists to serve.
+    expect(rootOfWorktree('C:/repo/server', worktrees)).toBeUndefined()
+    expect(rootOfWorktree(undefined, worktrees)).toBeUndefined()
+    expect(rootOfWorktree('C:/repo', [])).toBeUndefined()
   })
 })

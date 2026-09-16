@@ -89,7 +89,7 @@ import {
   nextAction, nextBatch, pathsFor, settledTicks, withPendingTicks,
   type Tick, type TickAction,
 } from './stage-tree.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, samePath, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
+import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 export type * from './git-workbench-types.ts'
@@ -797,6 +797,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
       // EMPTY_STATS already means by "nowhere", not a missing value.
       worktreePath: statsPath ?? '',
       branch: branchOfWorktree(statsPath, worktreesRef.current) ?? '',
+      repoRoot: rootOfWorktree(statsPath, worktreesRef.current),
     })
   }, [statsPath])
 
@@ -1881,9 +1882,9 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               fallbackBranch={stats.branch}
               onSwitch={leaveSource}
             />
-            {/* Only where the viewed tree IS the main worktree: a linked one's
-                branch is the agent's, and the host refuses the call there too. */}
-            {samePath(mainWorktreePath, statsPath) ? (
+            {/* Only where the viewed tree's ROOT is the main worktree (a subdirectory
+                session is still in it); a linked one's branch is the agent's. */}
+            {samePath(mainWorktreePath, stats.repoRoot) ? (
               <BranchSwitcher
                 t={t} branches={branches} remoteBranches={remoteBranches} worktrees={worktrees}
                 truncated={branchesTruncated || remoteBranchesTruncated}

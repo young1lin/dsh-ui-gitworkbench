@@ -152,6 +152,16 @@ interface SessionStartEvent {
 
 export interface WorkbenchStats {
   readonly worktreePath: string
+  /**
+   * The repository root the view's paths are relative to: `--show-toplevel`
+   * of `worktreePath`, forward slashes. Set by `stats`, the working-tree
+   * view, where the header's branch switcher compares it against the main
+   * worktree's path — a session opened at a subdirectory is still the main
+   * worktree, and its `worktreePath` would never match. Omitted (never
+   * `undefined`: the value must stay JSON-safe) on the commit and compare
+   * views, which are not trees one switches, and on the error shape.
+   */
+  readonly repoRoot?: string
   readonly branch: string
   readonly ahead: number
   readonly behind: number
@@ -544,7 +554,9 @@ export class GitWorkbenchService extends TypertRemoteService {
 
 
     return {
-      worktreePath: cwd, branch, ahead, behind, detached,
+      // `root` is a real root here, not the cwd fallback: outside a
+      // repository `git status` failed above and the error shape went out.
+      worktreePath: cwd, repoRoot: root, branch, ahead, behind, detached,
       addedLines, deletedLines, addedFiles, deletedFiles, modifiedFiles,
       // No bundled patch: every per-file diff is fetched on demand. See the
       // reads above for what that saves and why it is affordable.
