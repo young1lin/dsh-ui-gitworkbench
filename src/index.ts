@@ -57,7 +57,7 @@ import {
   NETWORK_GRACE_MS, NON_INTERACTIVE_ENV, capBranches, capStderr, classifyFailure, clipDiff,
   commitArgv, countBufferLines, decodesAsUtf8, fetchArgv, isBinaryPrefix, isNoMergeBaseError,
   isSafePathArg, parseNameStatus, parseNumstat, parseStatus, parseTracking,
-  pullArgv, pushArgv, remoteOnlyBranches, stageArgv, stageStateOf, switchArgv, unstageArgv,
+  pullArgv, pushArgv, pushRemote, remoteOnlyBranches, stageArgv, stageStateOf, switchArgv, unstageArgv,
   type GitFile, type GitFileStatus, type MutableGitFile,
   type OpFailure, type PullMode, type Tracking,
 } from './git-ops.js'
@@ -1894,7 +1894,16 @@ export class GitWorkbenchService extends TypertRemoteService {
     const tracking = parseTracking(status.stdout)
     if (tracking.detached) return { ok: false, failure: 'unknown', error: 'HEAD is detached; nothing to push' }
     if (tracking.branch.length === 0) return { ok: false, failure: 'unknown', error: 'no branch to push' }
-    return this.writeOp(this.cwdOf(worktreePath), () => pushArgv(tracking.branch, tracking.upstream !== null), signal, NETWORK_GRACE_MS)
+    if (tracking.upstream !== null) return this.writeOp(cwd, () => pushArgv(tracking.branch, null), signal, NETWORK_GRACE_MS)
+    // A first push names its remote, and `origin` is only a convention of
+    // `git clone`: the repository's own remotes decide (`pushRemote`).
+    const [remotes, pushDefault] = await Promise.all([
+      this.git(cwd, ['remote'], signal),
+      this.git(cwd, ['config', '--get', 'remote.pushDefault'], signal),
+    ])
+    const chosen = pushRemote(remotes.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0), pushDefault.stdout.trim())
+    if (!chosen.ok) return { ok: false, failure: 'unknown', error: chosen.error }
+    return this.writeOp(cwd, () => pushArgv(tracking.branch, chosen.remote), signal, NETWORK_GRACE_MS)
   }
 
   /**

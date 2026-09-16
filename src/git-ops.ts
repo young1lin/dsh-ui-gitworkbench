@@ -118,15 +118,40 @@ export function pullArgv(mode: PullMode): string[] {
 
 /**
  * @param branch - the current branch, needed only on its first push.
- * @param hasUpstream - whether the branch already tracks a remote branch.
+ * @param remote - the remote a FIRST push publishes to ({@link pushRemote}),
+ *                 or null when the branch already tracks a remote branch.
  * @returns argv for `git`. With an upstream, bare `push` respects the user's
  *          own remote and refspec configuration; without one, the first push
- *          establishes `origin/<branch>`.
+ *          establishes `<remote>/<branch>`.
  */
-export function pushArgv(branch: string, hasUpstream: boolean): string[] {
-  if (hasUpstream) return ['push']
+export function pushArgv(branch: string, remote: string | null): string[] {
+  if (remote === null) return ['push']
   if (!isSafePathArg(branch)) throw new Error(`unsafe branch name: ${JSON.stringify(branch)}`)
-  return ['push', '--set-upstream', 'origin', branch]
+  if (!isSafePathArg(remote)) throw new Error(`unsafe remote name: ${JSON.stringify(remote)}`)
+  return ['push', '--set-upstream', remote, branch]
+}
+
+/**
+ * Where a first push goes.
+ *
+ * `origin` is what `git clone` names a remote, not what git requires: a
+ * clone whose remote was renamed, or a repository whose only remote was
+ * added by hand, has no `origin` — and `git push --set-upstream origin` there
+ * is a fatal error, while the sync bar had offered the button because
+ * `git remote` printed something. The order is git's own for a push with no
+ * upstream: `remote.pushDefault` when set, else `origin`; the one addition
+ * is a lone remote of any name, which is the only place the push could go.
+ * Several remotes and no origin is a real ambiguity, and the answer names
+ * them and the config key rather than picking one.
+ * @param remotes - `git remote` names.
+ * @param pushDefault - `remote.pushDefault`, or '' when unset.
+ */
+export function pushRemote(remotes: readonly string[], pushDefault: string): { ok: true; remote: string } | { ok: false; error: string } {
+  if (pushDefault.length > 0) return { ok: true, remote: pushDefault }
+  if (remotes.includes('origin')) return { ok: true, remote: 'origin' }
+  if (remotes.length === 1) return { ok: true, remote: remotes[0]! }
+  if (remotes.length === 0) return { ok: false, error: 'no remote to push to' }
+  return { ok: false, error: `no "origin" among remotes ${remotes.join(', ')}; set remote.pushDefault to choose one` }
 }
 
 /**

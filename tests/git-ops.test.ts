@@ -19,6 +19,7 @@ import {
   parseTracking,
   pullArgv,
   pushArgv,
+  pushRemote,
   remoteOnlyBranches,
   stageArgv,
   stageStateOf,
@@ -89,14 +90,15 @@ describe('network commands', () => {
     expect(pullArgv('merge')).toEqual(['pull', '--no-rebase'])
   })
 
-  it('sets the upstream on the first push of a branch', () => {
-    expect(pushArgv('feature/x', false)).toEqual(['push', '--set-upstream', 'origin', 'feature/x'])
-    expect(pushArgv('feature/x', true)).toEqual(['push'])
+  it('sets the upstream on the first push of a branch, at the remote it was given', () => {
+    expect(pushArgv('feature/x', 'origin')).toEqual(['push', '--set-upstream', 'origin', 'feature/x'])
+    expect(pushArgv('feature/x', 'upstream')).toEqual(['push', '--set-upstream', 'upstream', 'feature/x'])
+    expect(pushArgv('feature/x', null)).toEqual(['push'])
   })
 
   it('never force-pushes', () => {
-    for (const hasUpstream of [true, false]) {
-      const argv = pushArgv('main', hasUpstream)
+    for (const remote of [null, 'origin']) {
+      const argv = pushArgv('main', remote)
       expect(argv).not.toContain('--force')
       expect(argv).not.toContain('-f')
       expect(argv).not.toContain('--force-with-lease')
@@ -104,7 +106,43 @@ describe('network commands', () => {
   })
 
   it('refuses to push a branch whose name git would read as a flag', () => {
-    expect(() => pushArgv('--delete', false)).toThrow(/branch/i)
+    expect(() => pushArgv('--delete', 'origin')).toThrow(/branch/i)
+  })
+
+  it('refuses a remote whose name git would read as a flag', () => {
+    expect(() => pushArgv('main', '--mirror')).toThrow(/remote/i)
+  })
+
+  describe('pushRemote (where a first push goes)', () => {
+    it('is origin when the repository has one', () => {
+      expect(pushRemote(['upstream', 'origin'], '')).toEqual({ ok: true, remote: 'origin' })
+    })
+
+    it('is the only remote when origin is not among them', () => {
+      // A clone renamed to `upstream`, a mirror called `gh`: the button was
+      // shown (there IS a remote) and the push then failed on a name the
+      // repository never had.
+      expect(pushRemote(['upstream'], '')).toEqual({ ok: true, remote: 'upstream' })
+    })
+
+    it('honours remote.pushDefault over both', () => {
+      expect(pushRemote(['origin', 'gl'], 'gl')).toEqual({ ok: true, remote: 'gl' })
+    })
+
+    it('refuses to guess between several remotes without origin', () => {
+      const result = pushRemote(['gh', 'gl'], '')
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toContain('gh, gl')
+      expect(result.error).toContain('remote.pushDefault')
+    })
+
+    it('says so when there is no remote at all', () => {
+      const result = pushRemote([], '')
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/no remote/i)
+    })
   })
 
   it('turns off every credential prompt', () => {
