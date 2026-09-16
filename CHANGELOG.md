@@ -2,6 +2,12 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.22] - 2026-09-16
+
+### 修复
+
+- **workspace 开在仓库子目录时，头部没有分支切换器。** dsh 打开的是 `A/B`、`.git` 在 `A` 下：抽屉其余功能都正常（带路径的 RPC 全跑在仓库根，README 6.22），唯独切换器不出现、也不报错——客户端的门拿主工作树路径和**会话路径**比，`A` 不等于 `A/B`，控件根本不渲染；而宿主的 `switchBranch` 先解析根再判断主工作树，本来就接受这个调用。现在门比的是所看那棵树的**根**：`stats`（轮询的工作树调用，本就为读未跟踪文件解析了 `--show-toplevel`）多返回一个 `repoRoot`，零额外 spawn，面板拿它与 `mainWorktreePath` 比；切换源时从 worktree 列表预填（`rootOfWorktree`，`branchOfWorktree` 的同胞），大仓库上控件不会晚几秒才弹入，子目录会话不在列表里、等 git 的答案。守卫 `tests/switcher-gate.test.ts`（剥注释源扫描，钉门只比 `stats.repoRoot`、不碰任何会话路径，两个变异体验证全红）；`tests/branch-switch.git.test.ts` 钉住比较所依赖的 git 事实——子目录下的 `show-toplevel` 与 `worktree list` 对主路径拼写一致、linked worktree 的根是它自己。实机探针 `scripts/verify_subdir_switch.py`（本地）在 `gitworkbench-fixture/samples/go` 注册 workspace 复现全程：切换器出现、从子目录会话切分支改动随行、linked worktree 源仍隐藏。
+
 ## [0.1.21] - 2026-09-14
 
 ### 新增

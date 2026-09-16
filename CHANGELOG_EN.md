@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.22] - 2026-09-16
+
+### Fixed
+
+- **A workspace opened at a subdirectory of the repository had no branch switcher.** dsh at `A/B` with the `.git` in `A`: everything else in the drawer worked (path-carrying RPCs all run at the repository root, README 6.22), only the switcher never appeared, and nothing said why — the client gate compared the main worktree's path with the SESSION path, `A` is not `A/B`, and the control was simply not rendered, while the host's own `switchBranch` resolves the root before judging the main worktree and would have accepted the call. The gate now compares the ROOT of the viewed tree: `stats` (the polled working-tree call, already resolving `--show-toplevel` for its untracked reads) reports it as `repoRoot` at no extra spawn, and the panel compares that with `mainWorktreePath`. A source switch seeds it from the worktree list (`rootOfWorktree`, the sibling of `branchOfWorktree`) so the control does not pop in seconds later on a large repository; a subdirectory session is not a listed worktree and waits for git's answer. Guards: `tests/switcher-gate.test.ts` (comment-stripped source scan pinning that the gate compares `stats.repoRoot` and never a session path; both mutants go red) and `tests/branch-switch.git.test.ts` for the git fact the comparison rests on — `show-toplevel` from a subdirectory and `worktree list` spell the main path identically, and a linked worktree's root is its own path. The live probe `scripts/verify_subdir_switch.py` (local) registers a workspace at `gitworkbench-fixture/samples/go` and walks the whole scenario: the switcher renders, a switch from the subdirectory session carries the edits, a linked worktree source still hides it.
+
 ## [0.1.21] - 2026-09-14
 
 ### Added

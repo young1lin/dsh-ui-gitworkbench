@@ -1,6 +1,6 @@
 # write-ops Overview
 
-> last_verified_commit: 418c470
+> last_verified_commit: ba48ced
 > source_packages:
 > - src/git-ops.ts、src/client/stage-tree.ts、src/client/op-feedback.ts（+ src/index.ts 的 write ops 区）
 
@@ -35,7 +35,7 @@ sequenceDiagram
 - **syncStatus 读 `git status` 而非 `rev-list --count`**：'没配 upstream' 和 '与 upstream 齐平' 计数都是 0，只有前者决定 push 参数
 - **防挂死**：`NON_INTERACTIVE_ENV`（GIT_TERMINAL_PROMPT=0 / GCM_INTERACTIVE=never / askpass 置空）——stdin:'ignore' 把交互提示变成没人能答的等待，挂在宿主进程里；网络操作 grace 120s
 - **失败说人话**：`classifyFailure` 把 exit/stderr 归类 auth/no-upstream/diverged/conflict/nothing-to-commit/dirty，原文随行（归类是提示不替代证据）；`capStderr` 截断保首尾（1200 封顶）——git 把归类关键词放 stderr 头部、文件列表放其后，尾截会把关键词推出窗口（分支切换器的实机探针抓到过，六文件即触发）
-- **切分支只在主工作树**（`switchBranch`）：宿主 `isMainWorktree`（`--git-dir` ≡ `--git-common-dir`，都要 `--path-format=absolute`——子目录下后者印相对路径）拒绝 linked worktree 的调用，客户端同步隐藏控件；`switchArgv` 本地选中带 `--no-guess`（本地行只指本地分支）、远端选中 `-c --track`（创建并跟踪），永不 `--force`/`-C`/`--discard-changes`——带不动的改动 git 拒绝、归类 dirty，改动无损
+- **切分支只在主工作树**（`switchBranch`）：宿主 `isMainWorktree`（`--git-dir` ≡ `--git-common-dir`，都要 `--path-format=absolute`——子目录下后者印相对路径）拒绝 linked worktree 的调用，客户端同步隐藏控件——门比的是所看树的**根**（`samePath(mainWorktreePath, stats.repoRoot)`），不是会话路径：workspace 开在仓库子目录 `A/B` 时 `A ≠ A/B`，比路径会把宿主接受的调用藏掉（README §6.26；守卫 `tests/switcher-gate.test.ts` 剥注释源扫描 + 变异验证）；`switchArgv` 本地选中带 `--no-guess`（本地行只指本地分支）、远端选中 `-c --track`（创建并跟踪），永不 `--force`/`-C`/`--discard-changes`——带不动的改动 git 拒绝、归类 dirty，改动无损
 - **锁是 ref 不是 state**：`busyRef` 防 drain 循环内闭包看不到彼此（handoff Task 1 踩过）；源切换 epoch 退役旧 drain
 
 ## Code Location

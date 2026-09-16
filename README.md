@@ -494,7 +494,7 @@ git 的两种「路径」只在仓库根相等：`git status --porcelain` 和 `g
 `tests/repo-root.git.test.ts` 把 git 侧行为逐条钉死（子目录下 pathspec 匹配不到、
 `ls-tree` 剥前缀、`hash-object` 双前缀报错——git 哪天改了行为它会先叫）；
 `tests/host-rooted-paths.test.ts` 源码扫描钉布线（先剥注释；断言带 path 的 @Remote
-恰好十个、每个方法体内必须出现 `rootedDirOf`；已做变异测试，改掉一个方法它会点名）。
+恰好十一个、每个方法体内必须出现 `rootedDirOf`；已做变异测试，改掉一个方法它会点名）。
 
 ### 6.23 「永远 modified」的 CRLF 幻影：status 列着 M、diff 永远为空
 
@@ -527,6 +527,9 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 
 ### 6.25 sticky 只对最近的滚动容器负责；CodeMirror 的面板要指 topContainer，且条只认它搜的那列
 `position: sticky` 解析到**最近的滚动容器**——任何 `overflow` 非 `visible` 的元素都算（并排列的 `overflow-x: auto` 就算），不一定是真正滚动的那个（`.sideScroll`）。CodeMirror 把查找面板 `.cm-panels` 挂成 `.cm-editor` 的第一个子节点并 `sticky; top: 0`，于是并排面板里面板粘在列上：列和文件一样高、纵向永远不滚，面板随第 1 行滚出视野（Enter 找到下一个命中、输入框没了），面板高度还把右列压低而左列不动、行对齐破掉；Files 页没有这问题（`.fbBody` 既是父级也是滚动容器）。修法是库自带的 `panels({ topContainer })`：面板挂进 `SideFindSeat`（`DiffFindBar.tsx`），位于 `.sideScroll` 上方、**只压工作树列**——条搜的是缓冲区，横跨两列等于谎报搜索范围；行镜像 `.sideCols` 的几何（split 占位 + 与 `.paneDivider` 等宽的槽 + 宿主，`css-modules.test.ts` 把三处 7px 绑在一起），右侧让出 `.sideScroll` 的滚动条槽（`use-scroll-gutter.ts` 量 `offsetWidth - clientWidth`）。两处易漏：计数插件的 `querySelector` 要先查宿主再回落 `view.dom`，否则 `3/128` 消失；Ctrl/Cmd+F 只能在未武装时交给 `DiffFindBar`（CodeMirror 不吞武装后的键，不设卫会两个查找同时开）。守卫 `tests/find-panel-host.test.ts`（剥注释源扫描 + 变异验证），实机探针 `scripts/verify_side_find.py`（本地）。
+
+### 6.26 「是不是主工作树」宿主和客户端各判一次，答案必须来自同一个东西：树的根
+主工作树的判断有两处。宿主 `switchBranch` 先 `rootedDirOf` 再 `isMainWorktree`——子目录会话解析到根、判为主树、接受调用。客户端决定渲染与否的门若拿 `mainWorktreePath`（`git worktree list` 首行 = 仓库根）与 `statsPath`（会话打开的目录）比，`A` ≠ `A/B`，控件不渲染、不报错、无从发现——宿主能做的事被 UI 藏掉，比拒绝更糟（用户实报：dsh 开在子目录 B，`.git` 在上层 A）。规则：门比的是所看那棵树的**根**，`stats.repoRoot`（`--show-toplevel`；`stats` 为读未跟踪文件本就解析了它，返回不多花 spawn），与 `mainWorktreePath` 走 `samePath`——一个来自 `worktree list`、一个来自 `show-toplevel`，两者拼写一致是 git 契约，`tests/branch-switch.git.test.ts` 钉住。切源时用 `rootOfWorktree` 从 worktree 列表预填 `repoRoot`，否则占位 stats 没有根、切换器要等 stats 抓完（大仓库以秒计）才弹入；子目录不在列表里，就等 git 的答案——猜「路径本身」会把它藏回去。**不要走客户端前缀匹配**（「`statsPath` 以 `mainWorktreePath` 开头」）：本仓库的 worktree 就建在 `<root>/.agents/worktrees/` **之内**，前缀法会把 linked worktree 认成主树；嵌套的另一个仓库同理——哪棵树归谁只有 git 说了算。守卫 `tests/switcher-gate.test.ts`（剥注释源扫描，钉门只比 `stats.repoRoot`、不碰 `statsPath`/`sessionPath`/`stats.worktreePath`，变异验证）；实机探针 `scripts/verify_subdir_switch.py`（本地，在 fixture 的 `samples/go` 注册 workspace 复现并自清理）。
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）
 
