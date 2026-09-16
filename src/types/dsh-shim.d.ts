@@ -25,14 +25,15 @@ declare module '@deepseek-ai/cordis' {
      * per-assembly contribution, whose `text` provider is SYNCHRONOUS (see the
      * real `PromptContext` in packages/core/system-prompt/src/index.ts). The
      * `agent` field on the assemble context is merged in by `dsh-agent`; its
-     * session header carries the parent edge a subagent is born with
-     * (`SessionHeader.parentSession` in packages/core/session).
+     * session header carries the directory the session opened and the parent
+     * edge a subagent is born with (`SessionHeader.cwd` / `.parentSession` in
+     * packages/core/session; `cwd` is validated absolute there).
      */
     systemPrompt: {
       context(input: {
         name: string
         order: number
-        text: (context: { agent?: { session: { id: string; header?: { parentSession?: string } } } }) => string
+        text: (context: { agent?: { session: { id: string; header?: { cwd?: string; parentSession?: string } } } }) => string
       }): () => void
     }
     /** Mount a child scope once the named services are available; loose here, see file header. */

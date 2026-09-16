@@ -80,7 +80,7 @@ import {
   type StyleEntry, type StyleFile,
 } from './style-store.js'
 import {
-  bindingNotice, bindingsPath, findRegisteredWorktree, isRefName, lineageEdgeOf, loadBindings, mainWorktreePath, parseWorktreeList, resolveEffectiveBinding, resolveEnterBranch, sanitizeName, saveBindings, worktreeDir,
+  bindingNotice, bindingsPath, findRegisteredWorktree, isRefName, lineageEdgeOf, loadBindings, mainWorktreePath, parseWorktreeList, resolveEffectiveBinding, resolveEnterBranch, sanitizeName, saveBindings, worktreeDir, worktreeRel,
   type BindingsFile, type WorktreeBinding, type WorktreeEntry, type WorktreeOpResult,
 } from './worktree.js'
 
@@ -343,10 +343,10 @@ export class GitWorkbenchService extends TypertRemoteService {
    *
    * The binding is a CONVENTION, not an enforced boundary: `session.header.cwd`
    * is immutable, so the filesystem and shell tools keep resolving against the
-   * repository root whatever this session is bound to. A one-shot hint in the
-   * `worktree_enter` result decays — compaction can prune it, and the `cwd`
-   * prompt variable goes on naming the repo root every turn. A standing context
-   * is what keeps the convention in front of the model.
+   * directory the session opened whatever this session is bound to. A one-shot
+   * hint in the `worktree_enter` result decays — compaction can prune it, and
+   * the `cwd` prompt variable goes on naming that directory every turn. A
+   * standing context is what keeps the convention in front of the model.
    *
    * Registered as dynamic CONTEXT rather than a stable section: the value is
    * per-session and mutable, so it belongs in the per-request runtime snapshot
@@ -370,7 +370,10 @@ export class GitWorkbenchService extends TypertRemoteService {
           }
           const effective = resolveEffectiveBinding(session.id, this.parentOf, id => this.bindingMirror.get(id))
           if (effective === undefined) return ''
-          return bindingNotice(effective.binding.name, effective.binding.branch, effective.inherited)
+          // The prefix is relative to THIS session's cwd, which may be a
+          // subdirectory of the repository the worktree hangs off.
+          const { binding } = effective
+          return bindingNotice(binding.name, binding.branch, effective.inherited, worktreeRel(session.header?.cwd ?? binding.repoRoot, binding.worktreePath))
         },
       })
     })
@@ -417,12 +420,13 @@ export class GitWorkbenchService extends TypertRemoteService {
 
     ctx.tools.register(defineTool({
       name: 'worktree_enter',
-      description: 'Enter (create or reuse) an isolated git worktree at .agents/worktrees/<name> — the directory is '
+      description: 'Enter (create or reuse) an isolated git worktree at <repository root>/.agents/worktrees/<name> — the directory is '
         + 'always derived from the name (there is no dir parameter), the branch defaults to the name '
         + '(or pass branch to choose one — unlike the name it may contain slashes, e.g. feature/foo), '
-        + 'and the session is bound to it. After entering, address the worktree relatively from the session cwd: '
-        + 'for shell commands pass workdir ".agents/worktrees/<name>" (per-call workdir is supported and resolved '
-        + 'against the session cwd); for file tools use paths prefixed with .agents/worktrees/<name>/. '
+        + 'and the session is bound to it. After entering, address the worktree relatively from the session cwd '
+        + 'using the prefix spelled in the returned hint (".agents/worktrees/<name>" from the repository root, '
+        + '"../.agents/worktrees/<name>" from a subdirectory): for shell commands pass it as workdir (per-call workdir '
+        + 'is supported and resolved against the session cwd); for file tools prefix every path with it. '
         + 'Call with no name to auto-generate one. Use worktree_exit to leave.',
       parameters: {
         name: { type: 'string', description: 'Optional worktree name: letters, digits, . _ - + (must start alphanumeric, max 64 chars; ".." and a trailing dot are refused). The name doubles as the default branch — pass branch to split them (no prefix is added either way). If the target directory already holds a registered worktree (e.g. one made by another tool), it is reused as-is with its own branch. Auto-generated when omitted or illegal.' },
@@ -1499,7 +1503,10 @@ export class GitWorkbenchService extends TypertRemoteService {
       await io.save(file)
       this.bindingMirror.set(sessionId, binding)
     })
-    const rel = `.agents/worktrees/${wtName}`
+    // Relative to the SESSION cwd, not the repository root: a session opened
+    // at a subdirectory reaches the worktree through `..`, and the bare
+    // `.agents/worktrees/<name>` would send its file tools into the main tree.
+    const rel = worktreeRel(cwd, dir)
     return {
       ok: true, worktreePath: dir, branch,
       hint: `Session bound to worktree "${wtName}" (branch ${branch}) at ${rel}/. For shell commands pass workdir "${rel}" (per-call workdir is supported and resolved against the session cwd); for file tools use paths relative to the session cwd prefixed with ${rel}/. Call worktree_exit to unbind.${reusedWorktree ? ` Note: reused the worktree already registered there; its branch ${branch} was kept.` : ''}${choice.branchOverridden ? ` Note: requested branch ${branchName} was not used; the reused worktree keeps its branch ${branch}.` : ''}${reusedBranch ? ` Note: reused existing branch ${branch} (carries its prior commits).` : ''}`,

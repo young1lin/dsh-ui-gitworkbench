@@ -1,5 +1,5 @@
 // src/worktree.ts — Task 1 delivers only the binding storage; later tasks append.
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { saveJsonAtomic } from './atomic-json.js'
 
 export interface WorktreeBinding {
@@ -314,6 +314,30 @@ export function lineageEdgeOf(header: { readonly parentSession?: string } | unde
 }
 
 /**
+ * The worktree's path relative to the session's working directory — the
+ * prefix the agent puts on every path it means to land in the worktree.
+ *
+ * The worktree lives under the REPOSITORY root (`<root>/.agents/worktrees/
+ * <name>`), and the session may have opened a subdirectory of it. From
+ * `<root>/server` the bare spelling `.agents/worktrees/<name>` names a
+ * directory that does not exist, and an agent told to prefix paths with it
+ * would create files at `<root>/server/.agents/worktrees/<name>/…` — inside
+ * the MAIN tree, untracked, while believing it was working in the worktree.
+ * Every hint and the standing notice therefore spell the prefix the caller
+ * resolved here, never one derived from the name alone.
+ *
+ * Forward slashes on every platform: the result is prose for the model, and
+ * `node:path` resolves either spelling on Windows.
+ * @param cwd - the directory the session opened, in the platform's spelling.
+ * @param worktreePath - the worktree's directory, as the binding records it.
+ * @returns a relative path, `.` when the session already sits in the worktree.
+ */
+export function worktreeRel(cwd: string, worktreePath: string): string {
+  const rel = relative(cwd.replace(/\\/g, '/'), worktreePath.replace(/\\/g, '/')).replace(/\\/g, '/')
+  return rel.length === 0 ? '.' : rel
+}
+
+/**
  * The standing notice for a session's effective binding — the text the
  * `worktree:binding` prompt context returns. Both variants carry the same two
  * operational rules; what differs is who holds the binding, and the inherited
@@ -322,9 +346,9 @@ export function lineageEdgeOf(header: { readonly parentSession?: string } | unde
  * @param name - worktree name (also the directory under `.agents/worktrees/`).
  * @param branch - branch checked out there, when known.
  * @param inherited - whether an ancestor, not this session, holds the binding.
+ * @param rel - the worktree relative to the session cwd ({@link worktreeRel}).
  */
-export function bindingNotice(name: string, branch: string | undefined, inherited: boolean): string {
-  const rel = `.agents/worktrees/${name}`
+export function bindingNotice(name: string, branch: string | undefined, inherited: boolean, rel: string): string {
   const branchNote = branch === undefined ? '' : ` (branch ${branch})`
   const opening = inherited
     ? `This session works in git worktree "${name}"${branchNote}, entered by its parent session.`
@@ -334,7 +358,7 @@ export function bindingNotice(name: string, branch: string | undefined, inherite
       + '(The binding belongs to the parent session; worktree_exit here would not unbind it.)'
     : 'A path without that prefix acts on the MAIN worktree, not the bound one. Call worktree_exit to unbind.'
   return `${opening}\n`
-    + 'The session working directory is still the repository root, so the binding is a convention you must apply yourself:\n'
+    + 'The session working directory is unchanged, so the binding is a convention you must apply yourself:\n'
     + `- shell commands: pass workdir "${rel}"\n`
     + `- file tools: prefix every path with ${rel}/\n`
     + closing

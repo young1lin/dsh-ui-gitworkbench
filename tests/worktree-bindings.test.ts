@@ -1,7 +1,7 @@
 // tests/worktree-bindings.test.ts
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { bindingNotice, bindingsPath, lineageEdgeOf, parseBindings, resolveEffectiveBinding, saveBindings, type BindingsFile } from '../src/worktree'
+import { bindingNotice, bindingsPath, lineageEdgeOf, parseBindings, resolveEffectiveBinding, saveBindings, worktreeRel, type BindingsFile } from '../src/worktree'
 
 describe('bindingsPath', () => {
   it('puts the file under ~/.dsh', () => {
@@ -196,17 +196,50 @@ describe('lineageEdgeOf (header parent edge)', () => {
   })
 })
 
+describe('worktreeRel (the prefix the agent applies)', () => {
+  it('is the bare .agents path from a session opened at the repository root', () => {
+    expect(worktreeRel('C:/repo', 'C:/repo/.agents/worktrees/x')).toBe('.agents/worktrees/x')
+  })
+
+  it('climbs out of a subdirectory session first', () => {
+    // The worktree lives under the REPOSITORY root; a session opened at a
+    // subdirectory reaches it through `..` — the bare spelling names a
+    // directory that does not exist there.
+    expect(worktreeRel('C:/repo/server', 'C:/repo/.agents/worktrees/x')).toBe('../.agents/worktrees/x')
+    expect(worktreeRel('/repo/a/b', '/repo/.agents/worktrees/x')).toBe('../../.agents/worktrees/x')
+  })
+
+  it('reads the session cwd in the platform spelling and answers in forward slashes', () => {
+    expect(worktreeRel('C:\\repo\\server', 'C:/repo/.agents/worktrees/x')).toBe('../.agents/worktrees/x')
+    expect(worktreeRel('C:\\repo\\', 'C:/repo/.agents/worktrees/x')).toBe('.agents/worktrees/x')
+  })
+
+  it('names the directory itself when the session already sits in the worktree', () => {
+    expect(worktreeRel('C:/repo/.agents/worktrees/x', 'C:/repo/.agents/worktrees/x')).toBe('.')
+  })
+})
+
 describe('bindingNotice (standing prompt text)', () => {
   it('own variant names the worktree and offers worktree_exit', () => {
-    const text = bindingNotice('feature-x', 'feature-x', false)
+    const text = bindingNotice('feature-x', 'feature-x', false, '.agents/worktrees/feature-x')
     expect(text).toContain('This session is bound to git worktree "feature-x" (branch feature-x).')
     expect(text).toContain('pass workdir ".agents/worktrees/feature-x"')
     expect(text).toContain('prefix every path with .agents/worktrees/feature-x/')
     expect(text).toContain('Call worktree_exit to unbind.')
   })
 
+  it('spells the prefix the caller resolved, not one derived from the name', () => {
+    // A session opened at a subdirectory of the repository: the prefix
+    // climbs first. The notice must not claim the cwd is the repository
+    // root, because for this session it is not.
+    const text = bindingNotice('feature-x', 'feature-x', false, '../.agents/worktrees/feature-x')
+    expect(text).toContain('pass workdir "../.agents/worktrees/feature-x"')
+    expect(text).toContain('prefix every path with ../.agents/worktrees/feature-x/')
+    expect(text).not.toContain('repository root')
+  })
+
   it('inherited variant credits the parent and never offers worktree_exit', () => {
-    const text = bindingNotice('feature-x', undefined, true)
+    const text = bindingNotice('feature-x', undefined, true, '.agents/worktrees/feature-x')
     expect(text).toContain('entered by its parent session.')
     // The caller cannot unbind a parent's binding — offering exit would send
     // the model into a call that always fails.
