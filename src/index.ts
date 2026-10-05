@@ -47,9 +47,15 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolRunContext, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+// Type edge only: pulls the `subprocess` service augmentation onto cordis
+// `Context` (the service itself is provided by the host at runtime).
+import type {} from '@deepseek-ai/dsh-subprocess'
 import { runApplyBlocks, sha1Hex, type ApplyBlocksIo } from './apply-blocks.js'
+
+/** Structural twin of @deepseek-ai/dsh-util-values' JsonValue (not re-exported by dsh-tools). */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 import { saveJsonAtomic } from './atomic-json.js'
 import { runWriteChecked, type WriteCheckedIo, type WriteResult } from './write-checked.js'
 import { CommitPayloadCache, cacheKey } from './commit-cache.js'
@@ -391,7 +397,7 @@ export class GitWorkbenchService extends TypertRemoteService {
    * its no-session early return still validates.
    */
   private registerWorktreeTools(ctx: Context): void {
-    const output = (schema: Record<string, unknown>) => ({
+    const output = <const S extends ValueSchemaSpec>(schema: S) => ({
       schema,
       render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
     })
@@ -476,7 +482,16 @@ export class GitWorkbenchService extends TypertRemoteService {
       execute: async (_args: Record<string, never>, exec: ToolRunContext) => {
         const session = exec.agent?.session
         if (session === undefined) return { ok: false, error: 'worktree tools require a calling session' }
-        return this.worktreeStatus(session.id, session.header.cwd ?? '', exec.signal)
+        const result = await this.worktreeStatus(session.id, session.header.cwd ?? '', exec.signal)
+        // STATUS_SCHEMA spells the two structured faces as loose object nodes
+        // (additionalProperties: true) for forward compatibility; the typed
+        // interfaces are plain JSON at runtime, so widening them here is
+        // representation-only (the runtime wrapper casts to JsonValue anyway).
+        return {
+          ...result,
+          binding: result.binding as Record<string, JsonValue> | null,
+          worktrees: result.worktrees as unknown as Record<string, JsonValue>[],
+        }
       },
       presentCall: () => ({ card: 'generic', title: 'Worktree status', kind: 'read' }),
     }))

@@ -14,9 +14,14 @@
  * `inject` face (the dsh pattern: business callbacks cross from apply-scope to
  * component via the inject factory, never through a global ctx).
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type {} from '@deepseek-ai/dsh-client-runtime' // informational inject edge (loading order)
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-slots' // SlotMap is reused, not extended
+// Service type edges: each `/client` types entry augments cordis `Context`
+// with its service member (`slots` lives on the renderer package) and merges
+// the upstream `SlotMap` (ui-conversation owns 'conversation.session.header.actions').
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
