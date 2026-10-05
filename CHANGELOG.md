@@ -2,6 +2,12 @@
 
 本文件记录面向使用者的变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.24] - 2026-10-05
+
+### 变更
+
+- **类型全面切换到真实安装的 @deepseek-ai 包，构建链自洽。** 宿主半此前靠手写的宽松 ambient shim 编译，客户端半对着从未安装的包做检查——harness 真实签名变动时两边都无从察觉；且宿主用到的 cordis/dsh-tools/dsh-typert-protocol 只通过本机 `~/.dsh/profiles` 软链解析，干净安装（CI 的 `pnpm install --frozen-lockfile`）直接找不到模块。现在 devDependencies 显式钉住十个包（dsh 系 0.2.0-rc.2、cordis 4.0.4），宿主 shim 只剩 tsconfig include 需要的占位；两个「读了但不导入」的类型增强以 `import type {}` 边缘显式入程序：`systemPrompt`（cordis `Context` 成员，唯一声明在 dsh-system-prompt）与 prompt 装配上下文的 `agent`（唯一声明在 dsh-agent）。客户端的 Context 服务成员改由各包 `/client` 入口以 cordis 增强提供，`dsh-client-runtime` 退出 inject 列表与 peerDependencies。使用者可见的只有 peer 范围收紧：slots/tools/typert-protocol → `^0.2.0-rc.2`（与 devDependencies 同源）。工具 output helper 顺带按 dsh-tools 的 `ValueSchemaSpec` 泛型化，`worktree_status` 工具体把 `binding`/`worktrees` 展宽为纯 JSON 记录（schema 本就按宽松对象节点声明，仅类型表示）。守卫：干净目录 frozen-lockfile 安装 + 双 tsconfig typecheck 全绿——本机 profile 软链曾掩盖缺依赖，沙箱复现后修复。
+
 ## [0.1.23] - 2026-09-17
 
 ### 修复

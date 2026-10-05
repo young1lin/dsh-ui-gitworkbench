@@ -351,13 +351,13 @@ window.__ModuleLoader__.load({ id: "@young1lin/dsh-ui-gitworkbench", factory: (r
 由 `tsdown.config.ts` 的 `outputOptions.banner/footer/intro` 注入。`react`/`react/jsx-runtime`/`@deepseek-ai/cordis` 等是 **external**（运行时由 loader 的冻结模块表 `require` 提供，**不进 node_modules 解析**）。`@deepseek-ai/*` 的 import 必须是**纯类型**（`import type`，编译时擦除），否则会被 bundle 纯度门拒绝。
 
 ### 6.5 `.npmrc` 必须关掉 auto-install-peers
-`package.json` 的 `peerDependencies` 写了 `@deepseek-ai/*: "*"`。pnpm 默认会自动装 peer，于是去 npm 拉 `@deepseek-ai/dsh-client-runtime` 及其传递依赖——而有些包**没公开发布**（如 `dsh-compact`）→ 404。`.npmrc` 里 `auto-install-peers=false` + `strict-peer-dependencies=false` 解决。这些包**运行时由 web profile 提供**（`healProfilesModuleFallback` 把所有内置包软链进 `~/.dsh/profiles/node_modules`），本地不需要装。
+`package.json` 的 `peerDependencies` 是**真实版本范围**（dsh 系 `^0.2.0-rc.2`、cordis `^4.0.1-rc.1`；为什么不能写 `*` 见 6.14）。pnpm 默认会自动装 peer，等于去拉**整棵** @deepseek-ai 树及其传递依赖——有些包**没公开发布**（如 `dsh-compact`）→ 404，且这些包**运行时由 web profile 提供**（`healProfilesModuleFallback` 把所有内置包软链进 `~/.dsh/profiles/node_modules`），消费者树里本来就不需要。`.npmrc` 里 `auto-install-peers=false` + `strict-peer-dependencies=false` 解决。类型所需的十个包由 devDependencies **显式**安装（见 6.7）——这与 peer 自动安装是两回事，别为了「让 peer 解析」打开它。
 
 ### 6.6 CSS Modules 要自己 vendor lightningcss 插件
 树外的 tsdown 没有 monorepo 那套 CSS Modules 插件。`tsdown.config.ts` 里 vendored 了 `dsh-css-modules-inline` 插件（`resolveId` 拦截 `*.module.css` → `load` 用 `lightningcss` 编译 → 注入 `<style data-plugin="...">` + 导出 class map）。所以需要 `pnpm add -D lightningcss`。组件里 `import css from './X.module.css'`。
 
-### 6.7 ambient shim 让 tsc 在缺包时编译
-宿主半 `import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'` 是**值 import**（不是 type-only），但本地没装这个包。`src/types/dsh-shim.d.ts` 用 `declare module` 给 cordis/subprocess/typert-protocol 写**宽松的类型**，让 tsc 能转译。tsconfig 要 `"types": ["node"]`（提供 `process`/`AbortSignal`）、`"experimentalDecorators": false`（stage-3）、`"strict": false`、`"noEmitOnError": false`。
+### 6.7 类型来自真实安装的 @deepseek-ai 包；宿主 shim 只剩占位
+宿主半 `import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'` 是**值 import**（不是 type-only），devDependencies 显式安装 cordis / dsh-tools / dsh-typert-protocol / dsh-subprocess / dsh-system-prompt / dsh-agent（dsh 系 0.2.0-rc.2、cordis 4.0.4），tsc 对着**真实类型**转译；`src/types/dsh-shim.d.ts` 只为 tsconfig 的 `include` 条目保留占位。两个「代码读了但没导入」的类型增强必须以 `import type {} from ...` 边缘显式入程序，否则 tsc 看不见成员：`ctx.systemPrompt`（唯一声明在 dsh-system-prompt 的 cordis 增强）与装配上下文的 `context.agent`（唯一声明在 dsh-agent 的 AssembleContext 增强）。注意 dsh-tools 的入口**值导入**未安装的 peer（dsh-scope 等），在本仓外 `require('@deepseek-ai/dsh-tools')` 会 `MODULE_NOT_FOUND`——`tests/worktree-status-schema.test.ts` 的真校验收卫因此只在 dsh 自家树在场的机器上跑，常驻的 schema 键相等扫描不受影响。tsconfig 要点：`"types": ["node"]`、`"experimentalDecorators": false`（stage-3）、`"skipLibCheck": true`（dsh 包的 .d.ts 引用未安装的 peer）。
 
 ### 6.8 路径参数用纯标识符
 `@Remote` 方法在 SRC 发现模式下，gateway **靠 `Function.prototype.toString` 读参数名**。所以参数必须是**裸标识符**（不能解构/默认值/rest），且 `signal`（若要取消）必须放**最后**。`stats(worktreePath, signal)` 是合法的；SRC 下 `worktreePath` 可省略（客户端传 `{args:{}}`）。

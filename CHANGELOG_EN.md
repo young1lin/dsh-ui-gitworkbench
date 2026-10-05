@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.24] - 2026-10-05
+
+### Changed
+
+- **Typing now runs entirely against the real, installed @deepseek-ai packages, and the build is self-contained.** The host half compiled against hand-written ambient shims and the client half type-checked against packages it never installed, so neither could notice when the harness's real signatures moved; worse, the host's cordis/dsh-tools/dsh-typert-protocol resolved only through this machine's `~/.dsh/profiles` junctions, and a clean install (CI's `pnpm install --frozen-lockfile`) could not find the modules at all. devDependencies now pin ten packages explicitly (the dsh line at 0.2.0-rc.2, cordis 4.0.4) and the host shim is a placeholder kept only for tsconfig's include entry; two augmentations the code reads without importing are wired with explicit `import type {}` edges: `systemPrompt` (the cordis `Context` member, declared only in dsh-system-prompt) and the prompt assembly context's `agent` (declared only in dsh-agent). The client's Context service members come from each package's `/client` entry as cordis augmentations, which retires `dsh-client-runtime` from the inject list and the peers. What a consumer sees is only the tightened peer ranges: slots/tools/typert-protocol → `^0.2.0-rc.2` (same source as devDependencies). The tool output helper goes generic over dsh-tools' `ValueSchemaSpec`, and the `worktree_status` tool body widens `binding`/`worktrees` to plain JSON records (the schema already declared both as loose object nodes — representation only). Guard: a scratch checkout with a frozen-lockfile install and both tsconfigs green — the profile junctions had masked the missing dependencies until a sandbox reproduction caught it.
+
 ## [0.1.23] - 2026-09-17
 
 ### Fixed
