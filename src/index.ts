@@ -52,6 +52,13 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 // Type edge only: pulls the `subprocess` service augmentation onto cordis
 // `Context` (the service itself is provided by the host at runtime).
 import type {} from '@deepseek-ai/dsh-subprocess'
+// Type edge only: `systemPrompt` is augmented onto cordis `Context` by this
+// package and nowhere else — without the edge the member is invisible to tsc.
+import type {} from '@deepseek-ai/dsh-system-prompt'
+// Type edge only: dsh-agent merges `agent` onto the prompt assembly context
+// at runtime and declares the matching augmentation; the assemble callback
+// below reads it, so the edge must be in the program for tsc to see the field.
+import type {} from '@deepseek-ai/dsh-agent'
 import { runApplyBlocks, sha1Hex, type ApplyBlocksIo } from './apply-blocks.js'
 
 /** Structural twin of @deepseek-ai/dsh-util-values' JsonValue (not re-exported by dsh-tools). */
