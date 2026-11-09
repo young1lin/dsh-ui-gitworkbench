@@ -538,6 +538,9 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 ### 6.28 首次 push 的 remote 不能写死 `origin`：`origin` 是 `git clone` 的习惯，不是 git 的要求
 分支无 upstream 时 argv 曾写死 `push --set-upstream origin <branch>`，而同步条只要 `git remote` 有输出就显示 push 按钮：remote 改过名的 clone、手动 `remote add upstream` 的仓库，按钮照常出现、点下去 git 报 `'origin' does not appear to be a git repository`。规则：`pushRemote(remotes, pushDefault)`（git-ops.ts）决定去处，顺序照 git 自己对无 upstream 分支的顺序——`branch.<name>.pushRemote`、其次 `remote.pushDefault`、再 `origin`——再加一条 git 不猜但抽屉可以猜的：只有一个 remote 就是它；多个且无 origin 才拒绝，并把 remote 名和该设的配置键写进错误；配置指向的名字不在 remote 列表里（`remote rename` 后的陈旧值）同样拒绝并点名配置键，不把 git 的 `does not appear to be a git repository` 直接甩给用户。`pushArgv(branch, remote | null)`：null 表示已有 upstream、仍是裸 `push`（尊重用户自己的 push 配置）；remote 名同分支名一样过 `isSafePathArg`，以 `-` 开头的名字不能变成参数。RPC 只在无 upstream 的路径上并行问 `git remote`、`git config --get branch.<name>.pushRemote` 与 `remote.pushDefault`（未设时 exit 1、stdout 空，当 '' 用；分支键优先——`tests/push-remote.git.test.ts` 钉住）。守卫 `tests/push-remote.git.test.ts` 在真 git 上钉住事实：唯一 remote 叫 `upstream` 的仓库，旧 argv 失败、新 argv 落地且 `main@{upstream}` = `upstream/main`。
 
+### 6.29 会话标题区会裁剪整个抽屉，`position: fixed` 和更大的 z-index 都绕不过遮罩
+Harness 的 `.titleCluster` 用 `overflow: clip` 加 `mask-image` 裁剪并渐隐标题区的操作入口（上游 `8b48ec1673f`）。插件挂在 `conversation.session.header.actions`，所以抽屉若仍是入口的 DOM 后代，整层遮罩、面板和点击区域都会被限制在标题条内，表现为只露出顶部一条。`Drawer` 必须用 `createPortal(overlay, document.body)` 返回**整个** `data-gs-part="overlay"`，入口卡片继续留在标题区；不能只搬 `.drawer`，否则背景遮罩和伴随浮层仍被裁剪。调色板在 overlay 自身声明，历史菜单的 portal 仍以它为容器。`react-dom` 已由宿主冻结模块表共享，保持 external。守卫 `tests/panel-modules.test.ts` 用 TypeScript AST 验证真实返回值、挂载目标和导入，注释不参与匹配。
+
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）
 
 接手改这个插件时，对照这些原文件（路径相对 dsh 仓库根；开发机上它是本仓库的兄弟目录 `../deepseek-harness`）：

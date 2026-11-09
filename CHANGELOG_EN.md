@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.25] - 2026-11-09
+
+### Fixed
+
+- **The Git drawer appears as a narrow strip in newer Harness versions.** The entire drawer mounts on the document body through a React portal, outside the session header's clipping and fade mask. The status card stays in the session header. This uses the plugin's existing React API and keeps the same minimum Harness version.
+
 ## [0.1.24] - 2026-10-05
 
 ### Changed

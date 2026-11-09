@@ -48,6 +48,7 @@
  * the user's language preference.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   DEFAULT_APPEARANCE, EMPTY_SETTINGS, DSH_DARK_ATTR, effectiveBackground, effectiveCss, hostSchemeDark,
@@ -1354,12 +1355,6 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
 
 /* ---------- header environment card ---------- */
 
-
-
-
-
-
-
 interface EnvCardProps { stats: WorkbenchStats; t: Translate; wtName: string | null; title: string; onClick: () => void }
 
 function EnvCard({ stats, t, wtName, title, onClick }: EnvCardProps): ReactNode {
@@ -1843,7 +1838,9 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     } as CSSProperties,
   }
 
-  return (
+  // The session header clips and masks its actions. Keep the entire overlay on
+  // the document body so fixed positioning and hit testing use the viewport.
+  return createPortal(
     <div
       className={maximized ? `${css.overlay} ${css.overlayMax}` : css.overlay}
       data-gs-theme={theme}
@@ -2265,7 +2262,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           />
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

@@ -67,6 +67,7 @@ flowchart LR
 `~/.dsh/gitworkbench-style.json`：`{v:1, global, projects{repoRoot}}`，项目优先；背景图整条取项目、CSS 两作用域叠加（global 前 project 后）
 
 ## Potential Pitfalls
+- **抽屉整层必须 portal 到 `document.body`**：Harness 会话标题区的 `.titleCluster` 同时使用 `overflow: clip` 与 `mask-image`；挂在 `conversation.session.header.actions` 的 fixed 后代也会被遮罩裁成标题条。`Drawer` 用 `createPortal` 返回整个 `data-gs-part="overlay"`，入口卡片保留在会话头；调色板和历史菜单的 portal 容器都在 overlay 上。`tests/panel-modules.test.ts` 通过 AST 守卫返回值、body 目标和 react-dom 值导入（README §6.29）。
 - **提交行高是一个事实两个家**：`GRAPH_ROW_H`（TSX，车道 SVG 的高度）与 `.commitLine{height}`（CSS，行的高度）必须相等——不等不会报错，只是每条车道线在行与行的接缝处差一截，读者跟着的那股辫子就散了。`tests/commit-row-height.test.ts` 扣住（扫源码前先剥注释：本仓库已两次被注释里的散文骗过），并做过变异测试
 - **CSS 栈序是序关系不是数字表**：`.drawer > .header > .tabs > .compareBar > .syncBar` 的 z-index 必须沿 DOM 序**严格递减**，最低一条 bar 仍 > `.body`（z-index 1）。popover 只向下弹，上方 bar 的菜单必须压过下方一切 bar。曾三次踩坑：bar 与 `.body` 同层菜单被吃；全部 bar 同为 20 时上层菜单被下层吸掉；header 与 tabs 打平 23 时后者（源码序靠后的兄弟）吞掉 worktree 菜单——**同值即输**，测试因此断言严格递减而非硬编码数字
 - **逐处变更导航的两条不变式**（`client/diff-nav.ts`）：①**留出的上文必须加回去**——落点停在变更上方 3 行（`NAV_PEEK_PX=60`）好让上一行可见，但下一次算「下一处」时若不把这 60px 加回锚点，刚落到的那块仍然算「在视口顶之下」,每次按都停在同一块（`anchorFor`/`scrollTopFor` 成对存在就是为这个；变异测试会得到 `[0,0,0]`）。②**文件末尾的块滚不到 peek 线**——滚动条先到底，`scrollTop` 不再变化，视口就无法表达「我在哪」,于是永远绕不回第一块。解法是 `anchorFrom`:视口没动过就改用「上次落到的块」当锚点，手滚一下立即交还给视口。**这条纯测试预测不到**（纯模型没有地板），是 live 探针 `verify_diff_nav.py` 抓出来的

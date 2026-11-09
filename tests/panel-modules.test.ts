@@ -90,4 +90,33 @@ describe('GitWorkbenchPanel module boundaries', () => {
     expect(moduleRefs('GitWorkbenchPanel.tsx').typeExports).toContain('./git-workbench-types.ts')
     expect(moduleRefs('git-workbench-types.ts').imports).not.toContain('react')
   })
+
+  it('portals the whole drawer outside the clipped session header', () => {
+    const ast = ts.createSourceFile('panel.tsx', source('GitWorkbenchPanel.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const drawer = ast.statements.find((node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'Drawer')
+    const returned = drawer?.body?.statements.find(ts.isReturnStatement)?.expression
+    expect(returned, 'Drawer must return its overlay through a portal').toBeDefined()
+    if (returned === undefined) return
+    expect(ts.isCallExpression(returned)).toBe(true)
+    if (!ts.isCallExpression(returned)) return
+    expect(returned.expression.getText(ast)).toBe('createPortal')
+    expect(returned.arguments[1]?.getText(ast)).toBe('document.body')
+
+    const overlay = returned.arguments[0]
+    expect(overlay !== undefined && ts.isJsxElement(overlay)).toBe(true)
+    if (overlay === undefined || !ts.isJsxElement(overlay)) return
+    expect(overlay.openingElement.attributes.properties.some(attribute =>
+      ts.isJsxAttribute(attribute) && attribute.name.getText(ast) === 'data-gs-part'
+      && attribute.initializer !== undefined && ts.isStringLiteral(attribute.initializer)
+      && attribute.initializer.text === 'overlay')).toBe(true)
+
+    const reactDom = ast.statements.find((node): node is ts.ImportDeclaration =>
+      ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+      && node.moduleSpecifier.text === 'react-dom')
+    expect(reactDom?.importClause?.isTypeOnly).toBe(false)
+    const bindings = reactDom?.importClause?.namedBindings
+    expect(bindings !== undefined && ts.isNamedImports(bindings)
+      && bindings.elements.some(binding => binding.name.text === 'createPortal' && !binding.isTypeOnly)).toBe(true)
+  })
 })
