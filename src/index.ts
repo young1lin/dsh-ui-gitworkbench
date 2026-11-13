@@ -1124,12 +1124,13 @@ export class GitWorkbenchService extends TypertRemoteService {
     // made the sequential chain roughly four times slower than the data
     // required. The cost is that a well-formed hash naming no object now spends
     // four failed spawns where it used to stop after one.
-    // `--first-parent` is what makes a MERGE show anything at all. Plain
-    // `git show` prints no diff for a commit with two parents — there is no
-    // single "before" to compare against — so selecting a merge used to open an
-    // empty pane. Against the first parent the answer is well defined and is the
-    // useful one: what this merge brought into the branch it landed on. On a
-    // single-parent commit the flag is a no-op, byte for byte.
+    // `--first-parent` PINS what a MERGE shows. Older gits printed no diff
+    // for a two-parent commit at all (there is no single "before"), so
+    // selecting a merge used to open an empty pane; newer ones answer the
+    // first-parent diff by default. The flag states the answer we mean on
+    // every git: what this merge brought into the branch it landed on. On a
+    // single-parent commit it is a no-op, byte for byte (pinned in
+    // compare-refs.git.test.ts).
     // The repository root: no pathspec here today, but the cache key below
     // must describe the same repository to a later caller, and running from
     // the root is the one rule every read in this plugin follows
