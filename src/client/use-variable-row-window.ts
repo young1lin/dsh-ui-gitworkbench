@@ -23,6 +23,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'reac
 import { RowHeights, estimateRowHeight, variableRowWindow } from './row-heights.ts'
 import { DIFF_ROW_H, sameRowWindow, type RowWindow } from './row-window.ts'
 
+/** A rendered window is reusable only for the exact mounted diff — the same
+ *  shape `use-row-window.ts` holds, so a remount or a file switch cannot paint
+ *  the previous file's rows or spacers for a frame. */
+interface HeldVariableWindow {
+  readonly mountKey: string
+  readonly win: RowWindow
+}
+
 /** Attribute a pane puts on each measurable element, as `scope:index`. */
 export const ROW_INDEX_ATTR = 'data-gw-row'
 
@@ -128,7 +136,6 @@ export function useVariableRowWindow({
    * cell), so it settles in one extra pass.
    */
   const [, bumpHeights] = useState(0)
-  const [win, setWin] = useState<RowWindow>(() => ({ start: 0, end: texts.length, padTop: 0, padBottom: 0 }))
 
   /** Rebuilt only when the diff or the width really changes — never on scroll. */
   const heights = useMemo(
@@ -138,12 +145,30 @@ export function useVariableRowWindow({
     [texts, columns, rowH, mountKey, enabled],
   )
 
+  // The FIRST window is a screenful at the top, never the whole file: the
+  // initial state used to span every row, so the first frame of a wrapped
+  // long file rendered it entire (the exact freeze windowing exists to
+  // remove) until the scroll effect ran one paint later and narrowed it.
+  // `variableRowWindow(0, 0, …)` needs no DOM — viewport 0 falls back to the
+  // assumed screenful — and the same whole-file short-circuit below
+  // WINDOW_WHOLE_BELOW applies, so short files render exactly as before.
+  const [held, setHeld] = useState<HeldVariableWindow>(() => ({
+    mountKey, win: variableRowWindow(0, 0, heights),
+  }))
+  // A file can change while the scroller is temporarily unmounted by loading.
+  // Do not paint the previous file's window for one frame — derive a fresh
+  // top window immediately; the scroll effect below replaces it with the
+  // measured one.
+  const win = held.mountKey === mountKey ? held.win : variableRowWindow(0, 0, heights)
+
   const read = useCallback((): void => {
     const el = scrollRef.current
     if (el === null || heights.count === 0) return
     const next = variableRowWindow(el.scrollTop, el.clientHeight, heights)
-    setWin(prev => sameRowWindow(prev, next) ? prev : next)
-  }, [scrollRef, heights])
+    setHeld(prev => prev.mountKey === mountKey && sameRowWindow(prev.win, next)
+      ? prev
+      : { mountKey, win: next })
+  }, [scrollRef, heights, mountKey])
 
   // Scroll and resize. Passive: this listener never calls preventDefault, and
   // saying so keeps it off the scroll's critical path.

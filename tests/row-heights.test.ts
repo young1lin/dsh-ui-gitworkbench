@@ -135,6 +135,21 @@ describe('RowHeights', () => {
 })
 
 describe('variableRowWindow', () => {
+  it('answers a screenful at the top before any measurement, not the whole file', () => {
+    // The pre-measure window the wrap hook mounts with: no scroller yet, so
+    // scrollTop and viewport are both 0. It used to bypass this function and
+    // span every row, rendering a long file entire for one frame — the freeze
+    // windowing exists to remove. An assumed screenful plus overscan is the
+    // answer, and the spacers must still reserve the full height.
+    const heights = flat(5_000)
+    const win = variableRowWindow(0, 0, heights)
+    expect(win.start).toBe(0)
+    expect(win.end).toBeLessThan(200)
+    expect(win.padTop).toBe(0)
+    const rendered = heights.topAt(win.end) - heights.topAt(win.start)
+    expect(win.padTop + rendered + win.padBottom).toBe(heights.total())
+  })
+
   it('renders a short file whole, exactly as the fixed-height window does', () => {
     const heights = flat(WINDOW_WHOLE_BELOW)
     expect(variableRowWindow(0, 600, heights)).toEqual({
