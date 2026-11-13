@@ -98,4 +98,22 @@ describe('parseBlame', () => {
     expect(out).toHaveLength(1)
     expect(out[0]!.hash).toBe(SHA_A)
   })
+
+  it('survives a file large enough that spreading the line keys overflows the call stack', () => {
+    // The regression: Math.max(...byLine.keys()) put every key on the stack,
+    // and V8 caps spread arguments around a hundred-something thousand. Real
+    // blame porcelain past that point threw RangeError before the RPC's
+    // SIDE_LINE_CAP could decline the file. 160k distinct line numbers sits
+    // beyond the observed throw threshold (100k parsed, 150k threw) while
+    // keeping the fixture small: one minimal block per line.
+    const count = 160_000
+    const parts: string[] = []
+    for (let at = 1; at <= count; at += 1) {
+      parts.push(`${SHA_A} ${at} ${at}`, 'author stack', 'summary s', 'filename f', '\tl')
+    }
+    const out = parseBlame(parts.join('\n'))
+    expect(out).toHaveLength(count)
+    expect(out[0]!.author).toBe('stack')
+    expect(out[count - 1]!.hash).toBe(SHA_A)
+  })
 })

@@ -85,7 +85,15 @@ export function parseBlame(text: string): BlameLine[] {
     }
   }
 
-  const highest = byLine.size === 0 ? 0 : Math.max(...byLine.keys())
+  // A loop, not Math.max(...keys): the spread walks the whole key set onto
+  // the call stack, and V8 caps spread arguments around a hundred-something
+  // thousand — blame porcelain for a large file blew it (RangeError) before
+  // the caller's SIDE_LINE_CAP could decline the result. Parsing must
+  // survive any size; declining is the caller's decision.
+  let highest = 0
+  for (const at of byLine.keys()) {
+    if (at > highest) highest = at
+  }
   const out: BlameLine[] = []
   for (let at = 1; at <= highest; at += 1) {
     out.push(byLine.get(at) ?? { hash: '', author: '', time: 0, summary: '', uncommitted: false })
