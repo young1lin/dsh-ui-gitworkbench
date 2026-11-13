@@ -80,6 +80,12 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     clean: false,
+    // The one flag for the whole closure-factory chunk (tsdown resolves it
+    // into the rolldown output options before this config's own outputOptions
+    // merge on top). The banner/footer/intro are outputOptions strings and
+    // stay outside the minified body; the CSS pipeline minifies its own
+    // stylesheets regardless.
+    minify: true,
     external: [...CLIENT_EXTERNALS],
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
     define: {
