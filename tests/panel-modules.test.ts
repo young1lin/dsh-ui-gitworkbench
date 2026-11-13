@@ -12,7 +12,9 @@ function moduleRefs(name: string): { imports: string[]; typeExports: string[] } 
   const typeExports: string[] = []
   for (const statement of ast.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-      imports.push(statement.moduleSpecifier.text)
+      // A type-only import is erased at runtime, so it closes no VALUE cycle;
+      // the boundary rule below polices value imports only.
+      if (statement.importClause?.isTypeOnly !== true) imports.push(statement.moduleSpecifier.text)
     }
     if (ts.isExportDeclaration(statement) && statement.isTypeOnly
       && statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier)) {
@@ -24,8 +26,10 @@ function moduleRefs(name: string): { imports: string[]; typeExports: string[] } 
 
 const FEATURES = [
   'ChangesFileTree.tsx',
+  'CodeEditor.tsx',
   'CommitHistory.tsx',
   'DiffViews.tsx',
+  'FileBrowser.tsx',
   'WorkbenchControls.tsx',
 ] as const
 

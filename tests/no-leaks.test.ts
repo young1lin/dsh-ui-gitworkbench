@@ -100,6 +100,31 @@ describe('no leaks', () => {
     }
   })
 
+  it('clears every timer it starts', () => {
+    // A ratio, not equality: clearTimeout before a fresh schedule (and again
+    // at destroy) clears MORE than a file starts, which is the defensive
+    // pattern and cannot leak. What leaks is a start with no clear path at
+    // all - the direction that fails here. One capped exemption below: a
+    // sleep-style timer only resolves a promise and cannot outlive its own
+    // bounded delay, so there is nothing to cancel and nothing held.
+    const exempt: Record<string, number> = {
+      // GitWorkbenchPanel: exactly the one tick-retry sleep. Any ADDITIONAL
+      // timer there must re-earn its exemption or pair up.
+      'GitWorkbenchPanel.tsx': 1,
+    }
+    for (const file of sources) {
+      const started = count(file.text, /setTimeout\(/g)
+      const cleared = count(file.text, /clearTimeout\(/g)
+      if (file.name in exempt) {
+        expect(`${file.name}: ${started} started, exempt cap ${exempt[file.name]}`)
+          .toBe(`${file.name}: ${exempt[file.name]} started, exempt cap ${exempt[file.name]}`)
+        continue
+      }
+      expect(`${file.name}: ${started} started, ${cleared} cleared`)
+        .toBe(`${file.name}: ${started} started, ${Math.max(started, cleared)} cleared`)
+    }
+  })
+
   it('clears the timer a CodeMirror layer defers with, when the view goes', () => {
     // The one timer that survives an unmount by construction rather than by
     // oversight: it lives in a plugin, not in an effect, so React's cleanup
