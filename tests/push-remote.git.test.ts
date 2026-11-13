@@ -11,6 +11,8 @@
  * injected runner, the same argv the host builds.
  */
 import { execFileSync } from 'node:child_process'
+
+import { ISOLATED_GIT_ENV } from './git-env.ts'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +26,7 @@ let repo = ''
 let bare = ''
 
 function git(...args: string[]): string {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: ISOLATED_GIT_ENV })
 }
 
 const runGit: RootGit = async (cwd, argv) => {
@@ -40,7 +42,7 @@ const names = (stdout: string): string[] => stdout.split('\n').map(line => line.
 
 beforeEach(async () => {
   bare = await mkdtemp(join(tmpdir(), 'gw-push-remote-'))
-  execFileSync('git', ['init', '-q', '--bare', bare])
+  execFileSync('git', ['init', '-q', '--bare', bare], { env: ISOLATED_GIT_ENV })
   repo = await mkdtemp(join(tmpdir(), 'gw-push-'))
   git('init', '-q', '-b', 'main')
   git('config', 'core.autocrlf', 'false')

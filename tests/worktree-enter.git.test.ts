@@ -13,6 +13,8 @@
  *     named X land on existing branch Y.
  */
 import { execFileSync } from 'node:child_process'
+
+import { ISOLATED_GIT_ENV } from './git-env.ts'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,13 +24,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 let repo = ''
 
 function gitAt(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env: ISOLATED_GIT_ENV })
 }
 
 /** Real git, never throwing, result-shaped — the runner index.ts binds. */
 function runGit(cwd: string, argv: string[]): { stdout: string; exitCode: number; stderr: string } {
   try {
-    return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8' }), exitCode: 0, stderr: '' }
+    return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8', env: ISOLATED_GIT_ENV }), exitCode: 0, stderr: '' }
   } catch (error) {
     const failure = error as { stdout?: string; stderr?: string; status?: number }
     return { stdout: failure.stdout ?? '', exitCode: failure.status ?? 1, stderr: failure.stderr ?? '' }
@@ -37,7 +39,7 @@ function runGit(cwd: string, argv: string[]): { stdout: string; exitCode: number
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), 'gw-enter-'))
-  execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main'])
+  execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main'], { env: ISOLATED_GIT_ENV })
   gitAt(repo, 'config', 'core.autocrlf', 'false')
   gitAt(repo, 'config', 'user.email', 't@example.com')
   gitAt(repo, 'config', 'user.name', 'tester')

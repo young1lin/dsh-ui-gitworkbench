@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+
+import { ISOLATED_GIT_ENV } from './git-env.ts'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -21,12 +23,12 @@ import { alignRows, blockCount, blockIsWholeFile, blockLines } from '../src/clie
 let repo = ''
 
 function git(...args: string[]): string {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: ISOLATED_GIT_ENV })
 }
 
 /** Feed a patch to git on stdin, the way the host will. */
 function apply(patch: string, ...args: string[]): void {
-  execFileSync('git', ['-C', repo, 'apply', ...args], { input: patch, encoding: 'utf8' })
+  execFileSync('git', ['-C', repo, 'apply', ...args], { input: patch, encoding: 'utf8', env: ISOLATED_GIT_ENV })
 }
 
 // The two change sites must sit further apart than twice the default context,
@@ -153,7 +155,7 @@ function repoIo(): ApplyBlocksIo {
   return {
     git: async (cwd, argv) => {
       try {
-        return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8' }), exitCode: 0, stderr: '' }
+        return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8', env: ISOLATED_GIT_ENV }), exitCode: 0, stderr: '' }
       } catch (error) {
         const failure = error as { stdout?: string; stderr?: string; status?: number }
         return { stdout: failure.stdout ?? '', exitCode: failure.status ?? 1, stderr: failure.stderr ?? '' }

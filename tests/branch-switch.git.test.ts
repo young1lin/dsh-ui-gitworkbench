@@ -9,6 +9,8 @@
  * injected runner, the same code `index.ts` binds.
  */
 import { execFileSync } from 'node:child_process'
+
+import { ISOLATED_GIT_ENV } from './git-env.ts'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,12 +24,12 @@ let repo = ''
 let linked = ''
 
 function git(...args: string[]): string {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: ISOLATED_GIT_ENV })
 }
 
 const runGit: RootGit = async (cwd, argv) => {
   try {
-    return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8' }), exitCode: 0, stderr: '' }
+    return { stdout: execFileSync('git', ['-C', cwd, ...argv], { encoding: 'utf8', env: ISOLATED_GIT_ENV }), exitCode: 0, stderr: '' }
   } catch (error) {
     const failure = error as { stdout?: string; stderr?: string; status?: number }
     return { stdout: failure.stdout ?? '', exitCode: failure.status ?? 1, stderr: failure.stderr ?? '' }
