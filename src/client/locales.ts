@@ -72,7 +72,7 @@ export type WorkbenchKey =
   | 'editFile' | 'fileSave' | 'fileRevert' | 'editingNotice' | 'crlfNotice' | 'encodingNotice' | 'phantomNotice'
   // blame gutter on the working-tree column
   | 'blameToggle' | 'blameHint' | 'blameUncommitted' | 'blameFailed' | 'blameTruncated'
-  | 'saveFailed' | 'saveUnavailable' | 'saveRetry'
+  | 'saveFailed' | 'saveUnavailable' | 'saveRetry' | 'commitStatsFailed'
   | 'staleTitle' | 'staleBody' | 'staleReload' | 'staleOverwrite'
   | 'unsavedTitle' | 'unsavedBody' | 'unsavedLeave' | 'unsavedStay'
   | 'op.fail.auth' | 'op.fail.network' | 'op.fail.no-upstream' | 'op.fail.diverged' | 'op.fail.conflict'
@@ -316,6 +316,7 @@ export const zh: Record<WorkbenchKey, string> = {
   encodingNotice: '这个文件不是 UTF-8 编码（可能是 GBK、Shift JIS 之类），暂不支持在线编辑：页面上看到的文字是一次有损解码，保存回去会把文件里每一个非 ASCII 字节都改写掉，包括你没动过的行。查看和按块暂存/撤回不受影响。',
   phantomNotice: 'git 把这个文件列为已修改，但行尾归一化（CRLF / autocrlf / eol 属性）之后没有内容差异——这是 Windows 检出常见的「永远已修改」幻影，不是显示故障。统一行尾（建议把行尾统一成 LF）或让 git 重新比对后，这一条目就会消失。',
   saveFailed: '保存失败',
+  commitStatsFailed: '这个提交的内容加载失败。',
   saveUnavailable: '当前宿主还不支持保存（需要重启 dsh web 加载新版宿主端）。',
   saveRetry: '重试保存',
   staleTitle: '这个文件在你编辑期间被修改了',
@@ -559,6 +560,7 @@ export const en: Record<WorkbenchKey, string> = {
   encodingNotice: 'This file is not UTF-8 (GBK, Shift JIS or similar), so the editor is unavailable: the text shown is a lossy decode of it, and saving that back would rewrite every non-ASCII byte in the file, including lines you never touched. Viewing and block staging/rolling back still work.',
   phantomNotice: 'git lists this file as modified, but after line-ending normalisation (CRLF / autocrlf / eol attributes) there is no content difference — the classic "modified forever" phantom of a Windows checkout, not a broken view. Once the endings agree (normalising the endings to LF is recommended) the entry disappears.',
   saveFailed: 'Save failed',
+  commitStatsFailed: 'Could not load the contents of this commit.',
   saveUnavailable: 'This host does not support saving yet — restart dsh web to load the new host half.',
   saveRetry: 'Retry save',
   staleTitle: 'This file changed while you were editing it',

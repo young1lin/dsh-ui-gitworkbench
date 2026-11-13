@@ -158,6 +158,11 @@ interface FileTreeProps {
    *  re-derive it from `loading && files.length === 0`, and that second copy of
    *  the rule is precisely what the header then got wrong. */
   loading?: boolean
+  /** Why the list is empty when its fetch FAILED — shown instead of the
+   *  loading note. Without it a failed commit-stats fetch left the pane on
+   *  "loading" forever, because `stats === null` was indistinguishable from
+   *  "still fetching". */
+  error?: string
   /** What the list holds, prepended to the count — the working-tree view says
    *  which worktree it is reading; commit views are already named by history. */
   lead?: string
@@ -183,7 +188,7 @@ interface FileTreeProps {
   scopeKey: string
 }
 
-export function FileTree({ t, loading, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, onDiscard, footer, scopeKey }: FileTreeProps): ReactNode {
+export function FileTree({ t, loading, error, lead, files, active, onSelect, collapsed, onCollapsedChange, onCheck, onDiscard, footer, scopeKey }: FileTreeProps): ReactNode {
   /**
    * The filter over this list. Local, because it describes a way of LOOKING at
    * the pane rather than anything the drawer stores: closing and reopening on
@@ -321,7 +326,9 @@ export function FileTree({ t, loading, lead, files, active, onSelect, collapsed,
           ) : null}
         </div>
       ) : null}
-      {loading === true ? (
+      {error !== undefined ? (
+        <div className={css.treeEmpty} data-gs-part="tree-error">{error}</div>
+      ) : loading === true ? (
         <div className={css.treeEmpty} data-gs-part="tree-loading">{t('loading')}</div>
       ) : filtering && shownFiles.length === 0 ? (
         <div className={css.treeEmpty} data-gs-part="tree-no-match">{t('filterNoMatch')}</div>

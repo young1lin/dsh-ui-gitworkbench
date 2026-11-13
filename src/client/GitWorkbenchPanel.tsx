@@ -445,6 +445,11 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   /** Why the history list is empty when it is git's word, not the log's: a
    *  bad filter pattern or date, with the stderr tail to say so. */
   const [historyError, setHistoryError] = useState<string | null>(null)
+  /** Whether the selected commit's change-set fetch FAILED. `commitStats ===
+   *  null` alone cannot say failure from "still fetching", which is how the
+   *  history tree pane used to sit on its loading note forever after one
+   * failed fetch. */
+  const [commitStatsFailed, setCommitStatsFailed] = useState(false)
   /** The history filter box's raw text. Parsed into the LogFilter the host
    *  compiles into git log arguments — the funnel popup writes here too: one
    *  grammar, one filter, however the criterion arrived. */
@@ -869,12 +874,18 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     if (commitHash === null) return
     const key = `${statsPath ?? ''}\x1f${commitHash}`
     const hit = commitCache.current.get(key)
-    if (hit !== undefined) { setCommitStats(hit); return }
+    if (hit !== undefined) { setCommitStats(hit); setCommitStatsFailed(false); return }
     const ctrl = new AbortController()
     setCommitStats(null)
+    setCommitStatsFailed(false)
     fetchCommitStats(statsPath, commitHash, ctrl.signal)
       .then(value => {
-        if (value === null) return
+        if (value === null) {
+          // A transport failure folds into the same shape as an RPC error;
+          // an abort belongs to the next run of this effect, not to the pane.
+          if (!ctrl.signal.aborted) setCommitStatsFailed(true)
+          return
+        }
         const cache = commitCache.current
         cache.delete(key)
         cache.set(key, value)
@@ -884,7 +895,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
         }
         setCommitStats(value)
       })
-      .catch(() => {})
+      .catch(() => { if (!ctrl.signal.aborted) setCommitStatsFailed(true) })
     return () => ctrl.abort()
   }, [commitHash, statsPath, fetchCommitStats])
 
@@ -1267,8 +1278,9 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           /** Per-tab in-flight flags, so an empty pane can say "loading" instead
            *  of claiming the repository has nothing in it. */
           treeLoading={tab === 'changes' ? statsLoading
-            : tab === 'history' ? historyLoading || (commitHash !== null && commitStats === null)
+            : tab === 'history' ? historyLoading || (commitHash !== null && commitStats === null && !commitStatsFailed)
             : comparable && compareStats === null}
+          treeError={tab === 'history' && commitStatsFailed ? t('commitStatsFailed') : undefined}
           historyLoading={historyLoading}
           tab={tab}
           onSwitchTab={switchTab}
@@ -1498,6 +1510,10 @@ interface DrawerProps {
    *  The pane says "loading" rather than rendering the empty stand-in as a
    *  "no changes" claim the data has not made yet. */
   treeLoading: boolean
+  /** Why the tree's list is empty when its fetch FAILED — shown instead of
+   *  the loading note, which a failed commit-stats fetch used to sit on
+   *  forever (null stats read as "still fetching"). */
+  treeError?: string
   /** Whether the history list's first page is in flight — same rule. */
   historyLoading: boolean
   /** The write operation in flight, or null. Disables the others while set. */
@@ -1532,7 +1548,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, remoteBranches, remoteBranchesTruncated, mainWorktreePath, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, treeError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, remoteBranches, remoteBranchesTruncated, mainWorktreePath, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -2146,6 +2162,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               t={t}
               scopeKey={viewKey}
               loading={pending}
+              error={treeError}
               lead={tab === 'changes' ? t('workingTree') : undefined}
               files={tickedFiles}
               active={active}
