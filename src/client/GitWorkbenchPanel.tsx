@@ -80,7 +80,8 @@ import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type F
 import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cache.ts'
 import { useIdleValue } from './idle-value.ts'
 import { warmHighlighter } from './highlight.ts'
-import { emptyQueryFilter, parseLogQuery, serializeLogQuery } from './log-filter-query.ts'
+import { parseLogQuery } from './log-filter-query.ts'
+import { useHistoryList } from './use-history-list.ts'
 import { nextAfterPlan, type DiscardAnswer, type DiscardPreview } from './discard-flow.ts'
 import { isPhantomModified } from './diff-model.ts'
 import { NO_PATHS, preferredFile } from './active-file.ts'
@@ -150,9 +151,6 @@ type Props = PropsRuntime<'conversation.session.header.actions'> & {
  * (the pattern GitHub Desktop, VS Code and the JetBrains git tooling converge on).
  */
 type Tab = 'changes' | 'history' | 'compare' | 'files'
-
-/** How many further commits one page request loads. */
-const HISTORY_PAGE = 30
 
 /** Narrowest the drawer may be dragged: three panes at their minimums, plus a
  *  diff column still wide enough to read code in. */
@@ -436,39 +434,11 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  A branch needs no worktree to have a log, so this is how a branch that is
    *  checked out nowhere still becomes browsable. */
   const [historyRef, setHistoryRef] = useState<string | null>(null)
-  /** Every history page loaded for the current worktree + ref. */
-  const [historyCommits, setHistoryCommits] = useState<readonly GitCommit[]>([])
-  const [historyHasMore, setHistoryHasMore] = useState(false)
-  /** First page of the history list in flight — the pane says "loading", not
-   *  "no commit history", which is a claim about the repository. */
-  const [historyLoading, setHistoryLoading] = useState(false)
-  /** Why the history list is empty when it is git's word, not the log's: a
-   *  bad filter pattern or date, with the stderr tail to say so. */
-  const [historyError, setHistoryError] = useState<string | null>(null)
   /** Whether the selected commit's change-set fetch FAILED. `commitStats ===
    *  null` alone cannot say failure from "still fetching", which is how the
    *  history tree pane used to sit on its loading note forever after one
    * failed fetch. */
   const [commitStatsFailed, setCommitStatsFailed] = useState(false)
-  /** The history filter box's raw text. Parsed into the LogFilter the host
-   *  compiles into git log arguments — the funnel popup writes here too: one
-   *  grammar, one filter, however the criterion arrived. */
-  const [historyQuery, setHistoryQuery] = useState('')
-  const historyFilterKey = serializeLogQuery(parseLogQuery(historyQuery))
-  /** Debounced by KEY, not by text: "liam " and "liam" are the same query and
-   *  must not refetch. 300ms is a keystroke's pause, not a page's wait. */
-  const [liveFilterKey, setLiveFilterKey] = useState('')
-  useEffect(() => {
-    const id = window.setTimeout(() => setLiveFilterKey(historyFilterKey), 300)
-    return () => window.clearTimeout(id)
-  }, [historyFilterKey])
-  const liveFilter = useMemo(
-    () => (liveFilterKey.length === 0 ? emptyQueryFilter() : parseLogQuery(liveFilterKey)),
-    [liveFilterKey],
-  )
-  const [loadingMore, setLoadingMore] = useState(false)
-  /** In-flight marker for paging, read synchronously — see {@link loadMoreCommits}. */
-  const loadingRef = useRef(false)
   /** Drawer occupies the whole viewport. Panel-level state, so the choice holds
    *  across tab switches and reopens rather than resetting under the user. */
   const [maximized, setMaximized] = useState(false)
@@ -833,34 +803,19 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     if (sourcePath !== null && samePath(prevSource, sourcePath)) setSourcePath(null)
   }, [bindingPath, sourcePath, sessionRoot])
 
-  // First page of the history list, reloaded whenever the worktree or the ref
-  // changes. The selection is dropped with it — a hash from another ref's log
-  // has no place in this one.
-  //
-  // Gated on the drawer being open: this panel is mounted in every session
-  // header, and a log nobody is looking at is a git spawn nobody asked for.
-  useEffect(() => {
-    if (!open) return
-    const ctrl = new AbortController()
-    let alive = true
-    setHistoryCommits([])
-    setHistoryHasMore(false)
-    setCommitHash(null)
-    setCommitStats(null)
-    setHistoryLoading(true)
-    setHistoryError(null)
-    fetchCommits(statsPath, effectiveHistoryRef, 0, HISTORY_PAGE, liveFilter, ctrl.signal)
-      .then(page => {
-        if (!alive) return
-        setHistoryLoading(false)
-        if (page === null) return
-        setHistoryCommits(page.commits)
-        setHistoryHasMore(page.hasMore)
-        setHistoryError(page.error ?? null)
-      })
-      .catch(() => { if (alive) setHistoryLoading(false) })
-    return () => { alive = false; ctrl.abort() }
-  }, [open, statsPath, effectiveHistoryRef, fetchCommits, gen, liveFilter])
+  // The history list's own state — query debounce, first page, paging — as
+  // one unit (use-history-list.ts). The epoch guard there is what a filter
+  // change mid-page-load needs: the first page's abort never covered the
+  // paging controller, and the old query's page could append itself to the
+  // new list.
+  const dropHistorySelection = useCallback(() => { setCommitHash(null); setCommitStats(null) }, [])
+  const {
+    historyCommits, historyHasMore, historyLoading, historyError,
+    historyQuery, setHistoryQuery, loadingMore, loadMoreCommits,
+  } = useHistoryList({
+    open, statsPath, refName: effectiveHistoryRef, gen, fetchCommits,
+    dropSelection: dropHistorySelection,
+  })
 
   // Never leave the history pane empty: with a list loaded and nothing picked,
   // the newest commit is the selection.
@@ -1238,26 +1193,6 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  redundant round trip. */
   const switchTab = (next: Tab): void => {
     setTab(next)
-  }
-
-  /** Append the next page of the log.
-   *
-   *  The guard is a ref, not the `loadingMore` state: the scroll sentinel can
-   *  fire again before React has re-rendered with the state set, and two calls
-   *  at the same offset would append the same page twice. */
-  const loadMoreCommits = (): void => {
-    if (loadingRef.current || !historyHasMore) return
-    loadingRef.current = true
-    setLoadingMore(true)
-    const ctrl = new AbortController()
-    fetchCommits(statsPath, effectiveHistoryRef, historyCommits.length, HISTORY_PAGE, liveFilter, ctrl.signal)
-      .then(page => {
-        if (page === null) return
-        setHistoryCommits(prev => [...prev, ...page.commits])
-        setHistoryHasMore(page.hasMore)
-      })
-      .catch(() => {})
-      .finally(() => { loadingRef.current = false; setLoadingMore(false) })
   }
 
   /** Selecting a commit changes which view is rendered; the working tree it is
