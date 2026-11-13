@@ -81,6 +81,7 @@ import {
 import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { exitCodeOf } from './exit-code.js'
+import { runtimeDeadline, type TimerIo } from './git-deadline.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveInside } from './path-lock.js'
 import { BINARY_SNIFF_BYTES, UntrackedMeasures, type UntrackedIo, type UntrackedMeasure } from './untracked.js'
@@ -107,6 +108,19 @@ export type { WriteResult }
 
 /** Cap the bundled unified diff so a huge change cannot blow the RPC response. */
 const DIFF_CHAR_CAP = 400_000
+/** How long a git run may take before it is aborted at all. Generous on
+ *  purpose: an ordinary read is sub-second, a cold-cache status on a huge
+ *  repository is seconds — the bound exists for the WEDGED run (a lock, a
+ *  stalled disk), which had none at all. Network operations opt out: they
+ *  wait on a remote, not on the disk. */
+const GIT_RUNTIME_MS = 60_000
+/** The host's own clock, injected so git-deadline's rules stay testable. */
+const hostTimer: TimerIo = {
+  setTimer: (ms, fire) => {
+    const id = setTimeout(fire, ms)
+    return () => { clearTimeout(id) }
+  },
+}
 /** Untracked files larger than this are listed + counted but never diffed. */
 const UNTRACKED_FILE_BYTE_CAP = 1_000_000
 
@@ -2014,7 +2028,10 @@ export class GitWorkbenchService extends TypertRemoteService {
       // list or a blank commit message takes.
       return { ok: false, failure: 'unknown', error: error instanceof Error ? error.message : String(error) }
     }
-    const result = await this.git(dir, argv, signal, graceMs)
+    // An explicit grace override means the op waits on a remote (fetch, pull,
+    // push): it buys no runtime deadline. Local writes — stage, commit,
+    // switch — run with the default grace and the deadline like every read.
+    const result = await this.git(dir, argv, signal, graceMs, graceMs === undefined ? GIT_RUNTIME_MS : Infinity)
     const failure = classifyFailure(result.exitCode, result.stderr, result.stdout)
     if (failure === null) return { ok: true, output: result.stdout.trim().slice(-1000) }
     // The classification is a hint; the real text rides along beside it, because
@@ -2115,7 +2132,12 @@ export class GitWorkbenchService extends TypertRemoteService {
    * @param graceMs - override for network operations, which wait on a remote
    *                  rather than on the disk.
    */
-  private async git(cwd: string, argv: readonly string[], signal: AbortSignal, graceMs = 30_000): Promise<GitResult> {
+  private async git(cwd: string, argv: readonly string[], signal: AbortSignal, graceMs = 30_000, runtimeMs: number = GIT_RUNTIME_MS): Promise<GitResult> {
+    // Compose the caller's abort with the runtime deadline: the subprocess
+    // layer reacts to aborts but owns no deadline of its own, so without this
+    // a wedged read ran until the browser disconnected. Whichever fires
+    // first aborts the spawn.
+    const deadline = runtimeDeadline(signal, runtimeMs, hostTimer)
     try {
       const handle = this.ctx.subprocess.spawn({
         // core.quotepath=false on EVERY call: with the default on, git octal-
@@ -2127,7 +2149,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         cwd,
         stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
         graceMs,
-        signal,
+        signal: deadline.signal,
         env: { ...NON_INTERACTIVE_ENV },
       })
       const [stdout, stderr, outcome] = await Promise.all([
@@ -2135,12 +2157,22 @@ export class GitWorkbenchService extends TypertRemoteService {
         readAll(handle.stderr), // drain so a chatty stderr cannot deadlock the pipe
         handle.done,
       ])
-      // exitCodeOf: a death by signal (only the caller's abort kills git here)
-      // must read as failure, or truncated output slips through exit-0 gates
-      // into caches that never invalidate.
-      return { stdout, exitCode: exitCodeOf(outcome), stderr: capStderr(stderr).trim() }
+      // exitCodeOf: a death by signal (the deadline or the caller's abort
+      // kills git here) must read as failure, or truncated output slips
+      // through exit-0 gates into caches that never invalidate.
+      //
+      // A deadline kill reports as exit 1 with EMPTY stderr — the error
+      // surfaces (stats header, op banner) need words, not silence.
+      const expired = deadline.expired()
+      return {
+        stdout,
+        exitCode: exitCodeOf(outcome),
+        stderr: expired ? `git ${argv[0] ?? ''} exceeded the ${runtimeMs}ms runtime deadline` : capStderr(stderr).trim(),
+      }
     } catch (error) {
       return { stdout: '', exitCode: 1, stderr: error instanceof Error ? error.message : String(error) }
+    } finally {
+      deadline.release()
     }
   }
 
@@ -2150,13 +2182,16 @@ export class GitWorkbenchService extends TypertRemoteService {
    * for every listing and diff and silently corrupts a picture.
    */
   private async gitBytes(cwd: string, argv: readonly string[], signal: AbortSignal): Promise<{ readonly stdout: Buffer; readonly exitCode: number }> {
+    // Same composition as `git()`: a wedged `cat-file` is as unbounded as any
+    // other read.
+    const deadline = runtimeDeadline(signal, GIT_RUNTIME_MS, hostTimer)
     try {
       const handle = this.ctx.subprocess.spawn({
         argv: ['git', '-c', 'core.quotepath=false', ...argv],
         cwd,
         stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
         graceMs: 30_000,
-        signal,
+        signal: deadline.signal,
         env: { ...NON_INTERACTIVE_ENV },
       })
       const [stdout, , outcome] = await Promise.all([
@@ -2167,6 +2202,8 @@ export class GitWorkbenchService extends TypertRemoteService {
       return { stdout, exitCode: exitCodeOf(outcome) }
     } catch {
       return { stdout: Buffer.alloc(0), exitCode: 1 }
+    } finally {
+      deadline.release()
     }
   }
 }
