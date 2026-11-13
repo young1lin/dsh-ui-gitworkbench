@@ -88,6 +88,12 @@
     }
   },
   "devDependencies": {
+    "@codemirror/commands": "6.11.0",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/merge": "6.12.2",
+    "@codemirror/search": "6.7.1",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.9",
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2",
@@ -98,22 +104,14 @@
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@shikijs/langs": "4.3.1",
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "lightningcss": "^1.33.0",
     "react": "^18.2.0",
+    "shiki": "4.3.1",
     "tsdown": "0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
-  },
-  "dependencies": {
-    "@codemirror/commands": "6.11.0",
-    "@codemirror/language": "6.12.4",
-    "@codemirror/merge": "6.12.2",
-    "@codemirror/search": "6.7.1",
-    "@codemirror/state": "6.7.1",
-    "@codemirror/view": "6.43.9",
-    "@shikijs/langs": "4.3.1",
-    "shiki": "4.3.1"
   }
 }
