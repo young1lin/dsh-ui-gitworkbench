@@ -266,6 +266,14 @@ function writeStored(key: string, value: unknown): void {
 /** Commit change sets kept in the browser before the least recently used is dropped. */
 const COMMIT_CACHE_CAPACITY = 24
 
+/** On-demand single-file diffs kept before the least recently used is dropped.
+ *  One entry is a whole diff text — the host caps any single one, but this
+ *  cache had no bound at all, so a drawer session that walked every oversized
+ *  file in a repository held every diff it had ever fetched. Entries, not
+ *  bytes, for the same reason COMMIT_CACHE_CAPACITY counts entries: the size
+ *  stays reportable and the rule stays provable. */
+const FETCHED_DIFF_CAPACITY = 32
+
 /** Stand-in while a commit's change set is in flight — every pane renders empty. */
 const EMPTY_STATS: WorkbenchStats = {
   worktreePath: '', branch: '', ahead: 0, behind: 0, detached: false,
@@ -1591,7 +1599,20 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     const ctrl = new AbortController()
     setLoading(true)
     fetchFileDiff(path, ctrl.signal)
-      .then(diff => { setFetched(prev => new Map(prev).set(activeKey, diff)) })
+      .then(diff => {
+        // delete+set refreshes the entry's recency, and the oldest entry goes
+        // first — the same LRU COMMIT_CACHE_CAPACITY runs one screen up.
+        setFetched(prev => {
+          const next = new Map(prev)
+          next.delete(activeKey)
+          next.set(activeKey, diff)
+          if (next.size > FETCHED_DIFF_CAPACITY) {
+            const oldest = next.keys().next()
+            if (!oldest.done) next.delete(oldest.value)
+          }
+          return next
+        })
+      })
       .catch(() => {})
       .finally(() => { setLoading(false) })
     return () => ctrl.abort()
