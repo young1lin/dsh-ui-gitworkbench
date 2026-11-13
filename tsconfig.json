@@ -19,7 +19,10 @@
     "declaration": false,
     "outDir": "lib",
     "rootDir": "src",
-    "noEmitOnError": false
+    // A type error must not emit a broken lib/index.js: the bundle script
+    // chains tsc straight into tsdown, and a half-emitted host half would
+    // otherwise ship with the error visible only in the log tail.
+    "noEmitOnError": true
   },
   "include": ["src/index.ts", "src/types/dsh-shim.d.ts"]
 }
