@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 import { filterFiles } from './file-filter.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
@@ -198,6 +198,14 @@ export function FileTree({ t, loading, error, lead, files, active, onSelect, col
   const [query, setQuery] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
   const filterRef = useRef<HTMLInputElement>(null)
+  /** The open-filter focus nudge's timer, so unmounting can cancel it: a
+   *  0ms timer left running on a tree that unmounted mid-open fires at a ref
+   * nobody holds — harmless today, but unpaired timers are exactly what
+   * tests/no-leaks.test.ts exists to keep out of this tree. */
+  const focusTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (focusTimer.current !== undefined) window.clearTimeout(focusTimer.current)
+  }, [])
   useEffect(() => { setQuery(''); setFilterOpen(false) }, [scopeKey])
 
   const shownFiles = useMemo(() => filterFiles(files, query), [files, query])
@@ -226,14 +234,29 @@ export function FileTree({ t, loading, error, lead, files, active, onSelect, col
     onCollapsedChange(open ? new Set() : allDirs(tree))
   }
 
-  const toggleOne = (path: string): void => {
-    const next = new Set(effective)
+  const toggleOne = useCallback((path: string): void => {
+    const next = new Set(collapsed ?? defaultCollapsed(tree))
     if (next.has(path)) next.delete(path)
     else next.add(path)
     onCollapsedChange(next)
-  }
+  }, [collapsed, tree, onCollapsedChange])
 
-  const stageLabels = { stage: t('stage'), unstage: t('unstage') }
+  const stageLabels = useMemo(() => ({ stage: t('stage'), unstage: t('unstage') }), [t])
+
+  // The drawer hands these three down as plain functions — their identity
+  // changes on EVERY drawer render (a commit-draft keystroke among them),
+  // which would defeat the row memo below for no semantic change: nothing
+  // about a keystroke moves a row. The ref always holds the latest handlers;
+  // the trampolines the rows see never change identity. The undefined-ness of
+  // onCheck/onDiscard still decides whether ticks and roll-backs render at
+  // all, so it is passed through as the ternary, not hidden inside.
+  const latestRowHandlers = useRef({ onSelect, onCheck, onDiscard })
+  latestRowHandlers.current = { onSelect, onCheck, onDiscard }
+  const selectRow = useCallback((path: string): void => { latestRowHandlers.current.onSelect(path) }, [])
+  const checkRow = useCallback((files: readonly GitFile[], state: CheckState): void => {
+    latestRowHandlers.current.onCheck?.(files, state)
+  }, [])
+  const discardRow = useCallback((file: GitFile): void => { latestRowHandlers.current.onDiscard?.(file) }, [])
 
   return (
     <div className={css.treeWrap}>
@@ -280,7 +303,10 @@ export function FileTree({ t, loading, error, lead, files, active, onSelect, col
               // folded away.
               if (filterOpen) { setQuery(''); setFilterOpen(false); return }
               setFilterOpen(true)
-              window.setTimeout(() => filterRef.current?.focus(), 0)
+              focusTimer.current = window.setTimeout(() => {
+                focusTimer.current = undefined
+                filterRef.current?.focus()
+              }, 0)
             }}
           ><FilterGlyph /></button>
           {/* Icon-only, with the label on `title`/`aria-label`: the glyph is the
@@ -339,7 +365,10 @@ export function FileTree({ t, loading, error, lead, files, active, onSelect, col
               collapsed twenty minutes ago reads as "no matches". */}
           <TreeChildren
             node={tree} depth={0} active={active} collapsed={filtering ? EMPTY_COLLAPSED : effective}
-            onToggle={toggleOne} onSelect={onSelect} onCheck={onCheck} onDiscard={onDiscard} stageLabels={stageLabels} discardLabel={t('discardAction')}
+            onToggle={toggleOne} onSelect={selectRow}
+            onCheck={onCheck !== undefined ? checkRow : undefined}
+            onDiscard={onDiscard !== undefined ? discardRow : undefined}
+            stageLabels={stageLabels} discardLabel={t('discardAction')}
           />
         </ul>
       )}
@@ -435,7 +464,12 @@ interface TreeChildrenProps {
   discardLabel?: string
 }
 
-function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCheck, onDiscard, stageLabels, discardLabel }: TreeChildrenProps): ReactNode {
+/** Memoised so a drawer render that moves no row skips the whole recursion:
+ *  every prop is either a value (depth, active, labels) or an identity that
+ *  only changes when the list really did (tree from a memo, collapsed Set,
+ *  the trampolines above). A commit-draft keystroke re-renders the toolbar
+ *  and the box under the tree — not hundreds of file rows. */
+const TreeChildren = memo(function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCheck, onDiscard, stageLabels, discardLabel }: TreeChildrenProps): ReactNode {
   const dirNodes = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))
   const fileNodes = [...node.files].sort((a, b) => basePart(a.path).localeCompare(basePart(b.path)))
   const checkColumn = onCheck !== undefined ? TREE_CHECK_W : 0
@@ -539,7 +573,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
       })}
     </>
   )
-}
+})
 
 function statusGlyph(status: GitFileStatus): string {
   switch (status) {
