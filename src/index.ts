@@ -80,6 +80,7 @@ import {
 } from './discard-ops.js'
 import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
+import { exitCodeOf } from './exit-code.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveInside } from './path-lock.js'
 import { isMainWorktree, resolveRepoRoot, rootedDir } from './repo-root.js'
@@ -648,6 +649,10 @@ export class GitWorkbenchService extends TypertRemoteService {
       // merge commit has no diff to show and the pane opens empty.
       const shown = await this.git(root, ['show', commit, '--first-parent', '--format=', '--no-renames', '--', path], signal)
       if (shown.exitCode !== 0) return { diff: '' }
+      // Belt and braces for the race where the signal fires as the read
+      // settles: an answer nobody is waiting for anymore must not outlive the
+      // request in a cache that never invalidates.
+      if (signal.aborted) return { diff: shown.stdout }
       this.commitDiffCache.set(key, shown.stdout)
       return { diff: shown.stdout }
     }
@@ -926,6 +931,19 @@ export class GitWorkbenchService extends TypertRemoteService {
     // from a subdirectory the repository-relative path doubles up
     // (`server/server/f`) into a fatal "no such path" (repo-root.ts).
     const root = await this.rootedDirOf(worktreePath, signal)
+    // Decline by stat before spawning, the same rule as the side pane's: the
+    // porcelain reprints a full header per line (5-10x the file), so a
+    // pathological file is megabytes of stdout before SIDE_LINE_CAP can
+    // decline the parsed result. A missing working-tree file is git's own
+    // error to report, not this guard's.
+    try {
+      const info = await stat(resolveInside(root, path))
+      if (info.isFile() && targetTooLarge(info.size, 0)) {
+        return { lines: [], truncated: true }
+      }
+    } catch {
+      // Deleted or ref-only: let git speak.
+    }
     // `--` keeps a path that looks like a revision from being read as one, as
     // every other pathspec in this plugin does.
     const run = await this.git(root, ['blame', '--line-porcelain', '--', path], signal)
@@ -2118,7 +2136,10 @@ export class GitWorkbenchService extends TypertRemoteService {
         readAll(handle.stderr), // drain so a chatty stderr cannot deadlock the pipe
         handle.done,
       ])
-      return { stdout, exitCode: outcome.exitCode ?? 0, stderr: capStderr(stderr).trim() }
+      // exitCodeOf: a death by signal (only the caller's abort kills git here)
+      // must read as failure, or truncated output slips through exit-0 gates
+      // into caches that never invalidate.
+      return { stdout, exitCode: exitCodeOf(outcome), stderr: capStderr(stderr).trim() }
     } catch (error) {
       return { stdout: '', exitCode: 1, stderr: error instanceof Error ? error.message : String(error) }
     }
@@ -2144,7 +2165,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         readAll(handle.stderr), // drained for the same reason `git()` drains it
         handle.done,
       ])
-      return { stdout, exitCode: outcome.exitCode ?? 0 }
+      return { stdout, exitCode: exitCodeOf(outcome) }
     } catch {
       return { stdout: Buffer.alloc(0), exitCode: 1 }
     }

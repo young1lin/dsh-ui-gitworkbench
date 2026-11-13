@@ -153,7 +153,7 @@ describe('filesystem reads pass the path lock', () => {
     // which takes the same lock inside write-checked.ts. Every other name here
     // reads the filesystem in its own body.
     expect(methods.filter(m => m.body.includes('resolveInside')).map(m => m.name).sort())
-      .toEqual(['fileImage', 'fileSides', 'ignoredDir'])
+      .toEqual(['blame', 'fileImage', 'fileSides', 'ignoredDir'])
   })
 
   it('no filesystem path is built by joining a caller path onto the root', () => {
