@@ -12,6 +12,13 @@
 #
 # Node 24 because Trusted Publishing needs npm >= 11.5.1; Node 22's bundled
 # npm is older, so the step below upgrades npm only when below that bar.
+#
+# Actions are pinned to the commit SHA of the newest patch release in the
+# major this workflow was written against (v5/v5/v4), not a moving tag: this
+# workflow holds id-token:write, and a retargeted tag would otherwise hand
+# the OIDC audience to whatever now sits behind it. ci.yml keeps moving tags
+# on purpose — it holds contents:read only. To bump: pick the release, take
+# its commit SHA from the GitHub API, update both the SHA and the comment.
 name: Publish npm package
 
 on:
@@ -29,14 +36,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         # Version comes from package.json's `packageManager` field — see ci.yml.
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -45,7 +52,7 @@ jobs:
         run: |
           npm --version
           if [ "$(printf '%s\n' '11.5.1' "$(npm --version)" | sort -V | head -n1)" != '11.5.1' ]; then
-            npm install -g npm@latest
+            npm install -g npm@12.2.2  # pinned: >= 11.5.1 for Trusted Publishing
             npm --version
           fi
 
