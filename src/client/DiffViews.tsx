@@ -455,10 +455,6 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     onDirtyChange(dirty)
     return () => { onDirtyChange(false) }
   }, [dirty, onDirtyChange])
-  // The buffer's lines and their highlight, for the editor's underlay: the
-  // visible text under the transparent textarea, which is what keeps syntax
-  // coloring and the caret on the same grid while typing.
-  const bufferLines = useMemo(() => edit.buffer.split('\n'), [edit.buffer])
   // What Tab inserts, learned from the file rather than configured. Keyed on
   // the BASE text, not the buffer: re-detecting mid-edit would let a couple of
   // freshly typed lines redefine the unit under the reader's hands.
