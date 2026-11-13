@@ -77,7 +77,7 @@ irm https://raw.githubusercontent.com/young1lin/dsh-ui-gitworkbench/main/scripts
 - **首次**（包还不存在于 npm，Trusted Publishing 尚无处配置）：本机 `npm login` 后 `npm publish`（scope 包的 `publishConfig.access` 已设 public）。发布后到 npmjs.com → 包 Settings → Trusted publishing 添加 GitHub Actions 发布器：user `young1lin`、repository `dsh-ui-gitworkbench`、workflow 填 `publish.yml`（不带路径前缀）、Environment 留空、勾选允许 `npm publish`。手工发布不经 CI 里那道机器路径门禁（见 publish.yml 的 grep 步骤），发布前可自行扫一眼 `lib/*.js` 确认没有本机绝对路径混入。
 - **后续**：`npm version patch`（或 minor/major）→ `git push` → `git push --tags`。tag `vX.Y.Z` 触发 `.github/workflows/publish.yml`：CI 全量检查 → tag 与 package.json 版本一致性校验 → OIDC Trusted Publishing 自动 `npm publish`（provenance 自动生成，全程无 npm token）。不要手动补推已由人工发布过的版本的 tag（如首次的 v0.1.0），registry 会拒绝同版本重发。
 
-**发布产物不带 sourcemap。** `lib/client.js.map` 解包 3.1MB、gzip 416kB，占了整包下载的 46%；排掉后 tarball 从 914.6kB 降到 498.0kB。两处配合才干净：`prepack` 走 `bundle:publish`（`tsdown --no-sourcemap`，连 `//# sourceMappingURL` 注释一并不产出——只删文件不删注释的话，dsh 的 `/plugins/<id>/client.js.map` 路由会给每个使用者一个 404），`files` 里的 `!lib/*.map` 再兜一道，防止上一次 dev 构建遗留的 map 被 `clean: false` 留在 `lib/` 里蹭进包。
+**发布产物不带 sourcemap。** dev 构建的 `lib/client.js.map` 解包 5.5MB，是 2.9MB bundle 本体的近两倍，不带它整个 tarball 实测 1.2MB（解包 4.6MB）。两处配合才干净：`prepack` 走 `bundle:publish`（`tsdown --no-sourcemap`，连 `//# sourceMappingURL` 注释一并不产出——只删文件不删注释的话，dsh 的 `/plugins/<id>/client.js.map` 路由会给每个使用者一个 404），`files` 里的 `!lib/*.map` 再兜一道，防止上一次 dev 构建遗留的 map 被 `clean: false` 留在 `lib/` 里蹭进包。
 
 **副作用记一笔**：`npm publish` 和 `npm pack`（含 `--dry-run`）都会触发 `prepack`，所以跑完之后本机 `lib/client.js` 是不带 sourcemap 注释的那份，浏览器里断点看到的是打包后的代码。继续开发前跑一次 `pnpm exec tsdown` 就回来了。
 
@@ -579,7 +579,7 @@ Harness 的 `.titleCluster` 用 `overflow: clip` 加 `mask-image` 裁剪并渐�
 - diff 文本总量上限 400 KB（`DIFF_CHAR_CAP`），超出截断。
 - 环境**卡**（非状态卡）常驻会话头:branch/detached + ↑↓ ahead-behind + `+N −M 文件数`。
 - 左侧为**可折叠文件树**:目录节点带文件数徽章与聚合 +N/−N;>12 文件的目录默认折叠;「展开全部/收起全部」;选中文件自动展开祖先链;展开状态会话级持久(见 §6.0c)。
-- 词级高亮 = 相邻 −/+ 行按 token LCS 对齐(`diff-model.ts`),行底色之上叠加强调色;语法着色 = **Shiki**(`highlight.ts`:本地包、Oniguruma WASM 引擎（内联进包、异步实例化，抽屉一打开就预热）、语法按需分包加载)——`lib/client.js` 2.3MB 的主因即它。bundle 纯度门禁的是 `@deepseek-ai/*` 的**值导入**(运行时由 profile 提供),不是第三方库;早期「正则单遍扫描」的实现已被替换。
+- 词级高亮 = 相邻 −/+ 行按 token LCS 对齐(`diff-model.ts`),行底色之上叠加强调色;语法着色 = **Shiki**(`highlight.ts`:本地包、Oniguruma WASM 引擎（内联进包、异步实例化，抽屉一打开就预热）、语言包以动态 import 惰性初始化,但 `inlineDynamicImports` 把它们全部内联进单文件 bundle——按需求值、不按需下载)——`lib/client.js` 2.9MB(gzip 600kB)的主因即它。bundle 纯度门禁的是 `@deepseek-ai/*` 的**值导入**(运行时由 profile 提供),不是第三方库;早期「正则单遍扫描」的实现已被替换。
 - **状态卡是会话的环境信息位**：git 仓库内常驻显示分支（或 detached sha）+↑↓+计数，**干净树也显示**；仅 `stats.error`（非 git 目录 / git 不可用）时隐藏。绑定标记 = 树形图标：插件所建 worktree 的分支就是名字本身（旧绑定为 `wt/<name>`），徽标印名只会把分支名说两遍，所以只留图标；外部建的 worktree 徽标 = 图标+name——那是唯一点名目录的地方。
 - **面板是浮起的卡片**（四边留白 + 圆角 + 投影），左缘可拖拽改宽、有最大化满屏；宽度与外观都存 localStorage，且读回时校验（旧版本写的族名不会漏到 `data-gs-theme` 上）。
 - **明暗默认跟随操作系统**（`prefers-color-scheme`），可显式覆盖；主题族 7 套（GitHub / IntelliJ IDEA / VS Code / One / Solarized / Nord / Cyberpunk）各带亮暗。面板内滚动条也按当前调色板重绘——**按类名逐个列举是不行的**：文件树那栏改过名之后就一直漏在外面、保持系统原生的浅色滚动条，所以规则写成 `.drawer *`。

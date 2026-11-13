@@ -355,7 +355,7 @@ export function classifyFailure(exitCode: number, stderr: string, stdout: string
     || text.includes('terminal prompts disabled')) return 'auth'
 
   // A network failure is worth its own class: "offline" and "bad remote URL"
-  // are fixable in different places, and neither is git's fault (TESTS.md D5).
+  // are fixable in different places, and neither is git's fault.
   if (text.includes('could not resolve host')
     || text.includes('network is unreachable')
     || text.includes('failed to connect')
@@ -587,7 +587,7 @@ export function countBufferLines(bytes: Buffer): number {
  * UTF-16 text is the trap this exists for — it is text, but every other byte
  * is NUL, so an 8 KB prefix catches it without reading a 200 MB blob. A NUL
  * PAST the window does not decide anything: a text file may legitimately
- * contain one deep in its body (TESTS.md A9).
+ * contain one deep in its body.
  * @param bytes - the file's contents, however much of them is cheap to read.
  * @param windowBytes - how many leading bytes may decide.
  */
@@ -622,7 +622,7 @@ export function decodesAsUtf8(bytes: Buffer): boolean {
 
 /**
  * Clip a diff to a character cap, and SAY so when the clip happened — a
- * silently shortened diff reads as a complete one (TESTS.md H1).
+ * silently shortened diff reads as a complete one.
  * @param text - the diff.
  * @param cap - most characters to keep.
  * @param marker - the truncation note appended when clipping.
@@ -634,7 +634,7 @@ export function clipDiff(text: string, cap: number, marker: string): string {
 /**
  * Cap the branch list the picker shows, and REPORT the cut: `branchesTruncated`
  * is what lets the picker say "showing the first 500" instead of quietly
- * looking like the repository only has 500 branches (TESTS.md F5).
+ * looking like the repository only has 500 branches.
  * @param names - branch names, newest-commit-first.
  * @param cap - how many to send.
  */
@@ -645,7 +645,7 @@ export function capBranches(names: readonly string[], cap: number): { branches: 
 /**
  * Whether stderr is the "no merge base" refusal `git diff A...B` gives for
  * histories with no common ancestor — the cue to retry the comparison as a
- * plain two-tip diff instead of failing outright (TESTS.md C3).
+ * plain two-tip diff instead of failing outright.
  * @param stderr - stderr of the failed three-dot diff.
  */
 export function isNoMergeBaseError(stderr: string): boolean {

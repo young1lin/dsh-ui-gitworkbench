@@ -1,11 +1,12 @@
 # CI for @young1lin/dsh-ui-gitworkbench.
 #
 # Package manager is pnpm (pnpm-lock.yaml; there is no package-lock.json, so
-# `npm ci` can never work here). The repo typechecks WITHOUT any
-# @deepseek-ai/* package installed — src/types/dsh-shim.d.ts and
-# dsh-client-shim.d.ts ambient-declare every one of them, and the runtime
-# resolves them from the dsh web profile's module farm. Verified by a clean
-# `git archive` + frozen-install simulation before this file landed.
+# `npm ci` can never work here). The @deepseek-ai/* packages ARE installed
+# as devDependencies, and the typecheck runs against their real types —
+# src/types/*.d.ts are placeholders kept only for the tsconfig include
+# (README 6.7). The RUNTIME resolves them from the dsh web profile's
+# module farm instead: the peers are optional and nothing @deepseek-ai/*
+# ships in the bundle (the purity gate asserts it).
 #
 # Build chain mirrors the two-half rule from AGENTS.md: `typecheck` runs both
 # tsconfigs (the client half is otherwise never checked), `bundle` emits

@@ -590,7 +590,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (branch === 'HEAD' || branch.length === 0) {
       // rev-parse names nothing before the first commit, but symbolic-ref
       // still resolves an unborn branch: a fresh `git init` shows its branch
-      // name in the chip rather than a detached hash or a blank (TESTS.md I1).
+      // name in the chip rather than a detached hash or a blank.
       const sym = (await this.git(cwd, ['symbolic-ref', '--short', 'HEAD'], signal)).stdout.trim()
       if (sym.length > 0) {
         branch = sym
@@ -1418,7 +1418,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     if (numstat.exitCode !== 0 && isNoMergeBaseError(numstat.stderr)) {
       // Unrelated histories have no merge base for `A...B` to diff from. A
       // two-tip diff still answers "what differs between these branches" with
-      // the full tree — which is what the compare tab is for (TESTS.md C3).
+      // the full tree — which is what the compare tab is for.
       ;[numstat, nameStatus, patch] = await Promise.all([
         diffNumstat([base, head]),
         diffNameStatus([base, head]),
@@ -2145,7 +2145,7 @@ export class GitWorkbenchService extends TypertRemoteService {
         // escapes non-ASCII paths, which JSON unescaping cannot decode (JSON
         // has no octal escapes) — and status and numstat would then key the
         // same file under different strings, so counts silently vanish and
-        // CJK paths render escaped (TESTS.md A12).
+        // CJK paths render escaped.
         argv: ['git', '-c', 'core.quotepath=false', ...argv],
         cwd,
         stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
