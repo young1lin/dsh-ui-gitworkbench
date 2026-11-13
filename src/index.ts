@@ -42,7 +42,7 @@
  * @module @young1lin/dsh-ui-gitworkbench
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
@@ -83,6 +83,7 @@ import { parseBlame, type BlameLine } from './blame.js'
 import { exitCodeOf } from './exit-code.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveInside } from './path-lock.js'
+import { BINARY_SNIFF_BYTES, UntrackedMeasures, type UntrackedIo, type UntrackedMeasure } from './untracked.js'
 import { isMainWorktree, resolveRepoRoot, rootedDir } from './repo-root.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
@@ -109,8 +110,6 @@ const DIFF_CHAR_CAP = 400_000
 /** Untracked files larger than this are listed + counted but never diffed. */
 const UNTRACKED_FILE_BYTE_CAP = 1_000_000
 
-/** Files with a NUL byte in the first 8k are treated as binary. */
-const BINARY_SNIFF_BYTES = 8_000
 /** Context radius that makes `git diff` emit ONE hunk covering the whole file —
  *  the artifact the side-by-side view aligns its two columns on. */
 const FULL_CONTEXT = 1_000_000
@@ -2194,38 +2193,52 @@ async function mapPooled<T, R>(items: readonly T[], limit: number, task: (item: 
   return results
 }
 
-/** What every untracked file must report, whether or not its diff ships. */
-interface UntrackedMeasure {
-  readonly lineCount: number
-  readonly binary: boolean
-  /** False when the file is missing, binary, or past the per-file byte cap. */
-  readonly diffable: boolean
+/** The stats pass's untracked measures, cached by (mtimeMs, size) — see
+ *  `untracked.ts` for why the poll must not re-read what has not changed. */
+const untrackedMeasures = new UntrackedMeasures(UNTRACKED_FILE_BYTE_CAP)
+
+const untrackedIo: UntrackedIo = {
+  stat: async path => {
+    try {
+      const info = await stat(path)
+      return { mtimeMs: info.mtimeMs, size: info.size }
+    } catch {
+      return null
+    }
+  },
+  readPrefix: async (path, length) => {
+    try {
+      const handle = await open(path, 'r')
+      try {
+        const into = Buffer.alloc(length)
+        const { bytesRead } = await handle.read(into, 0, length, 0)
+        return bytesRead === into.length ? into : into.subarray(0, bytesRead)
+      } finally {
+        await handle.close()
+      }
+    } catch {
+      return null
+    }
+  },
+  readFile: async path => {
+    try {
+      return await readFile(path)
+    } catch {
+      return null
+    }
+  },
 }
 
 /**
- * Count an untracked file's lines and decide whether it is binary.
- *
- * Both answers come off the raw buffer: decoding a megabyte to utf8 only to
- * count newlines is the expensive half of this pass, and most untracked files
- * never reach the bundled diff. Never throws; an unreadable file reports zero
- * lines and nothing to diff.
+ * Count an untracked file's lines and decide whether it is binary — from the
+ * cache when its bytes have not moved since the last poll. Never throws; an
+ * unreadable file reports zero lines and nothing to diff.
  * @param root - repository root the path is relative to.
  * @param path - repository-relative file path.
  * @returns the file's line count, binary flag, and whether a diff may be built.
  */
 async function measureUntracked(root: string, path: string): Promise<UntrackedMeasure> {
-  let bytes: Buffer
-  try {
-    bytes = await readFile(resolveInside(root, path))
-  } catch {
-    return { lineCount: 0, binary: false, diffable: false }
-  }
-  if (isBinaryPrefix(bytes, BINARY_SNIFF_BYTES)) return { lineCount: 0, binary: true, diffable: false }
-  return {
-    lineCount: countBufferLines(bytes),
-    binary: false,
-    diffable: bytes.length <= UNTRACKED_FILE_BYTE_CAP,
-  }
+  return untrackedMeasures.measure(untrackedIo, resolveInside(root, path))
 }
 
 /**
