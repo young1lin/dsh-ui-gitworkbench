@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  DIFF_ROW_H, WINDOW_OVERSCAN, WINDOW_WHOLE_BELOW, rowTop, rowWindow, rowWindowForMount, sameRowWindow,
+  DIFF_ROW_H, WINDOW_OVERSCAN, WINDOW_WHOLE_BELOW, clampRowWindow, rowTop, rowWindow, rowWindowForMount, sameRowWindow,
 } from '../src/client/row-window.ts'
 
 /** Total scrollable height the window implies, which must not move. */
@@ -132,3 +132,41 @@ describe('rowTop', () => {
     expect(rowTop(-5)).toBe(0)
   })
 })
+
+describe('clampRowWindow', () => {
+  it('keeps the reader\'s place when the list grows below the window', () => {
+    // Page 21 arriving under a reader parked at row 500 must not move them.
+    const held = rowWindow(10_000, 800, 600)
+    const grown = clampRowWindow(held, 630)
+    expect(grown.start).toBe(held.start)
+    expect(spanned(grown)).toBe(630 * DIFF_ROW_H)
+  })
+
+  it('clamps a window whose end ran past a list that shrank', () => {
+    const held = rowWindow(10_000, 800, 600)
+    const shrunk = clampRowWindow(held, 520)
+    expect(shrunk.end).toBeLessThanOrEqual(520)
+    expect(spanned(shrunk)).toBe(520 * DIFF_ROW_H)
+  })
+
+  it('answers the whole list once the count falls back under the threshold', () => {
+    const held = rowWindow(10_000, 800, 600)
+    expect(clampRowWindow(held, WINDOW_WHOLE_BELOW)).toEqual({
+      start: 0, end: WINDOW_WHOLE_BELOW, padTop: 0, padBottom: 0,
+    })
+  })
+
+  it('never inverts on an empty list', () => {
+    expect(clampRowWindow(rowWindow(0, 800, 600), 0)).toEqual({
+      start: 0, end: 0, padTop: 0, padBottom: 0,
+    })
+  })
+
+  it('honours a row height the caller passes', () => {
+    // The commit list is 28px (stacked) or 48px (columns), not the diff's 20.
+    const held = rowWindow(0, 800, 600, 48)
+    const grown = clampRowWindow(held, 630, 48)
+    expect(spanned(grown, 48)).toBe(630 * 48)
+  })
+})
+

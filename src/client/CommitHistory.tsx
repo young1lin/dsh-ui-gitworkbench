@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { createPortal } from 'react-dom'
 
 import { COMMIT_ROW_H, type HistoryLayout } from './history-layout.ts'
+import { clampRowWindow, rowWindow, sameRowWindow, type HeldRowWindow } from './row-window.ts'
 import { layoutGraph, type GraphRow } from './commit-graph.ts'
 import { formatCommitDate } from './commit-filter.ts'
 import { chipsFromFilter, parseLogQuery, removeChip, serializeLogQuery } from './log-filter-query.ts'
@@ -722,6 +723,44 @@ export function CommitList({ paneRef, style, layout, t, loading, commits, active
     [commits],
   )
 
+  // Which rows a long history actually has to put in the DOM. Pages append
+  // below the last row, so a GROWING list clamps the held window (the
+  // reader's place) rather than resetting to the top the way a changed file
+  // does — see `clampRowWindow`. Below WINDOW_WHOLE_BELOW rows the window IS
+  // the whole list, and the pane produces exactly the DOM it always did, so
+  // an ordinary history is untouched by this.
+  const rowH = COMMIT_ROW_H[layout]
+  const listKey = `${statsPath ?? ''}\x1f${refName}`
+  const [heldWindow, setHeldWindow] = useState<HeldRowWindow>(() => ({
+    mountKey: listKey, rowCount: commits.length, win: rowWindow(0, 0, commits.length, rowH),
+  }))
+  const win = heldWindow.mountKey === listKey
+    ? clampRowWindow(heldWindow.win, commits.length, rowH)
+    : rowWindow(0, 0, commits.length, rowH)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el === null) return
+    const read = (): void => {
+      const next = rowWindow(el.scrollTop, el.clientHeight, commits.length, rowH)
+      setHeldWindow(prev => prev.mountKey === listKey
+        && sameRowWindow(clampRowWindow(prev.win, commits.length, rowH), next)
+        ? prev
+        : { mountKey: listKey, rowCount: commits.length, win: next })
+    }
+    read()
+    // Passive: this listener never calls preventDefault, and saying so keeps
+    // it off the scroll's critical path.
+    el.addEventListener('scroll', read, { passive: true })
+    // The pane resizes with its divider and the layout switch, and a taller
+    // pane needs more rows.
+    const observer = new ResizeObserver(read)
+    observer.observe(el)
+    return () => {
+      el.removeEventListener('scroll', read)
+      observer.disconnect()
+    }
+  }, [scrollRef, commits.length, listKey, rowH])
+
   useEffect(() => {
     const root = scrollRef.current
     const sentinel = sentinelRef.current
@@ -990,18 +1029,22 @@ export function CommitList({ paneRef, style, layout, t, loading, commits, active
         </div>
       ) : (
         <div className={css.commits} role="listbox" aria-label={t('historyLabel')} ref={scrollRef}>
-          {commits.map((commit, index) => (
+          {/* Spacers stand in for the rows outside the window: the scrollbar
+              describes the whole loaded list, not the rendered slice of it. */}
+          {win.padTop > 0 ? <div style={{ height: win.padTop }} aria-hidden="true" /> : null}
+          {commits.slice(win.start, win.end).map((commit, index) => (
             <CommitRow
               key={commit.hash}
               t={t}
               commit={commit}
               active={commit.hash === active}
               onSelect={onSelect}
-              graphRow={graph.rows[index]}
+              graphRow={graph.rows[win.start + index]}
               graphWidth={graph.width}
               layout={layout}
             />
           ))}
+          {win.padBottom > 0 ? <div style={{ height: win.padBottom }} aria-hidden="true" /> : null}
           <div ref={sentinelRef} className={css.commitsSentinel} />
           <div className={css.commitsFoot}>
             {loadingMore ? t('loading') : hasMore ? '' : t('historyEnd')}

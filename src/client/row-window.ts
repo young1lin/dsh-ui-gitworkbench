@@ -95,6 +95,32 @@ export function rowWindowForMount(held: HeldRowWindow, rowCount: number, mountKe
     : rowWindow(0, 0, rowCount)
 }
 
+/** Fit a held window to a new row count, keeping the reader's place.
+ *
+ *  A GROWING list (pages appending below the last row) must not reset the
+ *  window to the top the way a changed file does: the reader's rows are still
+ *  where they were, and a reset paints the top of the list for one frame
+ *  until the scroll reader runs after it. Clamp instead — start stays where
+ *  the reader is, end only shrinks if the list did, and the spacers are
+ *  recomputed so the total height still matches the new count exactly.
+ *
+ *  Below the whole-file threshold the answer is always the whole list, so a
+ *  list that shrank back under it renders exactly the DOM it had before
+ *  windowing ever applied.
+ *
+ *  @param win - the window held for the previous count.
+ *  @param rowCount - the new row count.
+ *  @param rowH - row height in px.
+ */
+export function clampRowWindow(win: RowWindow, rowCount: number, rowH: number = DIFF_ROW_H): RowWindow {
+  const rows = Math.max(0, Math.trunc(rowCount))
+  if (rows <= WINDOW_WHOLE_BELOW) return { start: 0, end: rows, padTop: 0, padBottom: 0 }
+  const height = sane(rowH, DIFF_ROW_H)
+  const start = Math.min(win.start, rows)
+  const end = Math.max(start, Math.min(win.end, rows))
+  return { start, end, padTop: start * height, padBottom: (rows - end) * height }
+}
+
 /**
  * @param value - a number from the DOM, which can be NaN or negative.
  * @param fallback - used when it is neither finite nor usable.
