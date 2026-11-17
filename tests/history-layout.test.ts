@@ -9,8 +9,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  COMMIT_ROW_H, DEFAULT_HISTORY_LAYOUT, HISTORY_LAYOUTS, isHistoryLayout,
+  COMMIT_ROW_H, DEFAULT_HISTORY_LAYOUT, HISTORY_LAYOUTS, dockHistoryLayout, isHistoryLayout,
 } from '../src/client/history-layout.ts'
+
+describe('docked history', () => {
+  it('uses a split log above the sidebar breakpoint, with matching row geometry', () => {
+    for (const width of [0, 260, 419, 900]) expect(dockHistoryLayout(width)).toBe('stacked')
+    for (const width of [900.5, 901, 1200, 1920]) expect(dockHistoryLayout(width)).toBe('columns')
+  })
+})
 
 describe('the default layout', () => {
   it('is the three-column one', () => {

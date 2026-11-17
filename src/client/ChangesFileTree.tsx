@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 
 import { filterFiles } from './file-filter.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
+import { FileMenuButton, useFileActions } from './FileActions.tsx'
 import { fileCheckState, rollUp, type CheckState } from './stage-tree.ts'
 import type { GitFile, GitFileStatus, Translate } from './git-workbench-types.ts'
 import css from './GitWorkbenchPanel.module.css'
@@ -429,6 +430,7 @@ interface TreeChildrenProps {
 }
 
 function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCheck, onDiscard, stageLabels, discardLabel }: TreeChildrenProps): ReactNode {
+  const fileActions = useFileActions()
   const dirNodes = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))
   const fileNodes = [...node.files].sort((a, b) => basePart(a.path).localeCompare(basePart(b.path)))
   const checkColumn = onCheck !== undefined ? TREE_CHECK_W : 0
@@ -498,6 +500,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
               className={active === file.path ? `${css.file} ${css.fileActive}` : css.file}
               style={{ paddingLeft: (onCheck !== undefined ? 0 : indent) + TREE_LEAF_OFFSET }}
               onClick={() => onSelect(file.path)}
+              {...fileActions(file)}
               title={file.previousPath !== undefined ? `${file.previousPath} → ${file.path}` : file.path}
             >
               {/* Icon then name, status on the right with the line counts.
@@ -516,6 +519,7 @@ function TreeChildren({ node, depth, active, collapsed, onToggle, onSelect, onCh
               )}
               <span className={`${css.fileStatus} ${STATUS_BADGE[file.status]}`}>{statusGlyph(file.status)}</span>
             </button>
+            <FileMenuButton file={file} />
             {onDiscard !== undefined ? (
               /* Outside the row button, not inside it: a button in a button is
                  invalid, and clicking roll-back must not also select the file. */

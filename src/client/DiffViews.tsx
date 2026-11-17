@@ -11,44 +11,40 @@ import { DIFF_GRID_PAD_TOP, DIFF_ROW_H } from './row-window.ts'
 import { useChangeNav } from './use-change-nav.ts'
 import { useDiffFind } from './use-diff-find.ts'
 import { currentColIn, findInSides, findInTexts, rowHitRanges } from './diff-find.ts'
-import { DiffFindBar, FindToggle, NavGlyph, SideFindSeat } from './DiffFindBar.tsx'
+import { DiffFindBar, FindToggle, SideFindSeat } from './DiffFindBar.tsx'
+import { ChangeNavigation, EditorMenu, EditorToolbar } from './EditorToolbar.tsx'
+import { combineSelections, editorQuote, type EditorSelection } from './editor-quote.ts'
 import {
   applySaveOk, applySides, armEdit, armRefusal, DISARMED, editableSides, isDirty, markConflict, reloadSides, resetSides,
   type EditState, type WriteResult,
 } from './side-edit.ts'
+import { LeaveEditsConfirm } from './LeaveEditsConfirm.tsx'
 import { PaneDivider } from './PaneDivider.tsx'
 import { SideRails } from './SideRails.tsx'
-import { CodeEditor, type PaintFn } from './CodeEditor.tsx'
+import { CodeEditor, type CodeEditorController, type PaintFn } from './CodeEditor.tsx'
 import { detectIndent } from './indent.ts'
 import { grammarLoadCount, highlightForRowsWindow, highlightRange, shikiLangOf, shikiThemeOf, subscribeGrammarLoaded } from './highlight.ts'
 import { useRowWindow } from './use-row-window.ts'
 import { rowMark, useVariableRowWindow } from './use-variable-row-window.ts'
 import { NO_RANGES, renderUnifiedCode, RowSpacer, SideCells, unifiedRowClass } from './diff-cells.tsx'
 import type { BlockAsk, BlockMode, FileSides, GitOpResult, SideLayer, Translate } from './git-workbench-types.ts'
+import { AddExcerptButton, useExcerptMenu } from './FileActions.tsx'
+import { IconActionButton } from './IconActionButton.tsx'
+import { blockBounds, sideHunk, unifiedHunk } from './code-excerpt.ts'
+import { useCodeSelection } from './use-code-selection.ts'
+import { finalNewlineChange, inlineBlockAt, originalFromPatch } from './inline-diff.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 const SPLIT_MIN = 0.15
 const SPLIT_MAX = 0.85
-const BLOCK_BAR_CLEARANCE = 21
+const BLOCK_BAR_CLEARANCE = 31
 
 /* ---------- diff rendering: rows, word-level ranges, syntax pass ---------- */
 
-/**
- * Render one file's unified-diff segment with word-level highlights and Shiki.
- *
- * This is what History and Compare show, and — unlike the side-by-side pane —
- * it has no row model carrying block ids, because nothing here acts on a block:
- * a commit's contents were decided long ago, so there is no staging and no
- * roll-back. The walk still needs them, so the runs are read off the row kinds
- * by `unifiedBlocks` and marked on the rows that scroll.
- *
- * The scroller is this component's own rather than the pane's. A bar that
- * scrolls away is not a control, and the pane scrolls in BOTH directions —
- * `sticky` fixes the vertical half and nothing fixes the horizontal one, since
- * a block child of a scroller is only ever as wide as the scrollport. A header
- * outside the scrolled box has neither problem.
- */
-export function DiffView({ segment, path, palette, t, wrap }: {
+/** Windowed history/compare diff with a fixed navigation and quote toolbar. */
+export function DiffView({ segment, path, palette, t, wrap, fileHeader, initialLine }: {
+  initialLine?: number
+  fileHeader?: ReactNode
   segment: string
   path: string
   palette: string
@@ -65,6 +61,11 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   const sides = useMemo(() => gutterSides(rowsWithWords), [rowsWithWords])
   const scrollRef = useRef<HTMLDivElement>(null)
   const preRef = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    if (!initialLine || !scrollRef.current) return
+    const row = rowsWithWords.findIndex(row => row.newL >= initialLine || !row.newL && row.oldL >= initialLine)
+    if (row >= 0) scrollRef.current.scrollTop = Math.max(0, (row - 3) * DIFF_ROW_H)
+  }, [initialLine, rowsWithWords])
   // Windowed for the same reason the side-by-side pane is: a unified diff of a
   // long file put every row in the DOM and re-lexed every one of them, so
   // opening one froze the pane in exactly the same way. Two models, one live
@@ -79,6 +80,15 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   )
   const blocks = useMemo(() => unifiedBlocks(rowsWithWords.map(row => row.kind)), [rowsWithWords])
   const changes = useMemo(() => countBlocks(blocks), [blocks])
+  const bounds = useMemo(() => blockBounds(blocks), [blocks])
+  const [quotePlace, setQuotePlace] = useState({ path, segment, block: 0 })
+  const quoteBlock = quotePlace.path === path && quotePlace.segment === segment ? quotePlace.block : 0
+  const setQuoteBlock = (block: number): void => setQuotePlace({ path, segment, block })
+  const selection = useCodeSelection(preRef, segment, i => {
+    const row = rowsWithWords[i]
+    return row && row.kind !== 'hunk' ? { text: row.text, line: row.newL || row.oldL, side: 'unified', oldLine: row.oldL, newLine: row.newL, kind: row.kind } : null
+  })
+  const excerptMenu = useExcerptMenu()
   // Derived rather than measured, because a windowed pane has no element for
   // the block being walked to.
   const blocksForNav = useRef<readonly number[]>(blocks)
@@ -96,8 +106,12 @@ export function DiffView({ segment, path, palette, t, wrap }: {
   )
   // Read by the key listener below, which is attached once. `goToChange` only
   // ever touches refs, but pinning it here says so rather than relying on it.
-  const walk = useRef(goToChange)
-  walk.current = goToChange
+  const quoteWalk = (direction: -1 | 1): void => {
+    const block = goToChange(direction)
+    if (block !== null) setQuoteBlock(block)
+  }
+  const walk = useRef(quoteWalk)
+  walk.current = quoteWalk
   // Find. History and Compare have no editor to supply a panel, and the
   // browser's own cannot see rows a windowed pane has not rendered — so the
   // pane carries its own (diff-find.ts, use-diff-find.ts).
@@ -123,40 +137,33 @@ export function DiffView({ segment, path, palette, t, wrap }: {
 
   return (
     <div className={css.diffWrap} onKeyDown={find.onPaneKeyDown}>
-      <div className={css.diffNav}>
-        <FindToggle find={find} t={t} />
-        {changes > 0 ? (<>
-          <button
-            type="button"
-            className={css.blockBtn}
-            title={t('prevChangeHint')}
-            aria-label={t('prevChange')}
-            onClick={() => { goToChange(-1) }}
-          ><NavGlyph of="prev" /></button>
-          <button
-            type="button"
-            className={css.blockBtn}
-            title={t('nextChangeHint')}
-            aria-label={t('nextChange')}
-            onClick={() => { goToChange(1) }}
-          ><NavGlyph of="next" /></button>
-          <span className={css.sideNavCount}>{t('changeCount', { n: changes })}</span>
-        </>) : null}
-      </div>
+      <EditorToolbar file={fileHeader} className={css.diffNav}>
+        <ChangeNavigation t={t} current={Math.min(quoteBlock, changes - 1)} total={changes} onWalk={quoteWalk} />
+        {selection.available || changes > 0 ? <AddExcerptButton file={{ path }} kind={selection.available ? 'selection' : 'hunk'} capture={selection.available ? selection.capture : () => {
+          const live = selection.capture()
+          if (live) return live
+          const bound = bounds[Math.min(quoteBlock, bounds.length - 1)]
+          return bound ? unifiedHunk(rowsWithWords, ...bound) : null
+        }} /> : null}
+        {fileHeader ? <EditorMenu t={t} file={{ path }}>
+          <IconActionButton icon="search" label={t('findInDiff')} hint={t('findHint')} onClick={find.show} />
+        </EditorMenu> : <FindToggle find={find} t={t} />}
+      </EditorToolbar>
       {find.open ? <DiffFindBar find={find} t={t} /> : null}
-      <div ref={scrollRef} className={css.diffScroll} tabIndex={-1}>
+      <div ref={scrollRef} className={css.diffScroll} tabIndex={-1} onMouseUp={selection.update} onKeyUp={selection.update}
+        onContextMenu={event => excerptMenu({ path }, selection.read(), event)}>
     <pre ref={preRef} className={wrap ? `${css.diffPre} ${css.diffPreWrap}` : css.diffPre}>
       {win.padTop > 0 ? <div className={css.diffSpacer} style={{ height: `${win.padTop}px` }} aria-hidden="true" /> : null}
       {rowsWithWords.slice(win.start, win.end).map((row, k) => {
         const i = win.start + k
         return (
-        <div key={i} className={`${css.line} ${unifiedRowClass(row.kind)}`} data-block={blocks[i]! >= 0 ? blocks[i] : undefined} {...rowMark('u', i)}>
+        <div key={i} className={`${css.line} ${unifiedRowClass(row.kind)}`} data-quote-current={blocks[i] === quoteBlock ? '' : undefined} data-block={blocks[i]! >= 0 ? blocks[i] : undefined} onMouseDown={() => { if (blocks[i]! >= 0) setQuoteBlock(blocks[i]!) }} {...rowMark('u', i)}>
           {sides.old ? <span className={css.lnOld}>{row.kind === 'add' || row.kind === 'hunk' ? '' : row.oldL}</span> : null}
           {sides.new ? <span className={css.lnNew}>{row.kind === 'del' || row.kind === 'hunk' ? '' : row.newL}</span> : null}
           <span className={`${css.gutter} ${row.kind === 'add' ? css.signAdd : row.kind === 'del' ? css.signDel : ''}`}>
             {row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''}
           </span>
-          <span className={css.code}>{renderUnifiedCode(
+          <span className={css.code} data-quote-row={row.kind === 'hunk' ? undefined : i} data-quote-side="unified">{renderUnifiedCode(
             row,
             syntax[i] ?? [],
             // Per visible row: the cost is the viewport's, not the diff's.
@@ -203,7 +210,9 @@ export function DiffView({ segment, path, palette, t, wrap }: {
  * (history and compare keep it unconditionally), with a notice — a silently
  * different view reads as a broken one, not a guarded one.
  */
-export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, phantomListed, onBlockAction, onSaved, onDirtyChange }: {
+export function SideBySideView({ t, path, palette, wrap, preferInline = false, fileHeader, statsPath, fetchSides, writeChecked, scopeKey, gen, fallbackSegment, fallbackLoading, phantomListed, onBlockAction, onSaved, onDirtyChange }: {
+  fileHeader?: ReactNode
+  preferInline?: boolean
   t: Translate
   path: string
   palette: string
@@ -238,6 +247,9 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   onDirtyChange: (dirty: boolean) => void
 }): ReactNode {
   const [layer, setLayer] = useState<SideLayer>('unstaged')
+  const [inline, setInline] = useState(preferInline)
+  const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
+  const editorController = useRef<CodeEditorController | null>(null)
   // How much of the pane the left column gets. Lives here rather than in the
   // drawer so it is one setting for the pane, and survives a file switch —
   // the reader sized the columns for how they read, not for one file.
@@ -260,6 +272,11 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     const current = blockSelection.key === rowWindowKey ? blockSelection.block : 0
     const block = stepBlockIndex(totalBlocks, current, direction)
     if (block === null) return
+    if (inline) {
+      editorController.current?.reveal(inlineStarts[block] ?? 1)
+      setBlockSelection({ key: rowWindowKey, block })
+      return
+    }
     const tops = layer === 'unstaged' && edit.armed ? editorBlockTops : alignedBlockTops
     const target = tops[block]
     if (target !== undefined && scrollRef.current !== null) scrollRef.current.scrollTop = scrollTopFor(target.top)
@@ -355,6 +372,16 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
    * caching here keeps the document-wide scan off the keystroke path.
    */
   const totalBlocks = useMemo(() => blockCount(rows), [rows])
+  const quoteBounds = useMemo(() => blockBounds(rows.map(row => row.block)), [rows])
+  const inlineStarts = useMemo(() => quoteBounds.map(([start, end]) => {
+    for (let i = start; i < end; i++) if (rows[i]?.right) return rows[i]!.right!.line
+    return rows[end]?.right?.line ?? rows[start - 1]?.right?.line ?? 1
+  }), [rows, quoteBounds])
+  const quoteSelection = useCodeSelection(colsRef, sides, (i, side) => {
+    const cell = side === 'old' ? rows[i]?.left : rows[i]?.right
+    return cell ? { ...cell, side } : null
+  })
+  const excerptMenu = useExcerptMenu()
   // A toolbar rises above its block's first row. Horizontally scrolling columns
   // clip overflow on both axes, so a file whose first row changed must reserve
   // that space INSIDE each column. This depends on row shape, not hover, so the
@@ -444,6 +471,9 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   // different problems, and one message for both leaves the reader guessing
   // whether converting line endings would help.
   const refusal = sides === null ? null : armRefusal(sides)
+  useEffect(() => {
+    if (inline && layer === 'unstaged' && sides && !edit.armed && editableSides(sides)) setEdit(prev => armEdit(prev, sides))
+  }, [inline, layer, sides, edit.armed])
 
 
   // The drawer guards every gesture that would drop the buffer — selecting
@@ -455,9 +485,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     onDirtyChange(dirty)
     return () => { onDirtyChange(false) }
   }, [dirty, onDirtyChange])
-  // The buffer's lines and their highlight, for the editor's underlay: the
-  // visible text under the transparent textarea, which is what keeps syntax
-  // coloring and the caret on the same grid while typing.
+  // Dense editor lines, reused by navigation and the viewport model.
   const bufferLines = useMemo(() => edit.buffer.split('\n'), [edit.buffer])
   // What Tab inserts, learned from the file rather than configured. Keyed on
   // the BASE text, not the buffer: re-detecting mid-edit would let a couple of
@@ -467,15 +495,9 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   // the reader types. It is the diff's own left column joined back up — every
   // row of a full-context diff carries a left cell unless the line is an
   // addition, which by definition is not on that side.
-  const indexText = useMemo(() => {
-    const left = rows.filter(row => row.left !== null).map(row => row.left!.text)
-    return left.length === 0 ? '' : left.join('\n') + '\n'
-  }, [rows])
-  // The editor's buffer is a whole file, so it takes the file pass rather than
-  // the diff's per-line re-lex — but only over the lines it is showing. The
-  // editor asks for a range as it scrolls, and `token-cache.ts` remembers what
-  // came back; a pass over the whole buffer was 1,637ms at 1,837 lines, paid
-  // again every time the reader stopped typing.
+  const indexText = useMemo(() => originalFromPatch(sides?.diff ?? '', sides?.targetText ?? ''), [sides])
+  const newlineNotice = sides ? finalNewlineChange(indexText, editable ? edit.buffer : sides.targetText) : null
+  // Reuse the bounded file-token cache for both editable and removed text.
   const editPaint = useMemo<PaintFn | null>(() => {
     if (lang === undefined) return null
     const key = 'buffer:' + statsPath + ':' + path
@@ -483,6 +505,9 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     // `grammarGen` changes nothing computed here; the new identity is what
     // makes the editor repaint once a lazy grammar has landed.
   }, [lang, shikiTheme, statsPath, path, grammarGen])
+  const deletedPaint = useMemo<PaintFn | null>(() => lang === undefined ? null
+    : (lines, from, to) => highlightRange('original:' + statsPath + ':' + path, lines, lang, shikiTheme, from, to),
+  [lang, shikiTheme, statsPath, path, grammarGen])
   // The left column while editing renders dense — one row per INDEX line, no
   // holes — because the right column is now the dense buffer; a hole-aligned
   // left beside a dense right is the alignment the diff view owes, not the
@@ -703,13 +728,18 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   }
 
   /** The pane the drawer had before this view existed, notice included. */
+  const placeholder = (message: string): ReactNode => <>
+    {fileHeader ? <EditorToolbar file={fileHeader} className={css.sideTabs}><EditorMenu t={t} file={{ path }} /></EditorToolbar> : null}
+    <div className={css.empty}>{message}</div>
+  </>
   const unifiedFallback = (): ReactNode => fallbackSegment.length > 0
-    ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} wrap={wrap} />
-    : <div className={css.empty}>{fallbackLoading ? t('loadingDiff') : phantomListed ? t('phantomNotice') : t('noTextDiff')}</div>
+    ? <DiffView segment={fallbackSegment} path={path} palette={palette} t={t} wrap={wrap} fileHeader={fileHeader} />
+    : placeholder(fallbackLoading ? t('loadingDiff') : phantomListed ? t('phantomNotice') : t('noTextDiff'))
 
+  if (idRef.current !== `${scopeKey}\x1f${path}\x1f${layer}`) return placeholder(t('loadingDiff'))
   if (failed) return unifiedFallback()
-  if (sides === null) return <div className={css.empty}>{t('loadingDiff')}</div>
-  if (sides.binary) return <div className={css.empty}>{t('binaryFile')}</div>
+  if (sides === null) return placeholder(t('loadingDiff'))
+  if (sides.binary) return placeholder(t('binaryFile'))
   if (sides.tooLarge) {
     return (
       <>
@@ -725,7 +755,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   // no-change treatment below is a state of the BODY (`sideBodyState`), never
   // an early return for the pane: returning here is what used to blank the
   // tabs for exactly these files.
-  const bodyState = sideBodyState(rows, editable)
+  const bodyState = sideBodyState(rows, editable || inline)
   const finding = find.open && bodyState.kind !== 'editor' && find.query.trim().length > 0
   // The fixed toolbar exists for both layers: unstaged offers Stage/Revert,
   // staged offers Unstage. Edit changes geometry and disabled state, not the
@@ -742,29 +772,26 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   // diff would land on top of edits the patch knows nothing about.
   const barDisabled = blockActionsDisabled(dirty, pendingBlock)
   const blockButtons = (block: number): ReactNode => layer === 'staged' ? (
-    <button
-      type="button"
+    <IconActionButton icon="unstage" label={t('blockUnstage')}
       className={css.blockBtn}
       disabled={barDisabled}
-      title={dirty ? t('blockActionsDirty') : undefined}
+      hint={dirty ? t('blockActionsDirty') : undefined}
       onClick={() => { void runBlock('unstage', block) }}
-    >{t('blockUnstage')}</button>
+    />
   ) : (
     <>
-      <button
-        type="button"
+      <IconActionButton icon="stage" label={t('blockStage')}
         className={css.blockBtn}
         disabled={barDisabled}
-        title={dirty ? t('blockActionsDirty') : undefined}
+        hint={dirty ? t('blockActionsDirty') : undefined}
         onClick={() => { void runBlock('stage', block) }}
-      >{t('blockStage')}</button>
-      <button
-        type="button"
+      />
+      <IconActionButton icon="revert" label={t('blockDiscard')}
         className={`${css.blockBtn} ${css.blockBtnDanger}`}
         disabled={barDisabled}
-        title={dirty ? t('blockActionsDirty') : undefined}
+        hint={dirty ? t('blockActionsDirty') : undefined}
         onClick={() => { void runBlock('discard', block) }}
-      >{t('blockDiscard')}</button>
+      />
     </>
   )
   const blockBar = (block: number): ReactNode => (
@@ -783,66 +810,42 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
     const block = Number(event.currentTarget.dataset.block)
     arm(Number.isInteger(block) && block >= 0 ? block : undefined)
   }
+  const selectedCode = !inline ? combineSelections({ path, available: quoteSelection.available, capture: () => {
+    const excerpt = quoteSelection.capture()
+    return excerpt ? { ...excerpt, layer, diffSha: sides?.diffSha } : null
+  } }, editorSelection) : editorSelection
+  const quote = editorQuote(path, selectedCode, currentBlock === null ? null : () => {
+    const bound = quoteBounds[currentBlock]
+    const excerpt = bound ? sideHunk(rows, ...bound) : null
+    return excerpt ? { ...excerpt, layer, diffSha: sides?.diffSha } : null
+  }, dirty)
   return (
     /* `tabIndex={-1}` is what makes F7 reachable. The handler below is on
        this element, so it only sees keys whose target is inside it — and
        clicking diff text, which is not focusable, otherwise leaves focus on
        the document body and the key never arrives. A negative index keeps the
        pane out of the tab order while letting a click land focus here. */
-    <div className={css.sidePane} tabIndex={-1} onKeyDown={onPaneKeyDown}>
-      <div className={css.sideTabs}>
-        <button
-          type="button"
-          aria-pressed={layer === 'unstaged'}
-          className={layer === 'unstaged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
-          onClick={() => switchLayer('unstaged')}
-        >{t('tabUnstaged')}</button>
-        <button
-          type="button"
-          aria-pressed={layer === 'staged'}
-          className={layer === 'staged' ? `${css.sideTab} ${css.sideTabActive}` : css.sideTab}
-          onClick={() => switchLayer('staged')}
-        >{t('tabStaged')}</button>
-        {/* A file whose whole delta is one line is unfindable by scrolling:
-            the tint only shows once you are already looking at it. The row
-            model knows where every change is, so these two say so. The count
-            is the other half of the answer — "there is one place to look" is
-            what stops the hunt. */}
-        {bodyState.kind === 'rows' || changes > 0 ? (
-          <span className={css.sideNav}>
-            {/* The armed editor's find is CodeMirror's, opened from inside it. */}
-            {bodyState.kind === 'rows' ? <FindToggle find={find} t={t} /> : null}
-            {changes > 0 ? (<>
-            <button
-              type="button"
-              className={css.blockBtn}
-              title={t('prevChangeHint')}
-              aria-label={t('prevChange')}
-              onClick={() => { goToChange(-1) }}
-            ><NavGlyph of="prev" /></button>
-            <button
-              type="button"
-              className={css.blockBtn}
-              title={t('nextChangeHint')}
-              aria-label={t('nextChange')}
-              onClick={() => { goToChange(1) }}
-            ><NavGlyph of="next" /></button>
-            <span className={css.sideNavCount}>{currentBlock === null
-              ? t('changeCount', { n: changes })
-              : t('changePosition', { current: currentBlock + 1, total: changes })}</span>
-            </>) : null}
-          </span>
-        ) : null}
+    <div className={css.sidePane} data-inline={inline ? '' : undefined} tabIndex={-1} onKeyDown={onPaneKeyDown}>
+      <EditorToolbar file={fileHeader} className={css.sideTabs}>
+        <span className={css.editorLayers}>
+          <button type="button" aria-pressed={layer === 'unstaged'} className={layer === 'unstaged' ? css.sideTab + ' ' + css.sideTabActive : css.sideTab}
+            onClick={() => switchLayer('unstaged')}>{t('tabUnstaged')}</button>
+          <button type="button" aria-pressed={layer === 'staged'} className={layer === 'staged' ? css.sideTab + ' ' + css.sideTabActive : css.sideTab}
+            onClick={() => switchLayer('staged')}>{t('tabStaged')}</button>
+        </span>
+        <ChangeNavigation t={t} current={currentBlock} total={changes} onWalk={goToChange} />
+        {quote ? <AddExcerptButton file={{ path }} {...quote} /> : null}
+        <EditorMenu t={t} file={fileHeader ? { path } : undefined}>
+        <IconActionButton icon="search" label={t('findInDiff')} hint={t('findHint')} onClick={bodyState.kind === 'editor' ? () => editorController.current?.find() : find.show} />
         {currentBlock !== null ? (
           <span className={css.sideCurrentBlockActions}>
             {layer !== 'staged' || totalBlocks > 1 ? blockButtons(currentBlock) : null}
             {layer === 'staged' ? (
-              <button
-                type="button"
+              <IconActionButton icon="unstageFile" label={t('fileUnstage')}
                 className={css.blockBtn}
                 disabled={barDisabled}
                 onClick={() => { void runAllBlocks('unstage') }}
-              >{t('fileUnstage')}</button>
+              />
             ) : null}
           </span>
         ) : null}
@@ -856,27 +859,32 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           <span className={`${css.sideActions}${currentBlock !== null ? ` ${css.sideActionsAdjacent}` : ''}`}>
             {edit.armed ? (
               <>
-                <button
-                  type="button"
+                <IconActionButton icon="save" label={t('fileSave')}
                   className={`${css.blockBtn}${dirty ? ` ${css.sideSaveReady}` : ''}`}
                   disabled={!dirty || saving}
                   onClick={() => { void runSave(edit.baseSha) }}
-                >{t('fileSave')}</button>
-                <button
-                  type="button"
+                />
+                <IconActionButton icon="revert" label={t('fileRevert')}
                   className={css.blockBtn}
                   disabled={!dirty || saving}
                   onClick={revert}
-                >{t('fileRevert')}</button>
+                />
               </>
             ) : armable ? (
-              <button type="button" className={css.blockBtn} onClick={() => arm()}>{t('editFile')}</button>
+              <IconActionButton icon="edit" label={t('editFile')} className={css.blockBtn} onClick={() => arm()} />
             ) : null}
           </span>
         ) : null}
-      </div>
+        <IconActionButton icon={inline ? 'columns' : 'inline'} label={t(inline ? 'splitDiff' : 'inlineDiff')}
+          onClick={() => setInline(value => !value)} />
+        </EditorMenu>
+      </EditorToolbar>
       {dirty ? <div className={css.sideNotice}>{t('editingNotice')}</div> : null}
-      {layer === 'unstaged' && refusal !== null && !edit.armed ? <div className={css.sideNotice}>{t(refusal === 'encoding' ? 'encodingNotice' : 'crlfNotice')}</div> : null}
+      {layer === 'unstaged' && refusal !== null && !edit.armed ? <div className={`${css.sideNotice} ${css.sideReadOnly}`} title={t(refusal === 'encoding' ? 'encodingNotice' : 'crlfNotice')}>
+        <span>{t(refusal === 'encoding' ? 'encodingReadOnlyShort' : 'crlfReadOnlyShort')}{newlineNotice ? ` · ${t(newlineNotice)}` : ''}</span>
+        <span className={css.sideReadOnlyHint}>{t('readOnlyDetails')}</span>
+      </div> : null}
+      {newlineNotice && (layer !== 'unstaged' || refusal === null || edit.armed) ? <div className={`${css.sideNotice} ${css.sideReadOnly}`}>{t(newlineNotice)}</div> : null}
       {/* §4's row: the file moved underneath a dirty buffer — by the poll's
           notice or by a refused save — and the reader chooses which version
           survives. Overwrite waits for the refetch the refusal triggered, so
@@ -908,7 +916,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           aligned row at the same line height — the diff decides the rows, the
           layout only decides how much width each side gets. */}
       {find.open && bodyState.kind === 'rows' ? <DiffFindBar find={find} t={t} /> : null}
-      {bodyState.kind === 'editor' ? <SideFindSeat hostRef={findHostRef} scrollRef={scrollRef} split={split} /> : null}
+      {bodyState.kind === 'editor' && !inline ? <SideFindSeat hostRef={findHostRef} scrollRef={scrollRef} split={split} /> : null}
       {/* Focusable so the bar can hand focus back on Escape; F7 bubbles up. */}
       <div ref={scrollRef} className={css.sideScroll} tabIndex={-1}>
       {bodyState.kind === 'empty' ? (
@@ -918,11 +926,18 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
       <div
         ref={colsRef}
         className={css.sideCols}
+        data-inline={inline ? '' : undefined}
+        onContextMenu={event => {
+          const excerpt = quoteSelection.read()
+          if (!inline && excerpt) excerptMenu({ path }, { ...excerpt, layer, diffSha: sides.diffSha }, event)
+        }}
+        onMouseUp={quoteSelection.update}
+        onKeyUp={quoteSelection.update}
         onMouseOver={onBodyHover}
         onMouseDown={onBodySelect}
         onMouseLeave={() => { setHotBlock(null) }}
       >
-        <div ref={leftColRef} className={wrap ? `${css.sideCol} ${css.sideColWrap}` : css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
+        {inline ? null : <div key="old" ref={leftColRef} className={wrap ? `${css.sideCol} ${css.sideColWrap}` : css.sideCol} style={{ flexBasis: `${split * 100}%`, paddingTop: blockBarClearance }}>
           <div
             ref={bodyState.kind === 'editor' ? denseGridRef : alignedGridRef}
             className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}
@@ -981,24 +996,38 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
               </>
             )}
           </div>
-        </div>
-        <PaneDivider label={t('resizeSides')} onDrag={onSplitDrag} />
+        </div>}
+        {inline ? null : <PaneDivider key="divider" label={t('resizeSides')} onDrag={onSplitDrag} />}
         <div
+          key="new"
           ref={rightColRef}
           className={wrap ? `${css.sideCol} ${css.sideColRight} ${css.sideColWrap}` : `${css.sideCol} ${css.sideColRight}`}
-          style={{ paddingTop: blockBarClearance }}
+          style={{ paddingTop: inline ? 0 : blockBarClearance }}
         >
           {bodyState.kind === 'editor' ? (
             <CodeEditor
-              value={edit.buffer}
+              reference={{ file: { path }, source: { layer, diffSha: sides?.diffSha, blob: edit.baseSha, unsaved: dirty } }}
+              value={inline && !editable ? sides.targetText : edit.buffer}
               original={indexText}
               onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}
               paint={editPaint}
+              paintDeleted={deletedPaint}
+              inlineDiff={inline}
+              autoFocus={!inline}
+              readOnly={!editable}
+              unchangedLabel={count => t('unchangedLines', { count })}
+              oldLinesLabel={(from, to) => t('oldLineRange', { from, to })}
+              controller={editorController}
+              onSelectionChange={setEditorSelection}
+              onCursorLine={line => { if (inline) {
+                const block = inlineBlockAt(inlineStarts, line)
+                if (block !== null) setBlockSelection(prev => prev.key === rowWindowKey && prev.block === block ? prev : { key: rowWindowKey, block })
+              } }}
               indent={indentOfBuffer}
               ariaLabel={path}
               onSave={() => { if (dirty && !saving) void runSave(edit.baseSha) }}
               wrap={wrap}
-              panelHost={findHostRef}
+              panelHost={inline ? undefined : findHostRef}
             />
           ) : (
             <div className={wrap ? `${css.sideColGrid} ${css.sideColGridWrap}` : css.sideColGrid}>
@@ -1027,7 +1056,7 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
           )}
         </div>
       </div>
-      <SideRails leftRef={leftColRef} rightRef={rightColRef} split={split} />
+      {inline ? null : <SideRails leftRef={leftColRef} rightRef={rightColRef} split={split} />}
       </>
       )}
       </div>
@@ -1038,51 +1067,4 @@ export function SideBySideView({ t, path, palette, wrap, statsPath, fetchSides, 
   )
 }
 
-/**
- * The unsaved-edits guard, rendered at both sites that defer a gesture on the
- * buffer's answer: the pane's layer-tab switch, and the drawer level (file
- * selection, main tab, source switch, close) for every gesture that would
- * drop the buffer. Same reason as the roll-back confirmation — the click it
- * answers to is one gesture away from losing work. Cancel holds the initial
- * focus and Escape closes, because the default answer to losing edits is no.
- */
-export function LeaveEditsConfirm({ t, path, onCancel, onConfirm }: {
-  t: Translate
-  path: string
-  onCancel: () => void
-  onConfirm: () => void
-}): ReactNode {
-  const stayRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => { stayRef.current?.focus() }, [])
-  useEffect(() => {
-    // Capture phase, like the roll-back dialog: while a question about edits
-    // is open, Escape answers it and nothing else — consumed here, before it
-    // can reach the page's other Escape handlers (an open picker's dismiss,
-    // the commit box's undo).
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      event.stopPropagation()
-      onCancel()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => { window.removeEventListener('keydown', onKey, true) }
-  }, [onCancel])
-  return (
-    <div className={css.confirmScrim} onClick={onCancel}>
-      <div
-        className={css.confirmBox}
-        role="alertdialog"
-        aria-modal="true"
-        aria-label={t('unsavedTitle')}
-        onClick={event => event.stopPropagation()}
-      >
-        <div className={css.confirmTitle}>{t('unsavedTitle')}</div>
-        <div className={css.confirmBody}>{t('unsavedBody', { path })}</div>
-        <div className={css.confirmActions}>
-          <button ref={stayRef} type="button" className={css.btn} onClick={onCancel}>{t('unsavedStay')}</button>
-          <button type="button" className={`${css.btn} ${css.btnDanger}`} onClick={onConfirm}>{t('unsavedLeave')}</button>
-        </div>
-      </div>
-    </div>
-  )
-}
+export { LeaveEditsConfirm } from './LeaveEditsConfirm.tsx'

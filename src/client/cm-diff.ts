@@ -90,7 +90,8 @@ function lineAt(starts: readonly number[], offset: number): number {
  *          ascending and free of duplicates, which is what a decoration set
  *          wants and what makes two calls comparable.
  */
-export function bufferDiff(original: string, doc: string): BufferDiff {
+export function bufferDiff(original: string, doc: string, ignoreLineEndings = false): BufferDiff {
+  if (ignoreLineEndings) { original = original.replace(/\r\n/g, '\n'); doc = doc.replace(/\r\n/g, '\n') }
   if (original === doc) return { changed: [], deletedBefore: [] }
   const lines = doc.split('\n')
   const starts = lineStarts(doc)

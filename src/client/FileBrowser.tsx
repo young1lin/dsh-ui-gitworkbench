@@ -33,6 +33,11 @@ import { NO_IGNORED_READS, anyDirTruncated, attachReads, rememberDir, type DirRe
 import { openAt, reconcilePlace, toggleDir, type FilesPlace } from './files-place.ts'
 import { sameList } from './stable-list.ts'
 import { PathDirGlyph, PathFileGlyph } from './glyphs.tsx'
+import { AddExcerptButton, AddFileButton, FileMenuButton, useFileActions } from './FileActions.tsx'
+import { IconActionButton } from './IconActionButton.tsx'
+import { DockFileNavigation, DockListHeader } from './DockNavigation.tsx'
+import { EditorMenu, EditorToolbar } from './EditorToolbar.tsx'
+import { editorQuote, type EditorSelection } from './editor-quote.ts'
 import { ImageView, type Picture } from './ImageView.tsx'
 import { decodeBase64, formatBytes, looksLikeImagePath, shouldAskForImage } from './image-view.ts'
 import { IMAGE_BYTE_CAP, sniffImage } from '../image-sniff.ts'
@@ -64,7 +69,11 @@ const FILES_PER_DIR = 100
 export function FileBrowser({
   t, palette, statsPath, extraPaths, gen, treeStyle, treeRef, divider, place, onPlace, cached, onTree, wrap,
   fetchRepoTree, fetchIgnoredDir, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, onSaved, onDirtyChange, onShowHistory,
+  docked = false, onShowCode, onShowFiles,
 }: {
+  docked?: boolean
+  onShowCode?: () => void
+  onShowFiles?: () => void
   t: Translate
   palette: string
   statsPath: string | undefined
@@ -114,12 +123,14 @@ export function FileBrowser({
   wrap: boolean
 }): ReactNode {
   const { open, query, blameOn } = place
+  const fileActions = useFileActions()
   const { paths, truncated, ignored, ignoredTruncated, ignoredError, children } = cached
   const expanded = useMemo(() => new Set(place.expanded), [place.expanded])
   /** A file that was open and is not in the repository any more. Reported
    *  rather than silently applied: a selection that clears itself with no
    *  explanation reads as a bug. */
   const [vanished, setVanished] = useState<string | null>(null)
+  const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null)
   const [sides, setSides] = useState<FileSides | null>(null)
   const [loading, setLoading] = useState(false)
   const [edit, setEdit] = useState<EditState>(DISARMED)
@@ -430,11 +441,12 @@ export function FileBrowser({
   /** Open a file, revealing it in the tree — and asking first if the buffer
    *  holds edits, because opening another file drops them. */
   const openFile = (path: string): void => {
-    if (path === open) return
-    if (dirty) { setPending(path); return }
+    if (path === open) { onShowCode?.(); return }
+    if (dirty) { setPending(path); onShowCode?.(); return }
     setSaveFailed(null)
     setVanished(null)
     onPlace(openAt(place, path))
+    onShowCode?.()
   }
 
   /** Directories whose children are in flight, so the effect further down
@@ -600,7 +612,7 @@ export function FileBrowser({
      *  screen is the louder state, and the two must not fight. */
     const ignored = row.kind !== 'more' && isIgnoredPath(row.path, ignoredFilesOf, collapsedOf)
     return (
-    <li key={rowKey(row)}>
+    <li key={rowKey(row)} className={css.fileBrowserRow}>
       {row.kind === 'more' ? (
         <span
           className={css.fbMore}
@@ -611,6 +623,7 @@ export function FileBrowser({
         type="button"
         title={ignored ? `${row.path} — ${ignoredLabel}` : row.path}
         aria-expanded={row.kind === 'dir' ? row.open : undefined}
+        {...row.kind === 'file' ? fileActions({ path: row.path }) : {}}
         className={row.kind === 'file' && row.path === open
           ? `${css.fbRow} ${css.fbRowActive}`
           : ignored
@@ -635,16 +648,54 @@ export function FileBrowser({
         <span className={row.kind === 'dir' ? css.fbDirName : css.fbFileName}>{row.name}</span>
       </button>
       )}
+      {row.kind === 'file' ? <FileMenuButton file={{ path: row.path }} /> : null}
     </li>
     )
   }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is read through
   // `langKey`, and the handlers through `acts`; see both comments above.
-  [rows, open, langKey, ignoredLabel, ignoredFilesOf, collapsedOf])
+  [rows, open, langKey, ignoredLabel, ignoredFilesOf, collapsedOf, fileActions])
+
+  const quote = open === null ? null : editorQuote(open, editorSelection, null, dirty)
+  const fileControls = open === null ? null : (
+    <span className={css.sideActions}>
+      {docked ? null : <><AddFileButton file={{ path: open }} /><FileMenuButton file={{ path: open }} /></>}
+      {!readOnly && !showingImage && sides !== null && !sides.binary && !sides.tooLarge ? (
+        <>
+          <IconActionButton icon="save" label={t('fileSave')}
+            className={`${css.blockBtn}${dirty ? ` ${css.sideSaveReady}` : ''}`}
+            disabled={!dirty || saving}
+            onClick={() => { void save() }}
+          />
+          <IconActionButton icon="revert" label={t('fileRevert')}
+            className={css.blockBtn}
+            disabled={!dirty || saving}
+            onClick={() => { setSaveFailed(null); setEdit(prev => ({ ...prev, buffer: prev.baseText })) }}
+          />
+        </>
+      ) : null}
+      {svg === null ? null : (
+        <IconActionButton icon={asSource ? 'image' : 'source'} label={t(asSource ? 'imagePreview' : 'imageSource')}
+          className={css.blockBtn}
+          pressed={asSource}
+          onClick={() => { setAsSource(on => !on) }}
+        />
+      )}
+      {showingImage ? null : (
+      <IconActionButton icon="blame" label={t('blameToggle')}
+        pressed={blameOn}
+        hint={t('blameHint')}
+        className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
+        onClick={() => { onPlace({ ...place, blameOn: !blameOn }) }}
+      />
+      )}
+    </span>
+  )
 
   return (
     <>
       <div ref={treeRef} className={css.fbTree} style={treeStyle} data-gs-part="fileTree">
+        {docked ? <DockListHeader t={t} canResume={open !== null} onResume={() => onShowCode?.()} /> : null}
         <input
           type="search"
           className={css.fbSearch}
@@ -674,44 +725,12 @@ export function FileBrowser({
           </div>
         ) : (
           <>
-            <div className={css.fbHeader}>
-              <span className={css.fbPath} title={open}>{open}</span>
-              <span className={css.sideActions}>
-                {!readOnly && !showingImage && sides !== null && !sides.binary && !sides.tooLarge ? (
-                  <>
-                    <button
-                      type="button"
-                      className={`${css.blockBtn}${dirty ? ` ${css.sideSaveReady}` : ''}`}
-                      disabled={!dirty || saving}
-                      onClick={() => { void save() }}
-                    >{t('fileSave')}</button>
-                    <button
-                      type="button"
-                      className={css.blockBtn}
-                      disabled={!dirty || saving}
-                      onClick={() => { setSaveFailed(null); setEdit(prev => ({ ...prev, buffer: prev.baseText })) }}
-                    >{t('fileRevert')}</button>
-                  </>
-                ) : null}
-                {svg === null ? null : (
-                  <button
-                    type="button"
-                    className={css.blockBtn}
-                    aria-pressed={asSource}
-                    onClick={() => { setAsSource(on => !on) }}
-                  >{t(asSource ? 'imagePreview' : 'imageSource')}</button>
-                )}
-                {showingImage ? null : (
-                <button
-                  type="button"
-                  aria-pressed={blameOn}
-                  title={t('blameHint')}
-                  className={blameOn ? `${css.blockBtn} ${css.sideSaveReady}` : css.blockBtn}
-                  onClick={() => { onPlace({ ...place, blameOn: !blameOn }) }}
-                >{t('blameToggle')}</button>
-                )}
-              </span>
-            </div>
+            <EditorToolbar file={docked ? <DockFileNavigation t={t} file={{ path: open }} version={{ kind: 'working' }}
+              onList={() => onShowFiles?.()} /> : undefined} className={css.fbHeader}>
+              {docked ? null : <span className={css.fbPath} title={open}>{open}</span>}
+              {docked && quote ? <AddExcerptButton file={{ path: open }} {...quote} /> : null}
+              {docked ? <EditorMenu t={t} file={{ path: open }}>{fileControls}</EditorMenu> : fileControls}
+            </EditorToolbar>
             {pending !== null ? (
               <div className={css.sideNotice}>
                 {t('filesUnsavedAsk')}
@@ -726,6 +745,7 @@ export function FileBrowser({
                       setSaveFailed(null)
                       setVanished(null)
                       onPlace(openAt(place, next))
+                      onShowCode?.()
                     }}
                   >{t('filesDiscardOpen')}</button>
                   <button
@@ -809,6 +829,8 @@ export function FileBrowser({
                 : (
                   <CodeEditor
                     key={open}
+                    onSelectionChange={docked ? setEditorSelection : undefined}
+                    reference={{ file: { path: open }, source: { blob: edit.baseSha, unsaved: dirty } }}
                     value={edit.buffer}
                     original={edit.baseText}
                     onChange={next => { setEdit(prev => ({ ...prev, buffer: next })) }}

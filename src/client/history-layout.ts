@@ -22,6 +22,11 @@ export const HISTORY_LAYOUTS: readonly HistoryLayout[] = ['columns', 'stacked']
  *  switch gets. */
 export const DEFAULT_HISTORY_LAYOUT: HistoryLayout = 'columns'
 
+/** Docked history keeps the log beside the diff only when both can fit. */
+export function dockHistoryLayout(width: number): HistoryLayout {
+  return width > 900 ? 'columns' : 'stacked'
+}
+
 /**
  * Narrow a stored value to a layout this build has.
  *

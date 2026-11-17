@@ -12,13 +12,15 @@
 - High-risk spots: 轮询不得重置 UI 状态（展开/选中）；CSS 栈序与同优先级修饰类（见 Potential Pitfalls）；diff 容量上限截断
 
 ## Business Overview
-会话头的环境卡：分支 + ahead/behind + 增删计数（干净树也显示，仅 `stats.error` 时隐藏）。点开抽屉 = 文件树 + diff 两栏（变更页）或 提交列表 + 树 + diff 三栏（历史页），外加任意两分支对比页。
+会话头的环境卡：分支 + ahead/behind + 增删计数（干净树也显示，仅 `stats.error` 时隐藏）。兼容宿主中打开原生右侧停靠栏，缺少侧栏生命周期能力时打开浮层。停靠栏使用按需导航，浮层保留树与差异分栏，均支持任意两分支对比。
 
-**History 页签有两种排布，由读者自选**（其余页签只有左右分）：`columns` 是提交列表与树、diff 并排的三栏；`stacked` 是列表横跨整宽在上、树+diff 在下，下半部分与 Changes 页签同构。两者各有代价，所以这是选项而非修复——三栏里抽屉总宽固定，拖分隔条只是把窘迫从一栏挪到另一栏，最先让步的正是提交标题（实测 1900px 抽屉里列表只有 ~420px，标题全带省略号）；上下分则把差异区本可以有的高度让了出去。默认 `columns`，选择存 localStorage 键 `dsh-ui-gitworkbench:history-layout`，开关是 `Branch` 那一行（`.compareBar`）右端的两个图标按钮。**不要放进提交列表标题栏**——三栏下那一栏只有约 340px，标题+funnel+搜索框已经占满，第四个控件会被挤出面板，而且读者把列表拖得越窄它消失得越早（第一版就是这么错的）。这一行横跨整个抽屉、且只在 History 出现，作用域正好，也不会被它所控制的那个面板挤掉；`branches` 为空时这一行照样渲染，只是里面没有 ref 选择器。
+**浮层模式的 History 页签有两种排布，由读者自选**（其余页签只有左右分）：`columns` 是提交列表与树、diff 并排的三栏；`stacked` 是列表横跨整宽在上、树+diff 在下，下半部分与 Changes 页签同构。两者各有代价，所以这是选项而非修复——三栏里抽屉总宽固定，拖分隔条只是把窘迫从一栏挪到另一栏，最先让步的正是提交标题（实测 1900px 抽屉里列表只有 ~420px，标题全带省略号）；上下分则把差异区本可以有的高度让了出去。默认 `columns`，选择存 localStorage 键 `dsh-ui-gitworkbench:history-layout`，开关是 `Branch` 那一行（`.compareBar`）右端的两个图标按钮。**不要放进提交列表标题栏**——三栏下那一栏只有约 340px，标题+funnel+搜索框已经占满，第四个控件会被挤出面板，而且读者把列表拖得越窄它消失得越早（第一版就是这么错的）。这一行横跨整个抽屉、且只在 History 出现，作用域正好，也不会被它所控制的那个面板挤掉；`branches` 为空时这一行照样渲染，只是里面没有 ref 选择器。
 
-实现上，`src/client/history-layout.ts` 是唯一真源（类型、校验器、`DEFAULT_HISTORY_LAYOUT`、`COMMIT_ROW_H`）。面板用一个 `stackedHistory` 标志同时决定三件事：`.body[data-stacked]`、列表按宽还是按高（`panes.commits` / `panes.commitsTall` 是两个字段，各存各的，来回切不丢）、分隔条 `axis` 取 x 还是 y。分隔条的钳制**不需要分情况**——`neighbourWidth` 按几何判断列表在不在树旁边，堆叠时自然算出 0。`.bodyRow` **每个页签都渲染**（未堆叠时是行套行，零代价，换来一套 JSX 而非两套）。行形状也跟着排布走：三栏是两行（hash/作者/时间一行，subject 一行，48px，因为 ~340px 的窄栏挤不下四样东西）；堆叠是单行（`hash | subject | 作者 时间`，按 `git log --oneline` 的顺序——hash 定宽才能让所有标题左对齐成一列可扫的东西，28px）。行高**只有一个家**：面板把 `COMMIT_ROW_H[layout]` 作为 `--gs-commit-row` 发出去，样式表读它，泳道图元把同一个值当 prop 收——两边对不上时泳道就接不上行与行之间的缝，静默无报错，所以 `tests/commit-row-height.test.ts` 守的是这条链路而不是某个数字
+浮层布局的 `src/client/history-layout.ts` 是唯一真源（类型、校验器、`DEFAULT_HISTORY_LAYOUT`、`COMMIT_ROW_H`）。面板用一个 `stackedHistory` 标志同时决定三件事：`.body[data-stacked]`、列表按宽还是按高（`panes.commits` / `panes.commitsTall` 是两个字段，各存各的，来回切不丢）、分隔条 `axis` 取 x 还是 y。分隔条的钳制**不需要分情况**——`neighbourWidth` 按几何判断列表在不在树旁边，堆叠时自然算出 0。`.bodyRow` **每个页签都渲染**（未堆叠时是行套行，零代价，换来一套 JSX 而非两套）。行形状也跟着排布走：三栏是两行（hash/作者/时间一行，subject 一行，48px，因为 ~340px 的窄栏挤不下四样东西）；堆叠是单行（`hash | subject | 作者 时间`，按 `git log --oneline` 的顺序——hash 定宽才能让所有标题左对齐成一列可扫的东西，28px）。行高**只有一个家**：面板把 `COMMIT_ROW_H[layout]` 作为 `--gs-commit-row` 发出去，样式表读它，泳道图元把同一个值当 prop 收——两边对不上时泳道就接不上行与行之间的缝，静默无报错，所以 `tests/commit-row-height.test.ts` 守的是这条链路而不是某个数字
 
-抽屉 chrome 收敛为三行：header（**分支胶囊就是 worktree 选择器本体**、齿轮下挂设置浮层、四个图标按钮 最大化/刷新/设置/关闭）、tabs、syncBar——分支名与 ↑↓ 计数全抽屉各只出现一次（曾各两处）。
+浮层 chrome 分为三行：header（**分支胶囊就是 worktree 选择器本体**、齿轮下挂设置浮层、四个图标按钮 最大化/刷新/设置/关闭）、tabs、syncBar——分支名与 ↑↓ 计数全抽屉各只出现一次（曾各两处）。
+
+原生侧栏采用双行编辑栏：WorkbenchChrome 第一行保留来源、Radix 视图菜单、刷新和更多；仓库信息与独立分支操作位于来源面板，外观与同步位于更多。EditorToolbar 第二行合并文件选择、层级、块导航、上下文引用和编辑菜单，410px 以内换行。Changes 使用官方 CodeMirror unifiedMergeView 管理差异和折叠，CRLF 比较保留原始坐标，删除 widget 接入有界子编辑器。dock-layout 按页签保存导航，900px 以内列表与代码切换，更宽时可并排。History 由 use-history-layout 观察实际面板宽度，900px 以上固定左侧提交列表，右侧差异与文件列表按需切换，避免挤成三栏；更窄时回到提交→文件→代码导航。重排使用同一批组件，不重建编辑器；浮层仍使用读者保存的 columns/stacked 偏好。commitLayout 同时决定行形状、COMMIT_ROW_H 和泳道高度；观察器在卸载时断开。编辑器通过 CSS 隐藏以保留缓冲和撤销。提交区默认折叠。文件与代码引用通过已注册的输入来源 codec 序列化，并由公开消息节点渲染为可回跳的工作台标签。详见 [conversation-integration.md](conversation-integration.md)。
 
 ## API Entry Points（客户端 → 宿主 RPC）
 | RPC | 用途 |
@@ -41,7 +43,7 @@ flowchart LR
 ```
 
 ## Business Rules
-- **git 一律跑在仓库根，不是会话打开的目录**：抽屉里的 path 全是仓库根相对（porcelain status / `--numstat` 无论在哪运行都这么输出），而 pathspec、`:path`、`hash-object` 参数、`ls-tree` 清单、`join(dir, path)` 全相对运行目录解析——两者只在根相等。带路径的 RPC 先 `rootedDirOf`（`src/repo-root.ts` 的 `rootedDir`，`rev-parse --show-toplevel`，非仓库回落原目录）再跑 git；`stats` 把解析并进并行批次并作为 `repoRoot` 返回（分支切换器的门拿它与 `mainWorktreePath` 比；commit/compare 视图与错误形状省略该键），`commitStats` 在缓存探测之后。不缓存解析：子目录里中途 `git init`，下次轮询认新根。守卫：`tests/repo-root.git.test.ts`（git 侧契约）+ `tests/host-rooted-paths.test.ts`（源码扫描布线，已变异测试）（README §6.22）
+- **git 一律跑在仓库根，不是会话打开的目录**：抽屉里的 path 全是仓库根相对（porcelain status / `--numstat` 无论在哪运行都这么输出），而 pathspec、`:path`、`hash-object` 参数、`ls-tree` 清单、`join(dir, path)` 全相对运行目录解析——两者只在根相等。带路径的 RPC 先 `rootedDirOf`（`src/repo-root.ts` 的 `rootedDir`，`rev-parse --show-toplevel`，非仓库回落原目录）再跑 git；`stats` 把解析并进并行批次并作为 `repoRoot` 返回（分支切换器的门拿它与 `mainWorktreePath` 比）；`commitStats` 与 `compareRefs` 的成功结果也返回 `repoRoot`，错误形状省略该键。`commitStats` 在缓存探测之后解析根。不缓存解析：子目录里中途 `git init`，下次轮询认新根。守卫：`tests/repo-root.git.test.ts`（git 侧契约）+ `tests/host-rooted-paths.test.ts`（源码扫描布线，已变异测试）（README §6.22）
 - 轮询每次返回**新数组引用**：树展开状态提升到会话级组件，gen 只在手动刷新时 bump（README §6.0c）
 - diff 双上限：整体 `DIFF_CHAR_CAP` 400KB、untracked 合成段 `UNTRACKED_TOTAL_CHAR_CAP` 160KB；单 untracked >1MB 只计数
 - 词级高亮 = 相邻 −/+ 行 token LCS（`attachWordRanges`，>200k 单元格退化整行）；语法色 = Shiki 本地包（`highlight.ts`，语法按需分包）
@@ -84,4 +86,8 @@ flowchart LR
 - `commitStats` 才缓存（hash 寻址不可变）；`stats` 绝不缓存（工作区随时变）
 
 ## Related Docs
+[文件路径与会话输入接口](conversation-integration.md)（Session 输入动作、结构化引用、worktree 路径与菜单版本差异）
+
 [write-ops](../write-ops/overview.md)（树上的勾选与提交框）、[plugin-loading](../plugin-loading/overview.md)（插槽注册与 RPC 通道）、[worktree-emulation](../worktree-emulation/overview.md)（header 选择器的显示推导与 pin 规则）
+
+工作台接入原生停靠栏及选区 / 差异块快照的生命周期与输入事务，见 [conversation-integration.md](conversation-integration.md)。

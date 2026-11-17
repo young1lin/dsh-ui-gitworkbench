@@ -22,6 +22,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import * as ts from 'typescript'
 
 const tsx = readFileSync(fileURLToPath(new URL('../src/client/GitWorkbenchPanel.tsx', import.meta.url)), 'utf8')
 const host = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8')
@@ -34,15 +35,23 @@ function code(text: string): string {
 describe('the branch switcher gate', () => {
   const panel = code(tsx)
 
-  /** The JSX expression wrapping `<BranchSwitcher`: from its opening `{` to the tag. */
+  /** The condition passed to the shared chrome's switcher slot. */
   function gate(): string {
-    const at = panel.indexOf('<BranchSwitcher')
-    // Vacuous-pass backstop: a panel that stopped rendering the switcher
-    // would otherwise satisfy every "does not contain" below.
-    expect(at, 'the panel does not render BranchSwitcher at all').toBeGreaterThanOrEqual(0)
-    const open = panel.lastIndexOf('{', at)
-    expect(open, 'BranchSwitcher is not inside a JSX expression').toBeGreaterThanOrEqual(0)
-    return panel.slice(open, at)
+    const ast = ts.createSourceFile('panel.tsx', panel, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const conditions: string[] = []
+    const visit = (node: ts.Node): void => {
+      if (ts.isJsxAttribute(node) && node.name.getText(ast) === 'switcher'
+        && node.initializer && ts.isJsxExpression(node.initializer)) {
+        const expression = node.initializer.expression
+        if (expression && ts.isConditionalExpression(expression)) conditions.push(expression.condition.getText(ast))
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(ast)
+    expect(conditions, 'the panel must provide one guarded switcher').toHaveLength(1)
+    const chrome = code(readFileSync(fileURLToPath(new URL('../src/client/WorkbenchChrome.tsx', import.meta.url)), 'utf8'))
+    expect(chrome).toContain('<BranchSwitcher {...switcher} />')
+    return conditions[0]!
   }
 
   it('compares the main worktree with the ROOT of the viewed tree', () => {

@@ -36,6 +36,17 @@ function block(selector: string): string {
   return css.slice(open + 1, close)
 }
 
+describe('native sidebar navigation', () => {
+  it('gives the narrow file list the code space using container width', () => {
+    const source = readFileSync(fileURLToPath(new URL('../src/client/styles/dock-layout.css', import.meta.url)), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const narrow = /@container\s*\(max-width:\s*900px\)\s*\{([\s\S]*?)\n\}/.exec(source)?.[1]
+    expect(narrow, 'the native pane, rather than the browser, decides the layout').toBeDefined()
+    expect(narrow).toMatch(/\.diffPane[^}]*\.fbMain\s*\{\s*display:\s*none/)
+    expect(narrow).toMatch(/\.treeCol[^}]*\.fbTree\s*\{[^}]*width:\s*100%/)
+  })
+})
+
 /**
  * Primer 11.10 `diffBlob` tokens. The dark ones are Primer's alpha hexes
  * flattened over `--bgColor-default` (#0d1117), because the drawer paints the

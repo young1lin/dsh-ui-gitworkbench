@@ -4,13 +4,17 @@
 
 [dsh（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness) 的树外 Web UI 插件：给 dsh 的 Web 界面装一个 Git 工作台，不改动 dsh 本体。
 
-每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，右侧滑出一张工作台面板，当前 worktree 的改动一览无余：
+每个会话的头部都有一枚状态卡，显示当前分支、领先/落后和增删计数。点开它，工作台接入 DSH 右侧停靠栏，可与对话并排查看；侧栏能力不足时使用浮层。当前 worktree 的改动一览无余：
 
-- **变更**：可折叠的文件树，配完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；二进制文件按字节嗅探，是图片就直接显示（删除的文件显示 HEAD 那份）；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；Ctrl/Cmd+F 两列查找——未武装时搜左右两列（先左后右、跨列步进），武装后查找条只压在工作树列上方；
+- **变更**：侧栏默认单列可编辑 diff，文件列表按需展开；可切换完整上下文的左右并排 diff——双列行号、词级高亮、Shiki 语法着色，右栏可直接 Edit；二进制文件按字节嗅探，是图片就直接显示（删除的文件显示 HEAD 那份）；树顶可打关键字过滤文件列表（多词与关系、智能大小写），文件行悬浮可一键撤回到上次提交（IDEA 的 Rollback，弹窗先说清后果）；diff 头部常驻当前变更块与 `current / total`，Unstaged 可 Stage / Revert（进入 Edit 也保留），Staged 可 Unstage 当前块或整个文件；Ctrl/Cmd+F 两列查找——未武装时搜左右两列（先左后右、跨列步进），武装后查找条只压在工作树列上方；
 - **文件**：仓库目录树与可编辑文件查看器，支持搜索、图片预览、CodeMirror 编辑和 blame 行信息；
-- **历史**：提交列表 / 文件树 / diff 三栏并排，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；diff 内 Ctrl/Cmd+F 查找（Enter / Shift+Enter 上下一个、`当前 / 总数` 计数、命中着色），图片显示该提交的那份（删除的显示父提交那份）；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
+- **文件引用与路径**：选中文件工具栏可「添加到对话」，文件行支持右键、⋯ 和 Shift+F10，可复制文件名、仓库相对路径、绝对路径。添加后返回输入框，保留原草稿和已有引用，不自动发送。引用标签携带所看 worktree、冻结版本和可用的 Git 对象身份；发送后点击回到工作台，代码引用展示保存的实际文本。
+- **DSH 文件菜单与批注**：DSH 原生文件右键菜单可在工作台查看该绝对路径所在 worktree 的当前变更；支持选区或差异块写批注，多条批注一次加入现有对话草稿，不自动发送。每条批注保存所看代码快照、版本与新旧侧，可单独回看。待加入批注按会话暂存在插件内存中，切换文件、版本或工作树保留；刷新页面或重载插件会清空暂存区，已加入的草稿由 DSH 保存。
+- **代码快照**：选中代码或定位单个差异块后，用对话图标添加所看内容及行号。工作树、暂存区、历史 / 比较版本与未保存缓冲均带来源，保留草稿，不自动保存或发送。
+- **侧栏布局**：代码默认占满可用区域，文件列表按需切换；历史在 900px 以上保留左侧提交列表与右侧差异，文件列表按需展开；窄侧栏按「提交 → 文件 → 差异」逐层查看。提交区默认折叠并保留说明。顶部保留来源和视图，刷新、分支、同步与外观集中在更多菜单；视图和差异操作菜单使用 Radix。
+- **历史**：宽侧栏左右显示提交列表与所选 diff，窄侧栏按提交、文件、diff 逐层查看；浮层支持三栏并排或上下排布，滚动到底自动翻页；行内带作者、悬浮卡带精确时间；diff 内 Ctrl/Cmd+F 查找（Enter / Shift+Enter 上下一个、`当前 / 总数` 计数、命中着色），图片显示该提交的那份（删除的显示父提交那份）；IDEA 式过滤（`user:` / `path:` / `after:` 输入语法，或作者 / 日期 / 路径分区漏斗弹层），条件编译进 `git log`、全历史匹配、车道图常驻，另有「全部分支」；
 - **对比**：任选两个分支互相比较，diff 内同样可查找，图片显示 head 那份（删除的显示 base 那份）；
-- **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合提交框和 fetch / pull / push 同步条，一次提交加推送全程不用离开面板；头部另有分支切换器（仅主工作树）——当前分支打点、被其他工作树占用的置灰并注明去向、远端独有分支一键签出并跟踪，本地改动带得动就随行、带不动 git 拒绝并归类提示，绝不 force；
+- **提交与同步**：树上勾选文件就是真实的 `git add` / `git restore --staged`，配合按需展开的提交框和更多菜单中的 fetch / pull / push（浮层使用同步条），一次提交加推送全程不用离开面板；头部另有分支切换器（仅主工作树）——当前分支打点、被其他工作树占用的置灰并注明去向、远端独有分支一键签出并跟踪，本地改动带得动就随行、带不动 git 拒绝并归类提示，绝不 force；
 - **外观**：七套主题族各带亮暗，默认跟随系统；支持虚化背景图和自定义 CSS，按「项目 / 全局」两个作用域保存，项目优先。
 
 另带 **worktree 仿真**：模型在会话里调用 `worktree_enter` / `worktree_exit` / `worktree_status` 三个工具，即可在 `.agents/worktrees/<name>` 下建立或退出隔离 worktree，并把会话绑定过去。**子代理会话不写自己的绑定，而是沿谱系借用最近绑定祖先的 worktree**——standing 提示、芯片与 `worktree_status` 对无自有绑定的会话统一解析「有效绑定」，外层退出后子树自动失去借用。绑定后状态卡点亮绑定标记，面板头部出现 worktree 切换器（按分支列出仓库全部 worktree），统计随之切换。
@@ -539,7 +543,30 @@ files/numstat 全 0），此前一个字不说，现在给一行「想看另一�
 分支无 upstream 时 argv 曾写死 `push --set-upstream origin <branch>`，而同步条只要 `git remote` 有输出就显示 push 按钮：remote 改过名的 clone、手动 `remote add upstream` 的仓库，按钮照常出现、点下去 git 报 `'origin' does not appear to be a git repository`。规则：`pushRemote(remotes, pushDefault)`（git-ops.ts）决定去处，顺序照 git 自己对无 upstream 分支的顺序——`branch.<name>.pushRemote`、其次 `remote.pushDefault`、再 `origin`——再加一条 git 不猜但抽屉可以猜的：只有一个 remote 就是它；多个且无 origin 才拒绝，并把 remote 名和该设的配置键写进错误；配置指向的名字不在 remote 列表里（`remote rename` 后的陈旧值）同样拒绝并点名配置键，不把 git 的 `does not appear to be a git repository` 直接甩给用户。`pushArgv(branch, remote | null)`：null 表示已有 upstream、仍是裸 `push`（尊重用户自己的 push 配置）；remote 名同分支名一样过 `isSafePathArg`，以 `-` 开头的名字不能变成参数。RPC 只在无 upstream 的路径上并行问 `git remote`、`git config --get branch.<name>.pushRemote` 与 `remote.pushDefault`（未设时 exit 1、stdout 空，当 '' 用；分支键优先——`tests/push-remote.git.test.ts` 钉住）。守卫 `tests/push-remote.git.test.ts` 在真 git 上钉住事实：唯一 remote 叫 `upstream` 的仓库，旧 argv 失败、新 argv 落地且 `main@{upstream}` = `upstream/main`。
 
 ### 6.29 会话标题区会裁剪整个抽屉，`position: fixed` 和更大的 z-index 都绕不过遮罩
-Harness 的 `.titleCluster` 用 `overflow: clip` 加 `mask-image` 裁剪并渐隐标题区的操作入口（上游 `8b48ec1673f`）。插件挂在 `conversation.session.header.actions`，所以抽屉若仍是入口的 DOM 后代，整层遮罩、面板和点击区域都会被限制在标题条内，表现为只露出顶部一条。`Drawer` 必须用 `createPortal(overlay, document.body)` 返回**整个** `data-gs-part="overlay"`，入口卡片继续留在标题区；不能只搬 `.drawer`，否则背景遮罩和伴随浮层仍被裁剪。调色板在 overlay 自身声明，历史菜单的 portal 仍以它为容器。`react-dom` 已由宿主冻结模块表共享，保持 external。守卫 `tests/panel-modules.test.ts` 用 TypeScript AST 验证真实返回值、挂载目标和导入，注释不参与匹配。
+Harness 的 `.titleCluster` 用 `overflow: clip` 加 `mask-image` 裁剪并渐隐标题区的操作入口（上游 `8b48ec1673f`）。插件挂在 `conversation.session.header.actions`，所以抽屉若仍是入口的 DOM 后代，整层遮罩、面板和点击区域都会被限制在标题条内，表现为只露出顶部一条。浮层模式的 `Drawer` 必须用 `createPortal(overlay, document.body)` 返回**整个** `data-gs-part="overlay"`，入口卡片继续留在标题区；不能只搬 `.drawer`，否则背景遮罩和伴随浮层仍被裁剪。调色板在 overlay 自身声明，历史菜单的 portal 仍以它为容器。`react-dom` 已由宿主冻结模块表共享，保持 external。守卫 `tests/panel-modules.test.ts` 用 TypeScript AST 验证真实返回值、挂载目标和导入，注释不参与匹配。
+
+### 6.30 会话草稿的文本长度不等于编辑器坐标，历史路径也不等于当前文件
+
+「添加到对话」只走 Session 的公开输入接口：`inputActions.captureInsertion()` 取得编辑器坐标与 `draftRev`，异步解析后用原 span 插入。选区折叠到末端，保留选中的草稿文字；已有引用不经过 `setDraft` 展开。草稿变化、Session binding 替换或抽屉换来源 / 关闭时拒绝或取消插入，不重试覆盖。
+
+路径以所看来源的 `repoRoot` 为基准，宿主 `fileReference` 重新核实根与单个文件。文件与代码引用使用工作台自己的来源，携带仓库、完整 Git 版本、旧路径和 Git 对象身份；输入框中显示紧凑标签。提交删除取第一父提交，工作树删除取 HEAD，HEAD 没有时取 index 的对象；找不到旧内容时只标识删除路径。Compare 在生成结果时冻结两端，base 是实际 merge base，无共同祖先时退回 base tip；插入与按需 diff 均沿用冻结版本。
+
+`FileActions.tsx` 在抽屉层共用一个菜单，监听器随菜单释放，复制不发 RPC；`file-reference.ts` 负责纯规则和插入事务。测试覆盖真实临时 Git worktree、历史删除 / index 版本、草稿和 Session 竞态，以及中英文菜单、路径复制、未保存编辑门禁和监听器清理。`react-test-renderer` 仅用于组件测试，不进入发布包。宿主接口更新后须重启 dsh web，再刷新浏览器。
+
+### 6.31 原生停靠栏的标签保留、关闭保护与代码快照
+
+支持公开侧栏接口的 DSH 中，状态卡打开 `sidebar.right.pane.tab` 的 Git 工作台，保留原生分栏、浮动与全屏操作；侧栏能力不足时保留浮层入口。标签注册 `keepMounted: true`，切换标签、Session 或收起侧栏保留所选 worktree、查看位置和编辑缓冲。隐藏时停止重轮询、取消待插入事务，确认弹窗释放全局 Escape 监听。原生关闭通过 `registerCloseHandler` 接入未保存编辑确认；后台标签需要确认时先显示该标签，确认后的准入只覆盖这一次关闭。
+
+选中代码后使用「将选中代码添加到对话」图标；差异工具栏的图标引用当前块。引用携带所看仓库、路径、版本、列侧、行列范围和实际文本；差异块保留新旧范围及增删行，未保存编辑标记 `unsaved`。工作台通过 DSH 公开的输入来源 codec 序列化标签，通过 `userText` 规则和消息节点插槽渲染已发送引用。点击代码标签先尝试在保留的编辑器中恢复选区：仓库、路径、版本、暂存层及已捕获的内容身份必须一致，实际代码也必须匹配；旧侧仍定位旧侧，差异块核对两侧。从文件列表回跳会展开代码区，保留工具栏、未保存编辑和撤销历史。无法准确定位时才显示保存的只读快照，返回原编辑器继续操作。文件引用按对应 worktree 或冻结版本打开。以上操作保留草稿，不自动保存或发送。旧版绝对路径 mention 没有保存版本身份，只按该路径所属工作树打开。消息节点渲染需要提供该公开接口的 DSH 版本（在 0.2.2-rc.1 核实）。
+
+停靠栏的 Changes 使用 CodeMirror 官方 `unifiedMergeView` 合并显示删除行与新版代码，默认直接编辑新版，可切回左右对照；暂存层与受保护编码只读。比较时仅忽略 CRLF 与 LF 的差别，保留原始内容及引用坐标，真实的末尾换行变化单独提示。CodeMirror 管理差异、增量更新和未修改段折叠；可见删除 widget 接入高度有界的只读 CodeMirror，避免大段删除产生整段 DOM。Shiki 只为可见行着色。选中行及字符有持续高亮，焦点移到草稿后仍保留。 新旧代码使用同一正文列；删除块通过提示提供旧行范围，横向滚动沿用主区域，软换行随主编辑器切换。
+
+`WorkbenchChrome` 的第一行保留仓库 / 工作树入口、视图菜单、刷新和更多菜单；原生停靠栏负责窗口控制。仓库入口展示当前路径、统计与版本，并提供独立的 Git 分支切换按钮及工作树查看列表。更多菜单按显示和远端同步分组，拉取策略在菜单内展开，设置单独打开。第二行由 `EditorToolbar` 合并文件选择、暂存层切换、差异块导航、上下文引用和编辑菜单；不超过 410px 时操作组换行。文件完整路径保存在提示中，历史提交与比较版本保留可见标记。选中代码时引用选区，否则引用当前块；完整文件引用、复制路径及暂存 / 回退 / 编辑操作放在编辑菜单。菜单使用 Radix Dropdown Menu，支持键盘导航、当前视图标记、关闭后的焦点恢复及窄栏定位。`dock-layout` 按页签保留提交、文件和代码位置；900px 以内切换显示列表与代码，更宽时展开列表可并排。CSS 隐藏保留的编辑器，返回时缓冲、选区和撤销不丢失。切换文件、版本、来源及关闭继续走未保存确认。提交区默认折叠并保留说明和 amend 状态。文案在 `locales.ts` 同时维护中英文。
+
+点击新版行号可选中整行，拖选任意代码后也可右键或按 Shift+F10，添加实际代码与路径，或复制代码、文件名和路径。菜单打开时冻结代码、worktree 与版本，点击添加时取得最新草稿插入位置；菜单打开期间的草稿输入不会被覆盖。未保存缓冲可引用，添加不会替用户保存，关闭仍有未保存确认。
+
+选区手势仅记录坐标，`CodeEditor` 向工具栏报告选区可用状态并提供延迟截取函数，显式添加时才截取选区或当前块；DOM 端点只在对应代码单元内计量，排除行号与操作按钮，CR 显示标记按一个源字符计算。CodeMirror 使用 `doc.lineAt` 和 `sliceString`，不在选区按键路径遍历整份文档。`code-excerpt`、`code-selection-dom`、`workbench-dock` 与 `file-actions` 测试覆盖坐标、快照、输入事务和保留标签的生命周期；DOM 测试依赖只在开发期安装。
+
 
 ## 7. dsh 仓库里的关键参考文件（去哪里抄）
 

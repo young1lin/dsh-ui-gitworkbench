@@ -80,6 +80,13 @@ function carriesPaths(method: RemoteMethod): boolean {
   return /\bpath:\s*string\b/.test(method.params) || /\bpaths:\s*readonly string\[\]/.test(method.params)
 }
 
+function rooted(method: RemoteMethod): boolean {
+  // Native targets are absolute. Discovery must root at their existing ancestor.
+  return method.name === 'nativeFileLocation'
+    ? method.body.includes('locateNativeFile(path, directory => this.repoRootOf(directory, signal))')
+    : method.body.includes('rootedDirOf')
+}
+
 describe('path-carrying RPCs run at the repository root', () => {
   const stripped = code(source)
   const methods = remoteMethods(stripped)
@@ -100,6 +107,7 @@ describe('path-carrying RPCs run at the repository root', () => {
       'fileDiff',
       'fileImage',
       'fileSides',
+      'nativeFileLocation',
       'revImage',
       'stage',
       'unstage',
@@ -113,9 +121,15 @@ describe('path-carrying RPCs run at the repository root', () => {
     // the same helper, which the next test pins.
     const offenders = methods
       .filter(carriesPaths)
-      .filter(method => !method.body.includes('rootedDirOf'))
+      .filter(method => !rooted(method))
       .map(method => method.name)
     expect(offenders, 'RPCs carrying paths but not rooting their directory').toEqual([])
+  })
+
+  it('rejects a native discovery mutation that substitutes the session or main root', () => {
+    const native = methods.find(method => method.name === 'nativeFileLocation')!
+    expect(rooted(native)).toBe(true)
+    expect(rooted({ ...native, body: native.body.replace('this.repoRootOf(directory, signal)', "this.repoRootOf('C:/main', signal)") })).toBe(false)
   })
 
   it('stats reads untracked files against the rooted directory too', () => {

@@ -82,10 +82,14 @@ import { shapeDirChildren, type DirChild } from './dir-listing.js'
 import { parseBlame, type BlameLine } from './blame.js'
 import { removePathInside } from './fs-remove.js'
 import { resolveInside } from './path-lock.js'
+import { freezeComparison, resolveFileReference } from './file-reference.js'
+import { locateNativeFile, type NativeFileLocation } from './native-file.js'
+import type { FileReference, ReferenceRange, ReferenceRequest } from './reference-contract.js'
 import { isMainWorktree, resolveRepoRoot, rootedDir } from './repo-root.js'
 import { diffTooLarge, targetTooLarge, SIDE_BYTE_CAP, SIDE_LINE_CAP } from './side-guard.js'
 import { IMAGE_BYTE_CAP, sniffImage } from './image-sniff.js'
 import { LOG_FORMAT, parseLog, type GitCommit } from './git-log.js'
+import { DIFF_CONTEXT_ARG } from './diff-context.js'
 import { emptyLogFilter, logFilterArgs, type LogFilter } from './log-filter.js'
 import { parseShortlog, type AuthorEntry } from './shortlog.js'
 import {
@@ -164,16 +168,10 @@ interface SessionStartEvent {
 }
 
 export interface WorkbenchStats {
+  readonly referenceRange?: ReferenceRange
   readonly worktreePath: string
-  /**
-   * The repository root the view's paths are relative to: `--show-toplevel`
-   * of `worktreePath`, forward slashes. Set by `stats`, the working-tree
-   * view, where the header's branch switcher compares it against the main
-   * worktree's path — a session opened at a subdirectory is still the main
-   * worktree, and its `worktreePath` would never match. Omitted (never
-   * `undefined`: the value must stay JSON-safe) on the commit and compare
-   * views, which are not trees one switches, and on the error shape.
-   */
+  /** Resolved root for repository-relative paths in every successful view.
+   *  Optional for error payloads and older host halves. */
   readonly repoRoot?: string
   readonly branch: string
   readonly ahead: number
@@ -631,12 +629,12 @@ export class GitWorkbenchService extends TypertRemoteService {
     const root = await this.rootedDirOf(worktreePath, signal)
     if (typeof base === 'string' && base.length > 0 && typeof head === 'string' && head.length > 0) {
       if (!isRefName(base) || !isRefName(head)) return { diff: '' }
-      const ranged = await this.git(root, ['diff', '--no-renames', `${base}...${head}`, '--', path], signal)
+      const ranged = await this.git(root, ['diff', DIFF_CONTEXT_ARG, '--no-renames', `${base}...${head}`, '--', path], signal)
       if (ranged.exitCode === 0) return { diff: ranged.stdout }
       // Unrelated histories have no merge base for `A...B` to diff from; the
       // two-tip diff still answers what differs, exactly as `compareRefs` does.
       if (!isNoMergeBaseError(ranged.stderr)) return { diff: '' }
-      const tips = await this.git(root, ['diff', '--no-renames', base, head, '--', path], signal)
+      const tips = await this.git(root, ['diff', DIFF_CONTEXT_ARG, '--no-renames', base, head, '--', path], signal)
       return { diff: tips.exitCode === 0 ? tips.stdout : '' }
     }
     if (typeof commit === 'string' && commit.length > 0) {
@@ -646,12 +644,12 @@ export class GitWorkbenchService extends TypertRemoteService {
       if (cached !== undefined) return { diff: cached }
       // `--first-parent` for the same reason as in `commitStats`: without it a
       // merge commit has no diff to show and the pane opens empty.
-      const shown = await this.git(root, ['show', commit, '--first-parent', '--format=', '--no-renames', '--', path], signal)
+      const shown = await this.git(root, ['show', commit, '--first-parent', '--format=', DIFF_CONTEXT_ARG, '--no-renames', '--', path], signal)
       if (shown.exitCode !== 0) return { diff: '' }
       this.commitDiffCache.set(key, shown.stdout)
       return { diff: shown.stdout }
     }
-    const tracked = await this.git(root, ['diff', 'HEAD', '--', path], signal)
+    const tracked = await this.git(root, ['diff', DIFF_CONTEXT_ARG, 'HEAD', '--', path], signal)
     if (tracked.stdout.trim().length > 0) return { diff: tracked.stdout }
     // Empty for a TRACKED file is real, not a missing diff: the line-ending
     // phantom (autocrlf / eol attributes make the stat check and the clean
@@ -1109,7 +1107,7 @@ export class GitWorkbenchService extends TypertRemoteService {
       this.git(root, ['show', hash, '--no-patch', `--format=${LOG_FORMAT}`], signal),
       this.git(root, ['show', hash, '--first-parent', '--numstat', '--format=', '--no-renames'], signal),
       this.git(root, ['show', hash, '--first-parent', '--name-status', '--format=', '--no-renames'], signal),
-      this.git(root, ['show', hash, '--first-parent', '--format=', '--no-renames'], signal),
+      this.git(root, ['show', hash, '--first-parent', '--format=', DIFF_CONTEXT_ARG, '--no-renames'], signal),
     ])
     if (meta.exitCode !== 0) {
       const detail = meta.stderr.length > 0 ? `: ${meta.stderr}` : ''
@@ -1135,7 +1133,7 @@ export class GitWorkbenchService extends TypertRemoteService {
     diff = clipDiff(diff, DIFF_CHAR_CAP, '…[diff truncated]')
 
     const value: WorkbenchStats = {
-      worktreePath: cwd,
+      worktreePath: cwd, repoRoot: root,
       branch: commits[0]?.hash ?? hash.slice(0, 7),
       ahead: 0, behind: 0, detached: false,
       addedLines, deletedLines, addedFiles, deletedFiles, modifiedFiles,
@@ -1374,25 +1372,22 @@ export class GitWorkbenchService extends TypertRemoteService {
     const cwd = typeof worktreePath === 'string' && worktreePath.length > 0 ? worktreePath : process.cwd()
     if (!isRefName(base) || !isRefName(head)) return { ...emptyStats(cwd), error: 'not a ref name' }
     const range = `${base}...${head}`
+    const root = await this.rootedDirOf(worktreePath, signal)
+    let frozen: ReferenceRange & { tipBase: string }
+    try {
+      frozen = await freezeComparison(args => this.git(root, args, signal), base, head)
+    } catch {
+      return { ...emptyStats(cwd), error: 'comparison revision unavailable' }
+    }
     const diffNumstat = (args: readonly string[]) => this.git(cwd, ['diff', '--numstat', '--no-renames', ...args], signal)
     const diffNameStatus = (args: readonly string[]) => this.git(cwd, ['diff', '--name-status', '--no-renames', ...args], signal)
-    const diffPatch = (args: readonly string[]) => this.git(cwd, ['diff', '--no-renames', ...args], signal)
-    let [numstat, nameStatus, patch, log] = await Promise.all([
-      diffNumstat([range]),
-      diffNameStatus([range]),
-      diffPatch([range]),
-      this.git(cwd, ['log', `-${HISTORY_COMMITS}`, `--pretty=format:${LOG_FORMAT}`, `${base}..${head}`], signal),
+    const diffPatch = (args: readonly string[]) => this.git(cwd, ['diff', DIFF_CONTEXT_ARG, '--no-renames', ...args], signal)
+    const [numstat, nameStatus, patch, log] = await Promise.all([
+      diffNumstat([frozen.base, frozen.head]),
+      diffNameStatus([frozen.base, frozen.head]),
+      diffPatch([frozen.base, frozen.head]),
+      this.git(cwd, ['log', `-${HISTORY_COMMITS}`, `--pretty=format:${LOG_FORMAT}`, `${frozen.tipBase}..${frozen.head}`], signal),
     ])
-    if (numstat.exitCode !== 0 && isNoMergeBaseError(numstat.stderr)) {
-      // Unrelated histories have no merge base for `A...B` to diff from. A
-      // two-tip diff still answers "what differs between these branches" with
-      // the full tree — which is what the compare tab is for (TESTS.md C3).
-      ;[numstat, nameStatus, patch] = await Promise.all([
-        diffNumstat([base, head]),
-        diffNameStatus([base, head]),
-        diffPatch([base, head]),
-      ])
-    }
     if (numstat.exitCode !== 0) {
       const detail = numstat.stderr.length > 0 ? `: ${numstat.stderr}` : ''
       return { ...emptyStats(cwd), error: `git diff failed (exit ${numstat.exitCode})${detail}` }
@@ -1416,11 +1411,28 @@ export class GitWorkbenchService extends TypertRemoteService {
     diff = clipDiff(diff, DIFF_CHAR_CAP, '…[diff truncated]')
 
     return {
-      worktreePath: cwd, branch: range,
+      worktreePath: cwd, repoRoot: root, branch: range,
+      referenceRange: { base: frozen.base, head: frozen.head },
       ahead: 0, behind: 0, detached: false,
       addedLines, deletedLines, addedFiles, deletedFiles, modifiedFiles,
       files, diff, commits: parseLog(log.stdout),
     }
+  }
+
+  /** Resolve only the selected file; historical objects never become live mentions. */
+  @Remote('fileReference')
+  async fileReference(worktreePath: string, request: ReferenceRequest, signal: AbortSignal): Promise<FileReference> {
+    if (!request || typeof request.path !== 'string' || typeof request.deleted !== 'boolean'
+      || !request.view || !['working', 'commit', 'compare'].includes(request.view.kind)) throw new Error('invalid file reference')
+    const root = await this.repoRootOf(this.cwdOf(worktreePath), signal)
+    if (root === null) throw new Error('repository unavailable')
+    return resolveFileReference(root, request, args => this.git(root, args, signal))
+  }
+
+  /** Native menu paths already resolve against the gesture's live session directory. */
+  @Remote('nativeFileLocation')
+  async nativeFileLocation(path: string, signal: AbortSignal): Promise<NativeFileLocation | null> {
+    return locateNativeFile(path, directory => this.repoRootOf(directory, signal))
   }
 
   /**

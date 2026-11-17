@@ -115,10 +115,10 @@ describe('persistent hunk toolbar wiring', () => {
       ts.isCallExpression(node) && ts.isIdentifier(node.expression)
       && node.expression.text === 'runAllBlocks' && node.arguments[0]?.getText(ast) === "'unstage'")[0]
     expect(unstageAll, 'the Staged header should call runAllBlocks(unstage)').toBeDefined()
-    const button = ancestor(unstageAll!, ts.isJsxElement)
-    expect(button?.openingElement.tagName.getText(ast)).toBe('button')
+    const button = ancestor(unstageAll!, ts.isJsxSelfClosingElement)
+    expect(button?.tagName.getText(ast)).toBe('IconActionButton')
     expect(button?.getText(ast)).toContain("t('fileUnstage')")
-    expect(button?.openingElement.attributes.getText(ast)).toContain('disabled={barDisabled}')
+    expect(button?.attributes.getText(ast)).toContain('disabled={barDisabled}')
     const gates: string[] = []
     let at: ts.Node | undefined = unstageAll!.parent
     while (at !== undefined) {

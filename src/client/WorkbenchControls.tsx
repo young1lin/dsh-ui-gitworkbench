@@ -1,3 +1,4 @@
+import { useWorkbenchVisible } from './workbench-visibility.ts'
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type Ref, type SetStateAction } from 'react'
 
 import {
@@ -36,9 +37,11 @@ export function DiscardConfirm({ t, body, onCancel, onConfirm }: {
   onCancel: () => void
   onConfirm: () => void
 }): ReactNode {
+  const visible = useWorkbenchVisible()
   const cancelRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => { cancelRef.current?.focus() }, [])
+  useEffect(() => { if (visible) cancelRef.current?.focus() }, [visible])
   useEffect(() => {
+    if (!visible) return
     // Capture phase: while this question is open, Escape belongs to it alone
     // — consumed here, before it can reach the page's other Escape handlers
     // (an open picker's dismiss, the commit box's undo).
@@ -49,8 +52,9 @@ export function DiscardConfirm({ t, body, onCancel, onConfirm }: {
     }
     window.addEventListener('keydown', onKey, true)
     return () => { window.removeEventListener('keydown', onKey, true) }
-  }, [onCancel])
+  }, [onCancel, visible])
 
+  if (!visible) return null
   return (
     <div className={css.confirmScrim} onClick={onCancel}>
       <div
@@ -141,11 +145,11 @@ export function Elided({ text, className, title }: {
  * own under the tabs, restating the branch the header had already named one
  * line above; now it IS that name, and clicking it changes the view.
  *
- * A repository with a single worktree has nothing to choose, so it renders as
- * the same chip without the menu — the identity still has to be stated, and a
- * control that opens an empty list is worse than none.
+ * A single worktree is a passive chip unless the caller supplies repository
+ * details. Docked chrome supplies those details even without other worktrees.
  */
-export function SourceChip({ t, worktrees, boundPath, sessionPath, statsPath, fallbackBranch, onSwitch }: {
+export function SourceChip({ t, worktrees, boundPath, sessionPath, statsPath, fallbackBranch, onSwitch, details }: {
+  details?: ReactNode
   t: Translate
   worktrees: readonly WorktreeEntry[]
   boundPath: string | null
@@ -156,7 +160,7 @@ export function SourceChip({ t, worktrees, boundPath, sessionPath, statsPath, fa
   fallbackBranch: string
   onSwitch: (next: string) => void
 }): ReactNode {
-  if (worktrees.length < 2) {
+  if (worktrees.length < 2 && !details) {
     return (
       <span className={css.headerBranch}>
         <WorktreeGlyph />
@@ -168,7 +172,7 @@ export function SourceChip({ t, worktrees, boundPath, sessionPath, statsPath, fa
     <WorktreePicker
       t={t} worktrees={worktrees} boundPath={boundPath}
       sessionPath={sessionPath} statsPath={statsPath}
-      fallbackBranch={fallbackBranch} onSwitch={onSwitch}
+      fallbackBranch={fallbackBranch} onSwitch={onSwitch} details={details}
     />
   )
 }
@@ -188,7 +192,8 @@ export function SourceChip({ t, worktrees, boundPath, sessionPath, statsPath, fa
  * was repeating the name anyway. The full path stays one hover away on `title`,
  * and the header spells it out the moment a row is picked.
  */
-function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallbackBranch, onSwitch }: {
+function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallbackBranch, onSwitch, details }: {
+  details?: ReactNode
   t: Translate
   worktrees: readonly WorktreeEntry[]
   boundPath: string | null
@@ -219,7 +224,7 @@ function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallb
         type="button"
         className={`${css.refButton} ${css.headerPicker}`}
         aria-expanded={open}
-        aria-label={t('sourceLabel')}
+        aria-label={t(details ? 'repositoryMenu' : 'sourceLabel')}
         title={current?.path ?? statsPath}
         onClick={() => setOpen(isOpen => !isOpen)}
       >
@@ -228,7 +233,10 @@ function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallb
         <span className={css.refCaret}>▾</span>
       </button>
       {open ? (
-        <div className={css.refPop}>
+        <div className={details ? `${css.refPop} ${css.repositoryPop}` : css.refPop}>
+          {details}
+          {worktrees.length > 1 ? <>
+          {details ? <div className={css.toolbarMenuLabel}>{t('chooseWorktree')}</div> : null}
           <input
             className={css.refSearch}
             autoFocus
@@ -259,6 +267,7 @@ function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallb
             {matched.length === 0 ? <div className={css.refEmpty}>{t('refNone')}</div> : null}
           </div>
           <div className={css.refFoot}>{t('refCount', { shown: matched.length, total: worktrees.length })}</div>
+          </> : null}
         </div>
       ) : null}
     </div>
@@ -285,7 +294,8 @@ function WorktreePicker({ t, worktrees, boundPath, sessionPath, statsPath, fallb
  * The preview still works — the popover covers the top of the diff, not all of
  * it, and the drawer repaints live underneath.
  */
-export function SettingsMenu({ t, mode, family, onMode, onFamily, settings, onStyle }: {
+export function SettingsMenu({ t, mode, family, onMode, onFamily, settings, onStyle, control }: {
+  control?: { open: boolean; onOpenChange: Dispatch<SetStateAction<boolean>> }
   t: Translate
   mode: ColorMode
   family: ThemeFamily
@@ -294,7 +304,9 @@ export function SettingsMenu({ t, mode, family, onMode, onFamily, settings, onSt
   settings: StyleSettings
   onStyle: (scope: StyleScope, entry: StyleEntry, persist: boolean) => Promise<{ ok: boolean; error?: string }>
 }): ReactNode {
-  const [open, setOpen] = useState(false)
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = control?.open ?? ownOpen
+  const setOpen = control?.onOpenChange ?? setOwnOpen
   const [scope, setScope] = useState<StyleScope>('project')
   /** Editor buffer for the stylesheet, so typing does not restyle on every key. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -374,13 +386,13 @@ export function SettingsMenu({ t, mode, family, onMode, onFamily, settings, onSt
 
   return (
     <div className={css.theme} ref={rootRef}>
-      <button
+      {control ? null : <button
         type="button"
         className={`${css.btn} ${css.btnIcon}`}
         aria-expanded={open}
         aria-label={t('settings')} title={t('settings')}
         onClick={() => setOpen(value => !value)}
-      ><ChromeGlyph of="settings" /></button>
+      ><ChromeGlyph of="settings" /></button>}
       {open ? (
         <div className={`${css.refPop} ${css.settingsPop}`} data-gs-part="settings">
           {/* The popover positions and clips; this is the padded body that

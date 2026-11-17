@@ -57,6 +57,7 @@ import {
 } from './themes.ts'
 import { clampPane, neighbourWidth } from './pane-size.ts'
 import { COMMIT_ROW_H, DEFAULT_HISTORY_LAYOUT, isHistoryLayout, type HistoryLayout } from './history-layout.ts'
+import { useHistoryLayout } from './use-history-layout.ts'
 import {
   gateLeave, LEAVE_GUARD_CLEAR, leaveAnswered, leaveAsked, paneDirtyReport,
   type LeaveGuard, type WriteResult,
@@ -66,15 +67,23 @@ import { BinaryFilePane } from './BinaryFilePane.tsx'
 import { imageSourceFor } from './image-source.ts'
 import { ColumnsGlyph, CommitList, LayoutButton, StackedGlyph } from './CommitHistory.tsx'
 import { FileTree } from './ChangesFileTree.tsx'
+import { AddFileButton, FileActionsProvider, FileMenuButton } from './FileActions.tsx'
+import { AnnotationsPanel } from './AnnotationsPanel.tsx'
+import type { AnnotationStore } from './annotations.ts'
+import { WorkbenchChrome } from './WorkbenchChrome.tsx'
+import { DockCommitPanel, DockFileNavigation, DockListHeader } from './DockNavigation.tsx'
+import { EditorMenu, EditorToolbar } from './EditorToolbar.tsx'
+import { SyncMenu } from './SyncMenu.tsx'
+import { ReferencePreview, type ReferencePreviewState } from './ReferencePreview.tsx'
+import { DOCK_PAGES, dockNavigate, dockVisiblePage } from './dock-layout.ts'
+import { referenceView, type DraftActions, type ReferenceBridge } from './file-reference.ts'
 import { DiffView, LeaveEditsConfirm, SideBySideView } from './DiffViews.tsx'
 import { PaneDivider, usePaneDrag } from './PaneDivider.tsx'
-import { ChromeGlyph } from './ChromeGlyph.tsx'
-import { WorktreeGlyph } from './WorktreeGlyph.tsx'
+import { EnvCard } from './EnvCard.tsx'
 import {
-  blockDiscardBodyText, branchLabel, CommitBox, CompareBar, DiscardConfirm, discardBodyText, Elided,
-  opMessage, RefPicker, SettingsMenu, SourceChip, SyncBar,
+  blockDiscardBodyText, CommitBox, CompareBar, DiscardConfirm, discardBodyText,
+  opMessage, RefPicker, SyncBar,
 } from './WorkbenchControls.tsx'
-import { BranchSwitcher } from './BranchSwitcher.tsx'
 import { switchPayload } from './branch-switch.ts'
 import { decodePlaces, encodePlaces, placeAt, withPlace, type FilesPlace, type FilesPlaces } from './files-place.ts'
 import { NO_IGNORED_READS, type DirRead, type IgnoredCache } from './ignored-cache.ts'
@@ -90,7 +99,7 @@ import {
   nextAction, nextBatch, pathsFor, settledTicks, withPendingTicks,
   type Tick, type TickAction,
 } from './stage-tree.ts'
-import { badgeRepeatsBranch, bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, sessionTree, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
+import { bindingChanged, branchOfWorktree, pathKey, probesClosedBinding, rootOfWorktree, samePath, sessionTree, showsPending, turnSettled, viewedPath } from './worktree-view.ts'
 import css from './GitWorkbenchPanel.module.css'
 
 export type * from './git-workbench-types.ts'
@@ -101,7 +110,15 @@ import type {
   WorktreeBinding, WorktreeEntry, WorktreeStatus,
 } from './git-workbench-types.ts'
 
-type Props = PropsRuntime<'conversation.session.header.actions'> & {
+import type { DockPresentation } from './workbench-dock.ts'
+
+export type WorkbenchProps = PropsRuntime<'conversation.session.header.actions'> & {
+  readonly annotations?: AnnotationStore
+  readonly referencePreview?: ReferencePreviewState
+  readonly dock?: DockPresentation
+  readonly openDock?: (sessionId: string) => boolean
+  readonly inputActions?: DraftActions
+  readonly referenceBridge: ReferenceBridge
   readonly t: Translate
   readonly fetchStats: (worktreePath: string | undefined, signal: AbortSignal) => Promise<WorkbenchStats | null>
   readonly fetchFileDiff: (worktreePath: string | undefined, path: string, commit: string | undefined, range: { base: string; head: string } | undefined, signal: AbortSignal) => Promise<string>
@@ -167,8 +184,6 @@ const MIN_DIFF_WIDTH = 300
  *  enough that the tree and the diff are still worth rendering. */
 const MIN_COMMITS_HEIGHT = 90
 const MIN_STACKED_LOWER = 200
-
-
 
 /** Element carrying the user's custom stylesheet. One per document. */
 const CUSTOM_STYLE_ID = 'dsh-ui-gitworkbench-custom-css'
@@ -261,8 +276,6 @@ function writeStored(key: string, value: unknown): void {
   }
 }
 
-
-
 /** Commit change sets kept in the browser before the least recently used is dropped. */
 const COMMIT_CACHE_CAPACITY = 24
 
@@ -345,9 +358,7 @@ function defaultBase(branches: readonly string[], head: string): string {
   return branches.find(branch => branch !== head) ?? ''
 }
 
-
-
-export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchIgnoredDir, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: Props) {
+export function GitWorkbenchPanel({ dock, referencePreview, annotations, openDock, sessionId, useSessions, inputActions, referenceBridge, t, fetchStats, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, fetchWorktreeStatus, fetchSessionBinding, fetchCommitStats, fetchCommits, fetchAuthors, fetchRepoTree, fetchIgnoredDir, fetchCompare, fetchStyle, saveStyle, fetchSync, runGitOp, fetchDiscardPlan }: WorkbenchProps) {
   const worktreePath = useSessions((state: { byId?: Record<string, { cwd?: string } | undefined> }) =>
     state?.byId?.[sessionId]?.cwd) as string | undefined
   /** Whether the session's agent has a turn in flight — the store mirrors it
@@ -357,7 +368,8 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
     state?.byId?.[sessionId]?.running) as boolean | undefined
 
   const [stats, setStats] = useState<WorkbenchStats | null>(null)
-  const [open, setOpen] = useState(false)
+  const [floatingOpen, setOpen] = useState(false)
+  const open = dock ? dock.visible : floatingOpen
   // The highlighter's engine is a wasm module that instantiates off-thread;
   // started as the drawer opens, it is ready long before the first click on a
   // file, so no diff is painted plain and then again in colour.
@@ -567,7 +579,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   /** What everything here is about. The drawer's pin only counts while the
    *  drawer is open — see {@link viewedPath} for why that is a rule and not a
    *  reset in the close handler. */
-  const statsPath = viewedPath(open, sourcePath, sessionPath)
+  const statsPath = viewedPath(open || dock !== undefined, sourcePath, sessionPath)
   /** The latest `statsPath`, readable by a response that started under an older
    *  one. The 15s poll's in-flight fetch survives a source switch (clearing the
    *  interval does not abort it), and without this check it would repaint the
@@ -919,7 +931,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  content in the working tree, in each commit, and in each comparison. */
   const viewKey = tab === 'history'
     ? `commit:${commitHash ?? ''}`
-    : tab === 'compare' ? `compare:${baseRef}...${headRef}` : 'worktree'
+    : tab === 'compare' ? `compare:${compareStats?.referenceRange?.base ?? baseRef}...${compareStats?.referenceRange?.head ?? headRef}` : 'worktree'
   /** Per-file diff fetcher bound to the active view. Stable per view, so the
    *  drawer's on-demand effect stops re-running on every render. */
   const fetchDiffForView = useCallback(
@@ -928,11 +940,11 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
       // nothing at all — `fileDiff` had no way to take a ref range, so a file
       // the bundled payload did not carry simply had no detail, which is what
       // an added XML file past the payload cap looked like.
-      const range = tab === 'compare' ? { base: baseRef, head: headRef } : undefined
+      const range = tab === 'compare' ? compareStats?.referenceRange ?? { base: baseRef, head: headRef } : undefined
       const commit = tab === 'history' ? commitHash ?? undefined : undefined
       return fetchFileDiff(statsPath, path, commit, range, signal)
     },
-    [fetchFileDiff, statsPath, tab, commitHash, baseRef, headRef],
+    [fetchFileDiff, statsPath, tab, commitHash, baseRef, headRef, compareStats?.referenceRange],
   )
 
   // First stats fetch still in flight: render nothing. The cheap binding RPC
@@ -945,7 +957,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
   // (branch + ahead/behind + 0-count totals). Only a stats error (not a repo /
   // git unavailable) hides the card. An OPEN drawer always stays mounted, so an
   // empty source can be switched away from.
-  if (stats.error !== undefined && !open) return null
+  if (stats.error !== undefined && !open && !dock) return null
 
   const refresh = (): void => {
     setGen(g => g + 1)
@@ -1245,20 +1257,24 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
    *  shown beside has not moved, so nothing about `stats` is refetched. */
   return (
     <>
-      <EnvCard
+      {dock ? null : <EnvCard
         stats={stats}
         t={t}
         wtName={binding?.name ?? null}
         title={stats.worktreePath}
-        onClick={() => { setOpen(true); setSourcePath(null); setTab('changes'); setGen(g => g + 1) }}
-      />
-      {open ? (
+        onClick={() => { if (openDock?.(sessionId)) return; setOpen(true); setSourcePath(null); setTab('changes'); setGen(g => g + 1) }}
+      />}
+      {open || dock ? (
         <Drawer
+          docked={dock !== undefined} active={open} bindNativeClose={dock?.bindClose}
+          sessionId={sessionId}
+          inputActions={inputActions}
+          referenceBridge={referenceBridge} referencePreview={referencePreview} annotations={annotations}
           stats={stats}
           shown={shown}
           /** Per-tab in-flight flags, so an empty pane can say "loading" instead
            *  of claiming the repository has nothing in it. */
-          treeLoading={tab === 'changes' ? statsLoading
+          treeLoading={tab === 'changes' || tab === 'files' ? statsLoading
             : tab === 'history' ? historyLoading || (commitHash !== null && commitStats === null)
             : comparable && compareStats === null}
           historyLoading={historyLoading}
@@ -1316,7 +1332,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onCommitsTall={applyCommitsTall}
           historyLayout={historyLayout}
           onHistoryLayout={applyHistoryLayout}
-          onClose={() => setOpen(false)}
+          onClose={() => dock ? dock.close() : setOpen(false)}
           onRefresh={refresh}
           wrap={wrap}
           onToggleWrap={toggleWrap}
@@ -1332,7 +1348,7 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
           onOpError={reportOpError}
           pendingTicks={pendingTicks}
           onTick={queueTicks}
-          fetchFileDiff={fetchDiffForView}
+          fetchFileDiff={fetchDiffForView} fetchReferenceDiff={fetchFileDiff}
           fetchFileSides={fetchFileSides}
           writeChecked={writeChecked}
           fetchBlame={fetchBlame}
@@ -1355,41 +1371,17 @@ export function GitWorkbenchPanel({ sessionId, useSessions, t, fetchStats, fetch
 
 /* ---------- header environment card ---------- */
 
-interface EnvCardProps { stats: WorkbenchStats; t: Translate; wtName: string | null; title: string; onClick: () => void }
-
-function EnvCard({ stats, t, wtName, title, onClick }: EnvCardProps): ReactNode {
-  /* dsh derives the branch from the worktree's name, so for anything it created
-     the badge was a second printing of the chip beside it — `wt/fixture-03`
-     next to `fixture-03`. The glyph still says "this session is in a worktree";
-     only the repeated word goes. Where the two names are independent (a
-     worktree made outside dsh) the badge is the only thing naming the
-     directory, so it stays — and its presence then means something. */
-  const repeats = wtName !== null && badgeRepeatsBranch(stats.branch, wtName)
-  return (
-    <button type="button" className={css.card} title={title} onClick={onClick}>
-      <span className={css.cardBranch}>
-        {repeats ? <WorktreeGlyph /> : null}
-        <Elided text={branchLabel(stats.branch, t('noBranch'))} className={css.cardBranchName} />
-      </span>
-      {wtName !== null && !repeats ? <span className={css.cardWt}><WorktreeGlyph />{wtName}</span> : null}
-      {stats.detached ? <span className={css.cardDetached}>detached</span> : null}
-      {stats.ahead > 0 ? <span className={css.cardAhead} title={t('aheadTitle', { count: stats.ahead })}>↑{stats.ahead}</span> : null}
-      {stats.behind > 0 ? <span className={css.cardBehind} title={t('behindTitle', { count: stats.behind })}>↓{stats.behind}</span> : null}
-      {stats.files.length > 0 ? (
-        <>
-          <span className={css.cardSep} />
-          <span className={css.cardAdded}>+{stats.addedLines}</span>
-          <span className={css.cardDeleted}>−{stats.deletedLines}</span>
-          <span className={css.cardFiles}>{t('files', { count: stats.files.length })}</span>
-        </>
-      ) : null}
-    </button>
-  )
-}
-
 /* ---------- drawer ---------- */
 
 interface DrawerProps {
+  annotations?: AnnotationStore
+  docked: boolean
+  active: boolean
+  referencePreview?: ReferencePreviewState
+  bindNativeClose?: DockPresentation['bindClose']
+  sessionId: string
+  inputActions?: DraftActions
+  referenceBridge: ReferenceBridge
   /** The working tree — always the commit-list source and the header's branch. */
   stats: WorkbenchStats
   /** What the tree/diff/totals describe: the working tree, or the picked commit
@@ -1505,6 +1497,7 @@ interface DrawerProps {
   pendingTicks: ReadonlyMap<string, TickAction>
   /** Queue the git calls for a tick batch. */
   onTick: (action: TickAction, paths: readonly string[]) => void
+  fetchReferenceDiff: WorkbenchProps['fetchFileDiff']
   fetchFileDiff: (path: string, signal: AbortSignal) => Promise<string>
   /** One layer of one file for the side-by-side pane; the drawer binds the source. */
   fetchFileSides: (worktreePath: string | undefined, path: string, layer: SideLayer, signal: AbortSignal) => Promise<FileSides | null>
@@ -1524,7 +1517,7 @@ interface DrawerProps {
   onCollapsedChange: (next: Set<string>) => void
 }
 
-function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, remoteBranches, remoteBranchesTruncated, mainWorktreePath, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
+function Drawer({ docked, referencePreview, annotations, active: visible, bindNativeClose, sessionId, inputActions, referenceBridge, stats, shown, tab, onSwitchTab, commits, commitHash, onSelectCommit, hasMoreCommits, loadingMore, onLoadMoreCommits, historyRef, onHistoryRef, historyQuery, onHistoryQuery, historyError, fetchAuthors, fetchRepoTree, fetchIgnoredDir, branches, worktreeBranches, branchesTruncated, remoteBranches, remoteBranchesTruncated, mainWorktreePath, baseRef, headRef, onBaseRef, onHeadRef, comparable, t, binding, worktrees, sessionPath, statsPath, onSwitchSource, segments, selected, onSelect, maximized, onToggleMaximized, theme, mode, family, onMode, onFamily, style, background, onStyle, width, onWidth, panes, onPane, onCommitsTall, historyLayout, onHistoryLayout, onClose, onRefresh, wrap, onToggleWrap, commitDraft, onCommitDraft, commitAmend, onCommitAmend, sync, treeLoading, historyLoading, busy, opResult, runOp, fetchDiscardPlan, onOpError, pendingTicks, onTick, fetchFileDiff, fetchReferenceDiff, fetchFileSides, writeChecked, fetchBlame, fetchFileImage, fetchRevImage, viewKey, gen, collapsed, onCollapsedChange, filesPlaces, onFilesPlace, filesTrees, onFilesTree }: DrawerProps): ReactNode {
   // Empty stand-in while a commit's change set loads, so every hook below keeps a
   // stable shape and the panes simply render nothing.
   const body = shown ?? EMPTY_STATS
@@ -1638,12 +1631,19 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
     settleLeaveAsk()
     act()
   }
+  const nativeClose = useRef<(close: () => void) => boolean>(() => true)
+  nativeClose.current = close => {
+    if (gateLeave(leaveGuard, false).kind === 'run') return true
+    guardLeave(close, false)
+    return false
+  }
+  useEffect(() => bindNativeClose?.(close => nativeClose.current(close)), [bindNativeClose])
   const closeDrawer = (): void => guardLeave(onClose, false)
   const leaveTab = (next: Tab): void => guardLeave(() => onSwitchTab(next), next === tab)
   // `active`, not `selected`: the pane's identity is the file it SHOWS, and
   // the preferred-file fallback can leave `selected` naming a file the pane
   // is not rendering — the row that changes nothing is the shown file's.
-  const selectAndReveal = (path: string): void => guardLeave(() => onSelect(path), path === active)
+  const selectAndReveal = (path: string): void => guardLeave(() => { onSelect(path); showDockPage('code') }, path === active)
   // The source picker swaps the whole worktree under the drawer — the buffer
   // belongs to a file the new source may not even list. Picking the source
   // already on screen changes nothing, so it runs unguarded like every other
@@ -1722,6 +1722,17 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
   }
 
   const drawerRef = useRef<HTMLDivElement>(null)
+  const layoutRef = useRef<HTMLDivElement>(null)
+  const commitLayout = useHistoryLayout(layoutRef, docked, historyLayout)
+  const splitHistory = docked && tab === 'history' && commitLayout === 'columns'
+  const [dockPages, setDockPages] = useState(DOCK_PAGES)
+  const showDockPage = (page: 'files' | 'code' | 'commits'): void => setDockPages(prev => dockNavigate(prev, tab, page))
+  const selectHistoryCommit = useCallback((hash: string): void => {
+    onSelectCommit(hash)
+    setDockPages(prev => dockNavigate(prev, 'history', splitHistory ? 'code' : 'files'))
+  }, [onSelectCommit, splitHistory])
+  const openPath = tab === 'files' ? placeAt(filesPlaces, filesKey).open : active
+  const dockPage = dockVisiblePage(tab, dockPages[tab], openPath !== null, splitHistory)
   /** The two stacked halves' shared box, which the History split measures in. */
   const bodyRef = useRef<HTMLDivElement>(null)
   const commitsRef = useRef<HTMLDivElement>(null)
@@ -1809,7 +1820,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
    * the commit list is sized, and which way its divider slides. Read from one
    * name so a fourth reader cannot be added out of step.
    */
-  const stackedHistory = tab === 'history' && historyLayout === 'stacked'
+  const stackedHistory = !docked && tab === 'history' && historyLayout === 'stacked'
 
   // Width and the background's three tunables are inline because both are live
   // user values; the stylesheet only says what reads them. The pane floors are
@@ -1828,9 +1839,9 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
       // Published rather than written into the stylesheet twice: the two
       // arrangements want different rows, and lanes only meet across the seam
       // between rows while both numbers come from `COMMIT_ROW_H`.
-      '--gs-commit-row': `${COMMIT_ROW_H[historyLayout]}px`,
+      '--gs-commit-row': `${COMMIT_ROW_H[commitLayout]}px`,
     } as CSSProperties,
-    ...maximized || width === null ? {} : { width: `${width}px` },
+    ...docked || maximized || width === null ? {} : { width: `${width}px` },
     ...background === null ? {} : {
       '--gs-bg-image': `url("${background.image}")`,
       '--gs-bg-blur': `${background.blur}px`,
@@ -1840,155 +1851,67 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
 
   // The session header clips and masks its actions. Keep the entire overlay on
   // the document body so fixed positioning and hit testing use the viewport.
-  return createPortal(
+  const fileHeader = docked && activeFile ? <DockFileNavigation t={t} file={activeFile}
+    version={referenceView(tab, shown, treeLoading && shown === null)} onList={() => showDockPage('files')} /> : undefined
+  const paneOwnsToolbar = activeFile !== null && !activeFile.binary && (tab === 'changes' || segment.length > 0)
+    && !(shown === null && tab !== 'changes') && !(tab === 'compare' && !comparable)
+  const content = (
     <div
-      className={maximized ? `${css.overlay} ${css.overlayMax}` : css.overlay}
+      ref={layoutRef}
+      className={docked ? `${css.overlay} ${css.docked}` : maximized ? `${css.overlay} ${css.overlayMax}` : css.overlay}
+      data-dock-page={docked ? dockPage : undefined}
+      data-history-split={splitHistory ? '' : undefined}
       data-gs-theme={theme}
       data-gs-part="overlay"
-      onClick={closeDrawer}
+      onClick={docked ? undefined : closeDrawer}
     >
+      <FileActionsProvider
+        key={`${viewKey}|${statsPath}`}
+        t={t} sessionId={sessionId} worktreePath={body.worktreePath} excerptFile={activeFile} active={visible && !referencePreview}
+        repoRoot={body.repoRoot ?? stats.repoRoot ?? null}
+        view={referenceView(tab, shown, (tab === 'history' || tab === 'compare') && treeLoading
+          || statsPath !== undefined && !samePath(body.worktreePath, statsPath))}
+        bridge={referenceBridge} draftActions={inputActions} annotations={annotations}
+        onReveal={() => showDockPage('code')}
+        beforeAdd={act => docked ? act() : guardLeave(act, false)} onAdded={() => { if (!docked) onClose() }}
+      >
       <div
         ref={drawerRef}
         className={css.drawer}
         style={cardStyle}
         data-gs-part="card"
+        data-reference-preview={referencePreview ? '' : undefined}
         {...background === null ? {} : { 'data-gs-bg': '' }}
         role="dialog"
         aria-label={t('drawerLabel')}
         onClick={event => event.stopPropagation()}
       >
-        <div
+        {docked ? null : <div
           className={edgeDrag.dragging ? `${css.resizer} ${css.resizerActive}` : css.resizer}
           role="separator"
           aria-orientation="vertical"
           aria-label={t('resizeLabel')}
           onPointerDown={event => edgeDrag.start(event, edgeDragHandler)}
+        />}
+        {referencePreview ? <ReferencePreview target={referencePreview.target} onBack={referencePreview.close}
+          changes={referencePreview.changes} line={referencePreview.line} batch={referencePreview.batch} select={referencePreview.select}
+          t={t} palette={theme} active={visible} sessionId={sessionId} referenceBridge={referenceBridge} inputActions={inputActions}
+          fetchFileDiff={fetchReferenceDiff} fetchFileSides={fetchFileSides} /> : null}
+        <WorkbenchChrome
+          t={t} docked={docked} tab={tab} onTab={leaveTab}
+          source={{ t, worktrees, boundPath: binding?.worktreePath ?? null, sessionPath, statsPath, fallbackBranch: stats.branch, onSwitch: leaveSource }}
+          switcher={samePath(mainWorktreePath, stats.repoRoot) ? { t, branches, remoteBranches, worktrees,
+            truncated: branchesTruncated || remoteBranchesTruncated, current: stats.detached ? '' : stats.branch,
+            busy: busy !== null, onPick: row => { void runOp('switchBranch', switchPayload(row)) } } : null}
+          settings={{ t, mode, family, onMode, onFamily, settings: style, onStyle }}
+          path={stats.worktreePath} view={referenceView(tab, shown, treeLoading && shown === null)} totals={body} pending={pending}
+          detached={stats.detached} wrap={wrap} onWrap={onToggleWrap} maximized={maximized} onMaximize={onToggleMaximized}
+          onRefresh={onRefresh} onClose={closeDrawer}
+          syncMenu={tab === 'changes' && sync !== null && sync.hasRemote
+            ? <SyncMenu t={t} sync={sync} busy={busy} onOp={(op, payload) => { void runOp(op, payload) }} /> : null}
+          sync={tab === 'changes' && sync !== null && sync.hasRemote
+            ? <SyncBar t={t} sync={sync} busy={busy} onOp={(op, payload) => { void runOp(op, payload) }} /> : null}
         />
-        {/* One row for "where am I": the worktree, its path, and — when the view
-            is about something other than the working tree — what that is. The
-            branch used to be stated here AND in a picker row of its own, and
-            the divergence here AND in the sync bar; both now have one home. */}
-        <div className={css.header} data-gs-part="header">
-          <div className={css.headerLeft}>
-            <SourceChip
-              t={t}
-              worktrees={worktrees}
-              boundPath={binding?.worktreePath ?? null}
-              sessionPath={sessionPath}
-              statsPath={statsPath}
-              fallbackBranch={stats.branch}
-              onSwitch={leaveSource}
-            />
-            {/* Only where the viewed tree's ROOT is the main worktree (a subdirectory
-                session is still in it); a linked one's branch is the agent's. */}
-            {samePath(mainWorktreePath, stats.repoRoot) ? (
-              <BranchSwitcher
-                t={t} branches={branches} remoteBranches={remoteBranches} worktrees={worktrees}
-                truncated={branchesTruncated || remoteBranchesTruncated}
-                current={stats.detached ? '' : stats.branch}
-                busy={busy !== null}
-                onPick={row => { void runOp('switchBranch', switchPayload(row)) }}
-              />
-            ) : null}
-            <Elided text={stats.worktreePath} className={css.headerPathMain} title={stats.worktreePath} />
-            {tab === 'changes' && stats.detached ? <span className={css.headerDetached}>detached HEAD</span> : null}
-            {tab === 'history' && commitHash !== null ? <span className={css.headerView}>{commitHash}</span> : null}
-            {tab === 'compare' ? (
-              <span className={css.headerView}>
-                <Elided text={branchLabel(baseRef, t('noBranch'))} className={css.headerViewRef} />
-                {' → '}
-                <Elided text={branchLabel(headRef, t('noBranch'))} className={css.headerViewRef} />
-              </span>
-            ) : null}
-            {/* A confident `+0 −1` for a view with nothing behind it yet is not
-                a slower answer, it is a wrong one — so the totals say "pending".
-                But only then: a refresh landing over numbers already on screen
-                must leave them alone. See {@link showsPending}. */}
-            {pending ? <span className={css.headerTotalsDim}>—</span> : (
-              <>
-                <span className={css.headerTotals}>
-                  <span className={css.headerTotalsAdd}>+{body.addedLines}</span>{' '}
-                  <span className={css.headerTotalsDel}>−{body.deletedLines}</span>
-                </span>
-                <span className={css.headerTotalsDim}>
-                  {t('totalsDim', { added: body.addedFiles, modified: body.modifiedFiles, deleted: body.deletedFiles })}
-                </span>
-                {tab === 'compare' && comparable ? (
-                  <span className={css.headerTotalsDim}>
-                    {t('compareCommits', { count: shown?.commits.length ?? 0 })}
-                  </span>
-                ) : null}
-              </>
-            )}
-          </div>
-          {/* Window controls, not sentences. Each keeps its word on `title` and
-              `aria-label`, so nothing is lost to a reader who cannot see the
-              glyph or does not recognise it. */}
-          <div className={css.headerRight}>
-            <SettingsMenu
-              t={t} mode={mode} family={family} onMode={onMode} onFamily={onFamily}
-              settings={style} onStyle={onStyle}
-            />
-            <button
-              type="button"
-              className={`${css.btn} ${css.btnIcon}`}
-              aria-pressed={maximized}
-              aria-label={maximized ? t('restore') : t('maximize')}
-              title={maximized ? t('restore') : t('maximize')}
-              onClick={onToggleMaximized}
-            ><ChromeGlyph of={maximized ? 'restore' : 'maximize'} /></button>
-            <button
-              type="button"
-              className={wrap ? `${css.btn} ${css.btnIcon} ${css.btnIconOn}` : `${css.btn} ${css.btnIcon}`}
-              aria-pressed={wrap}
-              aria-label={wrap ? t('wrapLinesOff') : t('wrapLines')}
-              title={wrap ? t('wrapLinesOff') : t('wrapLines')}
-              onClick={onToggleWrap}
-            ><ChromeGlyph of="wrap" /></button>
-            <button
-              type="button"
-              className={`${css.btn} ${css.btnIcon}`}
-              aria-label={t('refresh')} title={t('refresh')}
-              onClick={onRefresh}
-            ><ChromeGlyph of="refresh" /></button>
-            <button
-              type="button"
-              className={`${css.btn} ${css.btnIcon} ${css.btnClose}`}
-              aria-label={t('close')} title={t('close')}
-              onClick={closeDrawer}
-            ><ChromeGlyph of="close" /></button>
-          </div>
-        </div>
-        <div className={css.tabs} role="tablist" aria-label={t('tabsLabel')} data-gs-part="tabs">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'changes'}
-            className={tab === 'changes' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => leaveTab('changes')}
-          >{t('tabChanges')}</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'history'}
-            className={tab === 'history' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => leaveTab('history')}
-          >{t('tabHistory')}</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'compare'}
-            className={tab === 'compare' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => leaveTab('compare')}
-          >{t('tabCompare')}</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'files'}
-            className={tab === 'files' ? `${css.tab} ${css.tabActive}` : css.tab}
-            onClick={() => leaveTab('files')}
-          >{t('tabFiles')}</button>
-        </div>
         {tab === 'compare' ? (
           <CompareBar
             t={t}
@@ -2046,9 +1969,6 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
         {/* Write operations act on the working tree, so they belong to the tab
             that shows it. A commit box under a historical diff would be asking
             which tree it commits. */}
-        {tab === 'changes' && sync !== null && sync.hasRemote ? (
-          <SyncBar t={t} sync={sync} busy={busy} onOp={(op, payload) => { void runOp(op, payload) }} />
-        ) : null}
         {opResult !== null ? (
           <div
             className={opResult.result.ok ? `${css.opBanner} ${css.opBannerOk}` : `${css.opBanner} ${css.opBannerBad}`}
@@ -2067,12 +1987,12 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               <CommitList
                 paneRef={commitsRef}
                 style={stackedHistory ? paneTall(panes.commitsTall ?? null) : paneStyle(panes.commits)}
-                layout={historyLayout}
+                layout={commitLayout}
                 t={t}
                 loading={historyLoading}
                 commits={commits}
                 active={commitHash}
-                onSelect={onSelectCommit}
+                onSelect={selectHistoryCommit}
                 hasMore={hasMoreCommits}
                 loadingMore={loadingMore}
                 onLoadMore={onLoadMoreCommits}
@@ -2096,6 +2016,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           {tab === 'files' ? (
             <FileBrowser
               t={t}
+              docked={docked} onShowCode={() => showDockPage('code')} onShowFiles={() => showDockPage('files')}
               palette={theme}
               statsPath={statsPath}
               extraPaths={browsablePaths}
@@ -2121,6 +2042,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           ) : (
             <>
           <div ref={treeRef} className={css.treeCol} style={paneStyle(panes.tree)} data-gs-part="tree">
+            {docked ? <DockListHeader t={t} history={tab === 'history' && !splitHistory} onBack={() => showDockPage('commits')}
+              canResume={activeFile !== null} onResume={() => showDockPage('code')} /> : null}
             <FileTree
               t={t}
               scopeKey={viewKey}
@@ -2152,7 +2075,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               // it asks the host what the act WOULD be, and that answer is what
               // the dialog states. See `askDiscard`.
               onDiscard={tab === 'changes' ? askDiscard : undefined}
-              footer={tab === 'changes'
+              footer={!docked && tab === 'changes'
                 ? (
                   <CommitBox
                     t={t} files={tickedFiles} busy={busy} onOp={runOp}
@@ -2165,6 +2088,17 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           </div>
           <PaneDivider label={t('resizeTree')} onDrag={paneDrag('tree', treeRef)} />
           <div className={css.diffPane} data-gs-part="diff">
+            {activeFile === null ? null : docked ? (
+              paneOwnsToolbar ? null : <EditorToolbar file={fileHeader} className={css.fileActionBar}>
+                <EditorMenu t={t} file={activeFile} />
+              </EditorToolbar>
+            ) : (
+              <div className={css.fileActionBar}>
+                <code title={activeFile.path}>{activeFile.path}</code>
+                <AddFileButton file={activeFile} />
+                <FileMenuButton file={activeFile} />
+              </div>
+            )}
             {tab === 'compare' && !comparable ? (
               <div className={css.empty}>{t('comparePick')}</div>
             ) : shown === null && tab !== 'changes' ? (
@@ -2193,8 +2127,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
                     activeFile.status,
                     commitHash,
                     commits.find(commit => commit.hash === commitHash)?.parents ?? NO_PATHS,
-                    baseRef,
-                    headRef,
+                    body.referenceRange?.base ?? baseRef,
+                    body.referenceRange?.head ?? headRef,
                   )}
                   gen={gen}
                   fetchFileImage={fetchFileImage}
@@ -2203,6 +2137,8 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               ) : tab === 'changes' && active !== null ? (
                 <SideBySideView
                   t={t}
+                  preferInline={docked}
+                  fileHeader={fileHeader}
                   path={active}
                   palette={theme}
                   wrap={wrap}
@@ -2221,7 +2157,7 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
               ) : loading && segment.length === 0 ? (
                 <div className={css.empty}>{t('loadingDiff')}</div>
               ) : segment.length > 0 ? (
-                <DiffView segment={segment} path={active ?? ''} palette={theme} t={t} wrap={wrap} />
+                <DiffView segment={segment} path={active ?? ''} palette={theme} t={t} wrap={wrap} fileHeader={fileHeader} />
               ) : (
                 <div className={css.empty}>{t('noTextDiff')}</div>
               )}
@@ -2230,6 +2166,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           )}
           </div>
         </div>
+        <AnnotationsPanel t={t} />
+        {docked && tab === 'changes' ? <DockCommitPanel t={t} count={tickedFiles.filter(file => file.staged === true).length}>
+          <CommitBox t={t} files={tickedFiles} busy={busy} onOp={runOp} message={commitDraft} onMessage={onCommitDraft}
+            amend={commitAmend} onAmend={onCommitAmend} />
+        </DockCommitPanel> : null}
         {discardPending?.plan != null ? (
           <DiscardConfirm
             t={t}
@@ -2262,17 +2203,11 @@ function Drawer({ stats, shown, tab, onSwitchTab, commits, commitHash, onSelectC
           />
         ) : null}
       </div>
-    </div>,
-    document.body,
+      </FileActionsProvider>
+    </div>
   )
+  return docked ? content : createPortal(content, document.body)
 }
-
-
-
-
-
-
-
 
 /** Split a combined `git diff` into path -> its segment text. */
 function splitDiff(diff: string): Map<string, string> {
