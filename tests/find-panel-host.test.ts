@@ -63,9 +63,9 @@ describe("the armed editor's find panel", () => {
     expect(seat, 'the side pane should render the seat').toBeGreaterThan(-1)
     expect(seat, 'the seat must come BEFORE the scroller in the pane, not inside it').toBeLessThan(scroll)
     expect(views, 'the seat is the armed editor’s, and only its')
-      .toMatch(/bodyState\.kind === 'editor' \? <SideFindSeat[^>]*hostRef=\{findHostRef\}/)
+      .toMatch(/bodyState\.kind === 'editor' && !inline \? <SideFindSeat[^>]*hostRef=\{findHostRef\}/)
     expect(views, 'the side pane editor must be given the same host')
-      .toMatch(/<CodeEditor[\s\S]*?panelHost=\{findHostRef\}[\s\S]*?\/>/)
+      .toMatch(/<CodeEditor[\s\S]*?panelHost=\{inline \? undefined : findHostRef\}[\s\S]*?\/>/)
   })
 
   it('sits over the working-tree column: spacer for the left, a divider-wide gap, then the host', () => {

@@ -59,7 +59,7 @@ export function renderWithCrMarks(text: string): ReactNode {
   if (parts.length === 1) return text
   const out: ReactNode[] = [parts[0]!]
   for (let i = 1; i < parts.length; i += 1) {
-    out.push(<span key={`cr${i}`} className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>)
+    out.push(<span key={`cr${i}`} className={css.crMark} aria-hidden="true" data-quote-chars="1">{CR_GLYPH}</span>)
     out.push(parts[i]!)
   }
   return out
@@ -170,7 +170,9 @@ export function SideCells({ row, side, index, rows, current, tokens, hits, curre
         data-block={cell !== null && row.block >= 0 ? row.block : undefined}
         onClick={onArm}
       >
-        {mark === undefined ? code : <span className={css.sideFlow} {...mark}>{code}</span>}
+        <span data-quote-row={cell === null ? undefined : index} data-quote-side={side === 'left' ? 'old' : 'new'}>
+          {mark === undefined ? code : <span className={css.sideFlow} {...mark}>{code}</span>}
+        </span>
         {bar}
       </span>
     </>
@@ -204,7 +206,7 @@ export function renderUnifiedCode(
   // char offsets into the row text, so a mid-line glyph would shift them.
   // Mid-line CRs (a CR-only file) stay invisible here; the side pane draws those.
   const crTail = row.kind !== 'hunk' && row.text.endsWith(CR)
-    ? <span className={css.crMark} aria-hidden="true">{CR_GLYPH}</span>
+    ? <span className={css.crMark} aria-hidden="true" data-quote-chars="1">{CR_GLYPH}</span>
     : null
   if (painted.length === 1 && painted[0]!.color === undefined && !painted[0]!.mark && painted[0]!.hit === 0) {
     return crTail === null ? row.text : <>{row.text}{crTail}</>

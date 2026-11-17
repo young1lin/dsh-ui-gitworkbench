@@ -22,6 +22,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots' // SlotMap is reused, not
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-client-ui-context-menu/client'
+import { createElement } from 'react'
+import { WorkbenchCloseGuards } from './workbench-dock.ts'
+import { DockedWorkbench, WorkbenchTitle, WORKBENCH_TAB } from './DockedWorkbench.tsx'
 import {
   GitWorkbenchPanel,
   type DiscardAnswer, type DiscardPreview, type GitCommit, type GitOpName, type GitOpPayload, type GitOpResult,
@@ -32,6 +38,19 @@ import type { StyleEntry, StyleScope, StyleSettings } from './themes.ts'
 import type { LogFilter } from '../log-filter.ts'
 import type { AuthorEntry } from '../shortlog.ts'
 import { en, zh } from './locales.ts'
+import type { ReferenceBridge, ReferenceInput } from './file-reference.ts'
+import type { FileReference, ReferenceRequest } from '../reference-contract.ts'
+import { ReferenceNavigation } from './reference-navigation.ts'
+import { WorkbenchReferenceChip } from './WorkbenchReferenceChip.tsx'
+import { workbenchReferenceRule, type WorkbenchLink } from './workbench-reference.ts'
+import { referencePaths } from './file-reference.ts'
+import { workbenchInputSource } from './workbench-input-source.ts'
+import { AnnotationStore } from './annotations.ts'
+import { annotationInputSource, annotationRule } from './annotation-source.ts'
+import { AnnotationBatchNode } from './AnnotationsPanel.tsx'
+import { nativeFileContribution } from './native-file-menu.ts'
+import type { NativeFileLocation } from '../native-file.ts'
+import { ActionGlyph } from './IconActionButton.tsx'
 
 /**
  * This plugin's dictionary namespace. It is outside dsh's `LocaleNamespaceMap`
@@ -41,13 +60,13 @@ import { en, zh } from './locales.ts'
 const NS = 'gitworkbench'
 
 /** Required client services: sessions store + slot registry + connection RPC + locale. */
-export const inject = ['sessions', 'slots', 'connection', 'locale']
+export const inject = ['sessions', 'slots', 'connection', 'locale', 'conversation']
 
 export function apply(ctx: ClientContext): void {
   // `connection` is a root service; reach it off the root context the apply runs under.
   const connection = (ctx as unknown as { connection: { rpc: { call: (channel: string, endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown> } } }).connection
   const locale = (ctx as unknown as {
-    locale: { register: (ns: string, id: string, dict: Record<string, string>) => () => void }
+    locale: { register: (ns: string, id: string, dict: Record<string, string>) => () => void; bind(ns: string): (key: string) => string }
   }).locale
 
   // One effect per locale: each register call returns its own disposer, and the
@@ -56,16 +75,28 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => locale.register(NS, 'zh', zh), 'dsh-ui-gitworkbench: zh dictionary')
   ctx.effect(() => locale.register(NS, 'en', en), 'dsh-ui-gitworkbench: en dictionary')
 
-  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
-    {
-      name: 'conversation.session.header.actions',
-      id: 'git-workbench',
-      // After the job-list action (order 20); a low-key stats chip.
-      order: 30,
-      // Declaring the namespace is what puts the framework's `t` in the
-      // component's props — it follows the user's language preference.
-      locale: NS,
-      inject: () => ({
+  const annotations = new AnnotationStore()
+  ctx.effect(() => () => annotations.dispose())
+  const adapters = () => ({
+        annotations,
+        referenceBridge: {
+          getInput: (sessionId: string): ReferenceInput | null => {
+            const services = ctx as unknown as {
+              sessions: { scope(id: string): ClientContext | undefined }
+              conversation: { input: { for(scope: ClientContext): ReferenceInput } }
+            }
+            try {
+              const scope = services.sessions.scope(sessionId)
+              return scope === undefined ? null : services.conversation.input.for(scope)
+            } catch { return null }
+          },
+          resolve: async (worktreePath: string, request: ReferenceRequest, signal: AbortSignal): Promise<FileReference> => {
+            const result = await connection.rpc.call('/api', 'gitWorkbench/fileReference', { args: { worktreePath, request } }, signal) as
+              { ok: true; value: FileReference } | { ok: false }
+            if (!result.ok) throw new Error('file reference unavailable')
+            return result.value
+          },
+        } satisfies ReferenceBridge,
         // Bound RPC caller the component invokes on mount + poll. Plain args under SRC.
         fetchStats: async (worktreePath: string | undefined, signal: AbortSignal): Promise<WorkbenchStats | null> => {
           const result = await connection.rpc.call(
@@ -341,8 +372,114 @@ export function apply(ctx: ClientContext): void {
           if (result.ok && result.value !== undefined) return result.value
           return { ok: false, failure: 'unknown', error: result.error?.message ?? 'rpc failed' }
         },
-      }),
-    },
-    GitWorkbenchPanel,
-  ))
+  })
+
+  const closeGuards = new WorkbenchCloseGuards()
+  const references = new ReferenceNavigation()
+  const linkRequests = new Map<string, AbortController>()
+  let openDock: ((sessionId: string) => boolean) | undefined
+  const openReference = async (sessionId: string, link: WorkbenchLink): Promise<boolean> => {
+    if (!openDock?.(sessionId)) return false
+    linkRequests.get(sessionId)?.abort()
+    const controller = new AbortController()
+    linkRequests.set(sessionId, controller)
+    try {
+      let target = 'reference' in link ? link.reference : null
+      if (!target && 'legacyPath' in link) {
+        const absolute = link.legacyPath.replace(/\\/g, '/')
+        const stats = await adapters().fetchStats(absolute.slice(0, absolute.lastIndexOf('/')), controller.signal)
+        const root = stats?.repoRoot?.replace(/\\/g, '/').replace(/\/$/, '')
+        if (!root || !absolute.toLowerCase().startsWith(root.toLowerCase() + '/')) return false
+        const path = absolute.slice(root.length + 1)
+        target = { version: 1, repository: root, path, absolutePath: referencePaths(root, path).absolute, view: { kind: 'working' }, deleted: false }
+      }
+      if (!target || controller.signal.aborted || !openDock?.(sessionId)) return false
+      references.open(sessionId, target)
+      return true
+    } finally { if (linkRequests.get(sessionId) === controller) linkRequests.delete(sessionId) }
+  }
+  const openBatch: Parameters<typeof annotationInputSource>[0] = async (sessionId, batch) => {
+    if (!openDock?.(sessionId) || !batch.annotations[0]) return false
+    linkRequests.get(sessionId)?.abort()
+    references.open(sessionId, batch.annotations[0].reference, { batch })
+    return true
+  }
+  ctx.inject(['contextMenus'], menu => {
+    if (typeof menu.contextMenus?.register !== 'function') return
+    menu.effect(() => menu.contextMenus.register(nativeFileContribution(key => locale.bind(NS)(key), async target => {
+      if (!openDock?.(target.sessionId)) return false
+      linkRequests.get(target.sessionId)?.abort()
+      const controller = new AbortController()
+      linkRequests.set(target.sessionId, controller)
+      try {
+        const result = await connection.rpc.call('/api', 'gitWorkbench/nativeFileLocation', { args: { path: target.path } }, controller.signal) as
+          { ok: true; value: NativeFileLocation | null } | { ok: false }
+        if (!result.ok || !result.value || controller.signal.aborted || !openDock?.(target.sessionId)) return false
+        references.open(target.sessionId, { version: 1, ...result.value, view: { kind: 'working' } }, {
+          changes: true, ...Number.isSafeInteger(target.line) && target.line! > 0 ? { line: target.line } : {},
+        })
+        return true
+      } finally { if (linkRequests.get(target.sessionId) === controller) linkRequests.delete(target.sessionId) }
+    })))
+    menu.slots.inject('contextMenu.icon', () => menu.slots.register({
+      name: 'contextMenu.icon', key: 'git-workbench',
+    }, () => createElement(ActionGlyph, { icon: 'changes' })))
+  })
+  ctx.effect(() => () => { for (const controller of linkRequests.values()) controller.abort(); linkRequests.clear(); references.dispose() })
+  ctx.inject(['uiConversation'], text => {
+    if (typeof text.uiConversation?.userText?.register !== 'function') return
+    text.effect(() => text.uiConversation.userText.register(workbenchReferenceRule))
+    text.effect(() => text.uiConversation.userText.register(annotationRule))
+    text.slots.inject('conversation.user.text.node', () => text.slots.register({
+      name: 'conversation.user.text.node', key: 'git-workbench', priority: 200, locale: NS, inject: () => ({ openReference }),
+    }, WorkbenchReferenceChip))
+    text.slots.inject('conversation.user.text.node', () => text.slots.register({
+      name: 'conversation.user.text.node', key: 'git-workbench-annotations', priority: 200, locale: NS, inject: () => ({ openReference }),
+    }, AnnotationBatchNode))
+  })
+  ctx.inject(['inputTriggers'], input => {
+    if (typeof input.inputTriggers?.registerSource !== 'function') return
+    input.effect(() => input.inputTriggers.registerSource(workbenchInputSource(openReference)))
+    input.effect(() => input.inputTriggers.registerSource(annotationInputSource(openBatch)))
+  })
+  ctx.inject(['sidebarRight', 'sidebarRightTabs'], dock => {
+    if (typeof dock.sidebarRight.registerCloseHandler !== 'function') return
+    dock.effect(() => dock.sidebarRightTabs.register({
+      id: WORKBENCH_TAB, kind: WORKBENCH_TAB, keepMounted: true,
+      title: () => locale.bind(NS)('workbenchTitle'),
+      guide: [{ id: 'workbench', order: 30, title: () => locale.bind(NS)('workbenchTitle') }],
+    }))
+    dock.slots.inject('sidebar.right.pane.tab', () => dock.slots.register({
+      name: 'sidebar.right.pane.tab', key: WORKBENCH_TAB, locale: NS, inject: () => ({ ...adapters(), closeGuards, references }),
+    }, DockedWorkbench))
+    dock.slots.inject('sidebar.right.pane.tab.title', () => dock.slots.register({
+      name: 'sidebar.right.pane.tab.title', key: WORKBENCH_TAB, locale: NS,
+    }, WorkbenchTitle))
+    dock.effect(() => dock.sidebarRight.registerCloseHandler(WORKBENCH_TAB, (sessionId, tab) => {
+      closeGuards.beforeClose(sessionId, tab.id, () => dock.sidebarRight.closeIn(sessionId, tab.id), () => {
+        if (dock.sidebarRight.mounted.getSnapshot() !== sessionId) return
+        dock.sidebarRight.focus(tab.id)
+        if (!dock.sidebarRight.isExpanded()) dock.sidebarRight.toggleExpanded()
+      })
+    }))
+    openDock = sessionId => {
+      // The controller follows the foreground session. Never route a stale header to it.
+      const sidebar = dock.sidebarRight as unknown as {
+        mounted?: { getSnapshot(): string | undefined }
+        openTab(kind: string): void
+        openTabIn?: (sessionId: string, kind: string) => void
+      }
+      if (sidebar.mounted) {
+        if (sidebar.mounted.getSnapshot() !== sessionId) return false
+        sidebar.openTab(WORKBENCH_TAB)
+      } else if (sidebar.openTabIn) sidebar.openTabIn(sessionId, WORKBENCH_TAB)
+      else return false
+      return true
+    }
+    dock.effect(() => () => { openDock = undefined })
+  })
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions', id: 'git-workbench', order: 30, locale: NS,
+    inject: () => ({ ...adapters(), openDock: (sessionId: string) => openDock?.(sessionId) ?? false }),
+  }, GitWorkbenchPanel))
 }

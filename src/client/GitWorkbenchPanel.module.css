@@ -17,3 +17,6 @@
 @import './styles/files.css';
 @import './styles/image.css';
 @import './styles/find.css';
+@import './styles/file-actions.css';
+@import './styles/annotations.css';
+@import './styles/dock-layout.css';

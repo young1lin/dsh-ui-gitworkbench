@@ -1,0 +1,87 @@
+/* One viewport-bound menu shared by all file rows. */
+.fileMenu {
+  position: fixed; z-index: 1040; min-width: 196px; max-width: min(360px, calc(100vw - 16px));
+  padding: 5px; border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
+  background: var(--gs-panel); color: var(--gs-fg); box-shadow: 0 8px 32px #0005;
+  font: inherit; font-size: var(--gs-t-ui);
+}
+.fileMenu button {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 6px 9px; border: 0; min-height: 32px;
+  border-radius: var(--gs-r-control); background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.fileMenu button:not(:disabled):hover, .fileMenu button:focus-visible { background: var(--gs-raise); outline: none; }
+.fileMenu button > svg { flex: none; color: var(--gs-fg-dim); }
+.fileMenu button > span { min-width: 0; }
+.fileMenuSeparator { height: 1px; margin: 5px 4px; background: var(--gs-border-soft); }
+.fileMenu button:disabled { opacity: 0.45; cursor: default; }
+.fileMenuPath { padding: 5px 10px 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--gs-fg-dim); font-size: var(--gs-t-dense); }
+.fileMenuTrigger {
+  flex: 0 0 auto; align-self: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--gs-r-control); background: transparent; color: var(--gs-fg-dim);
+  font: inherit; cursor: pointer;
+}
+.fileMenuTrigger:hover, .fileMenuTrigger:focus-visible { color: var(--gs-fg); background: var(--gs-raise); }
+.fileAddControl { position: relative; display: inline-flex; flex: none; }
+.fileAddButton svg { display: block; }
+.fileAddButton:disabled { opacity: 0.45; cursor: default; }
+.iconActionButton { width: var(--gs-h-compact); padding: 0; border-radius: var(--gs-r-control); }
+.iconActionButton.blockBtnDanger { color: var(--gs-del); border-color: var(--gs-del-bg, var(--gs-border)); }
+.iconActionButton.sideSaveReady { color: var(--gs-accent); border-color: var(--gs-accent); }
+.blockBar .fileAddTooltip { left: 0; right: auto; }
+.fileAddTooltip {
+  position: absolute; z-index: 1040; top: calc(100% + 6px); right: 0; padding: 0;
+  pointer-events: none;
+  width: max-content; max-width: min(280px, calc(100vw - 24px)); visibility: hidden;
+  white-space: normal; text-align: left; font-size: var(--gs-t-dense); line-height: 1.4;
+  transition: visibility 0s;
+}
+.fileAddControl:hover > .fileAddTooltip:not([hidden]) { visibility: visible; transition-delay: 300ms; }
+.fileAddControl:focus-within > .fileAddTooltip:not([hidden]) { visibility: visible; transition-delay: 0s; }
+.fileAddTooltip:popover-open {
+  position: fixed; inset: auto; margin: 0; border: 0; background: transparent;
+  visibility: visible; transition: none; color: inherit;
+}
+.fileAddHint {
+  display: flex; align-items: center; gap: 10px; padding: 5px 8px; border: 0; border-radius: var(--gs-r-control);
+  background: var(--gs-fg); color: var(--gs-bg); box-shadow: 0 2px 6px var(--gs-shadow);
+  font-weight: 400; cursor: default; overflow-wrap: anywhere;
+}
+.fileAddHint kbd { flex: none; font: inherit; opacity: 0.7; white-space: nowrap; }
+.fileAddDescription { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.fileActionBar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px var(--gs-gutter-pane); border-bottom: 1px solid var(--gs-border); }
+.diffPane > .sidePane { flex: 1 1 0; min-height: 0; height: auto; }
+.fileActionBar code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--gs-t-dense); }
+.fileActionBar button { white-space: nowrap; }
+.fileActionNotice { position: fixed; z-index: 1041; bottom: 32px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 48px); padding: 10px 16px; border: 1px solid var(--gs-border); border-radius: var(--gs-r-control); color: var(--gs-fg); background: var(--gs-panel); box-shadow: 0 4px 24px #0005; }
+.fileBrowserRow { display: flex; align-items: center; }
+.fileBrowserRow > button:first-child { flex: 1; min-width: 0; }
+
+.codeQuoteHost { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.codeQuoteBar { position: sticky; top: 0; height: 0; z-index: 12; display: flex; justify-content: flex-end; padding-right: 18px; }
+.codeQuoteBar > * { margin-top: 4px; background: var(--gs-panel); border-radius: var(--gs-r-control); box-shadow: 0 2px 8px var(--gs-shadow); }
+
+.line[data-quote-current] { box-shadow: inset 2px 0 var(--gs-accent); }
+
+.sidePane[data-inline] .sideScroll { overflow: hidden; display: flex; }
+.sideCols[data-inline] { width: 100%; height: 100%; min-height: 0; }
+.sideCols[data-inline] .sideColRight { width: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.cmHost[data-inline] { flex: 1 1 0; min-height: 0; overflow: hidden; }
+.cmHost[data-inline] > :global(.cm-editor) { height: 100%; }
+.cmHost[data-inline] > :global(.cm-editor) > :global(.cm-scroller) { overflow: auto; }
+.cmHost :global(.cm-gwRemoved) { box-shadow: inset 2px 0 var(--gs-del); background: var(--gs-del-line); width: max-content; min-width: 100%; }
+.codeQuoteHost[data-wrap] .cmHost :global(.cm-gwRemoved) { width: 100%; min-width: 0; }
+
+/* Sent references use the public conversation text-node slot, outside the drawer. */
+.referenceInline { display: inline; }
+.referenceChip {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 6px;
+  border: 0; border-radius: var(--gs-r-control, 8px); font: inherit; vertical-align: baseline; cursor: pointer;
+  color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-state-business-bg);
+}
+.referenceChip > svg { flex: none; }
+.referenceChip > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.referenceChip:hover { text-decoration: underline; }
+.referenceChip:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.referenceChip:disabled { cursor: default; }
+.referenceChipKind { flex: none; font-size: var(--gs-t-meta, 11px); opacity: 0.7; }
+.referenceInlineError { display: block; color: var(--dsw-alias-label-secondary); font-size: var(--gs-t-dense, 12px); }

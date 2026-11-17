@@ -1,0 +1,153 @@
+/* Native tabs own their window chrome. These rules depend on pane width. */
+.docked .header { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+.dockSource { display: flex; min-width: 0; flex: 1 1 0; }
+.dockSource > * { max-width: 100%; }
+.workbenchTools { display: flex; align-items: center; gap: 3px; flex: none; }
+.workbenchMore { position: relative; flex: none; }
+.dockSettings { position: absolute; top: 100%; right: 0; z-index: 32; }
+.dockSettings .settingsPop { max-width: calc(100cqw - 24px); }
+.refPop.repositoryPop { width: min(340px, calc(100cqw - 20px)); max-width: none; overflow: visible; }
+.repositoryDetails { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; min-width: 0; }
+.repositoryDetails .toolbarMenuLabel { padding: 0; }
+.repositoryDetails .headerPathMain { max-width: 100%; font-size: var(--gs-t-dense); }
+.repositoryDetails .headerView { max-width: 100%; overflow-wrap: anywhere; font-size: var(--gs-t-meta); }
+.repositoryNumbers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.repositoryBranchAction { padding: 8px 10px; border-top: 1px solid var(--gs-border-soft); }
+.repositoryPop > .toolbarMenuLabel { border-top: 1px solid var(--gs-border-soft); }
+.repositoryPop .refPicker > .refPop { max-width: calc(100cqw - 44px); }
+.docked .body, .docked .bodyRow { flex-direction: row; min-width: 0; }
+.docked .treeCol, .docked .fbTree, .docked .commitsPane, .docked .paneDivider { display: none; }
+.docked .diffPane, .docked .fbMain { min-width: 0; flex: 1 1 0; }
+.docked[data-dock-page='commits'] .commitsPane {
+  display: flex; flex: 1 1 0 !important; width: 100% !important; min-width: 0;
+  max-width: none; height: auto !important; max-height: none !important;
+}
+.docked[data-dock-page='commits'] .bodyRow { display: none; }
+.docked[data-dock-page='files'] .treeCol, .docked[data-dock-page='files'] .fbTree { display: flex; }
+.docked .layoutSwitch { display: none; }
+.docked[data-dock-page='code'] .compareBar { display: none; }
+.docked[data-dock-page='files'] .compareBar:has(.layoutSwitch) { display: none; }
+/* One file picker and one action row share the editor's full width. */
+.editorToolbar {
+  flex: none; display: flex; align-items: center; gap: 8px; box-sizing: border-box;
+  min-height: 38px; min-width: 0; padding: 5px 8px;
+  border-bottom: 1px solid var(--gs-border-soft); background: var(--gs-surface);
+}
+.editorFile { display: flex; align-items: center; gap: 6px; min-width: 64px; flex: 1 1 0; }
+.dockFilePicker {
+  display: flex; align-items: center; gap: 5px; flex: 1 1 0; min-width: 0;
+  padding: 0 3px; height: var(--gs-h-compact); border: 0; border-radius: var(--gs-r-control);
+  background: transparent; color: var(--gs-fg); font: inherit; font-size: var(--gs-t-dense);
+  font-weight: 550; text-align: left; cursor: pointer;
+}
+.dockFilePicker:hover { background: var(--gs-raise); }
+.dockFilePicker:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+.dockFilePicker > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dockFilePicker > svg { flex: none; color: var(--gs-fg-dim); }
+.dockFilePicker > svg:last-child { margin-left: auto; width: 12px; }
+.editorVersion { flex: none; max-width: 120px; padding: 2px 5px; border-radius: var(--gs-r-control); color: var(--gs-fg-dim); background: var(--gs-raise); font: inherit; font-size: var(--gs-t-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editorToolbarActions { display: flex; align-items: center; flex: none; gap: 4px; }
+.editorLayers { display: flex; align-items: center; gap: 2px; flex: none; }
+.editorChangeNav { display: inline-flex; align-items: center; gap: 0; flex: none; }
+.editorChangeNav .sideNavCount { min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+.editorToolbar .sideTab { padding: 4px 6px; height: var(--gs-h-compact); border-radius: var(--gs-r-control); }
+.editorToolbar .sideTab::after { display: none; }
+.editorToolbar .sideTab[aria-pressed='true'] { background: var(--gs-accent-bg); color: var(--gs-accent); }
+.editorToolbar .sideTab[aria-pressed='false']:hover { background: var(--gs-raise); }
+.editorToolbarActions > .sideActions { display: contents; }
+.dockListHeader { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--gs-border-soft); color: var(--gs-fg-dim); font-size: var(--gs-t-dense); }
+.dockListHeader > button:last-child { margin-left: auto; }
+.dockCommitPanel { flex: none; border-top: 1px solid var(--gs-border); background: var(--gs-surface-2); }
+.dockCommitPanel > summary { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; list-style: none; font-size: var(--gs-t-dense); }
+.dockCommitPanel > summary::-webkit-details-marker { display: none; }
+.dockStagedCount { color: var(--gs-fg-dim); font-variant-numeric: tabular-nums; padding: 1px 6px; border-radius: var(--gs-r-control); background: var(--gs-raise); }
+.dockDisclosure { margin-left: auto; }
+.dockCommitPanel[open] .dockDisclosure { transform: rotate(180deg); }
+.dockCommitBody { max-height: min(240px, 36vh); overflow: auto; }
+.dockCommitBody .commitBox { border-top: 1px solid var(--gs-border-soft); }
+
+/* A single geometry for sidebar actions, with labels in themed menus. */
+.toolbarSeparator { flex: none; width: 1px; height: 14px; margin: 0 4px; background: var(--gs-border-soft); }
+.toolbarMenu { position: relative; flex: none; font-size: var(--gs-t-ui); }
+.toolbarMenuTrigger, .toolbarMenuIcon {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: var(--gs-h-compact); padding: 0 7px; border: 0; border-radius: var(--gs-r-control);
+  color: var(--gs-fg-dim); background: transparent; font: inherit; cursor: pointer;
+}
+.toolbarMenuIcon { width: var(--gs-h-compact); padding: 0; }
+.toolbarMenuTrigger > span { white-space: nowrap; }
+.toolbarMenuTrigger > svg, .toolbarMenuIcon > svg { flex: none; }
+.toolbarMenuTrigger[aria-expanded='true'], .toolbarMenuIcon[aria-expanded='true'] { background: var(--gs-raise); color: var(--gs-fg); }
+.toolbarMenuTrigger:hover, .toolbarMenuIcon:hover { background: var(--gs-raise); color: var(--gs-fg); }
+.toolbarMenuTrigger:focus-visible, .toolbarMenuIcon:focus-visible { outline: 2px solid var(--gs-accent); outline-offset: 1px; }
+.toolbarMenuPop {
+  z-index: 33; box-sizing: border-box; max-height: var(--radix-dropdown-menu-content-available-height); overflow-y: auto;
+  min-width: 184px; max-width: min(300px, calc(100cqw - 20px)); padding: 5px;
+  border: 1px solid var(--gs-border); border-radius: var(--gs-r-surface);
+  color: var(--gs-fg); background: var(--gs-panel); box-shadow: 0 8px 24px var(--gs-shadow);
+}
+.toolbarMenuItem, .toolbarMenuItem.blockBtn {
+  box-sizing: border-box; display: flex; align-items: center; gap: 9px; width: 100%; min-height: var(--gs-h-control);
+  height: auto; padding: 6px 9px; border: 0; border-radius: var(--gs-r-control);
+  font: inherit; font-size: var(--gs-t-ui); line-height: 1.4; text-align: left;
+  color: inherit; background: transparent; cursor: pointer;
+}
+.toolbarMenuItem > svg { flex: none; color: var(--gs-fg-dim); }
+.toolbarMenuItem > span { flex: 1; }
+.toolbarMenuItem[aria-checked='true'] { color: var(--gs-accent); background: var(--gs-accent-bg); }
+.toolbarMenuItem[aria-checked='true'] > svg { color: inherit; }
+.toolbarMenuItem:not(:disabled):not([data-disabled]):hover, .toolbarMenuItem[data-highlighted] { background: var(--gs-raise); outline: none; }
+.toolbarMenuItem[data-disabled], .toolbarMenuItem:disabled { opacity: 0.45; cursor: default; }
+.toolbarMenuPop .sideCurrentBlockActions, .toolbarMenuPop .sideActions { display: contents; }
+.toolbarMenuItem.blockBtnDanger { color: var(--gs-del); }
+.toolbarMenuItem.sideSaveReady { color: var(--gs-accent); }
+.toolbarMenuLabel { padding: 6px 9px; color: var(--gs-fg-dim); font-size: var(--gs-t-meta); line-height: 1.4; }
+.toolbarMenuSeparator { height: 1px; margin: 5px 3px; background: var(--gs-border-soft); }
+.menuUpstream { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gs-fg-faint); }
+.menuInset { display: block; margin-left: 12px; border-left: 1px solid var(--gs-border-soft); padding-left: 3px; }
+.sideTabs > .editorChangeNav { margin-left: auto; }
+@container (max-width: 410px) {
+  .editorToolbar { flex-wrap: wrap; gap: 3px; }
+  .editorFile { flex-basis: 100%; min-width: 0; }
+  .editorToolbarActions { flex: 1 1 100%; justify-content: flex-end; flex-wrap: wrap; row-gap: 3px; }
+  .editorLayers { margin-right: auto; }
+}
+.sideReadOnly { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-block: 5px; color: var(--gs-fg-dim); font-size: var(--gs-t-meta); }
+.sideReadOnlyHint { opacity: 0.75; }
+.docked .header { min-height: 36px; box-sizing: border-box; padding-block: 5px; background: var(--gs-surface); }
+.docked .blockBar { display: none; }
+.drawer[data-reference-preview] > :not(.referencePreview):not(.confirmScrim) { visibility: hidden; pointer-events: none; }
+.drawer > .referencePreview { position: absolute; inset: 0; z-index: 35; }
+.referencePreview { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--gs-surface); }
+.referencePreviewHeader { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--gs-border-soft); font-size: var(--gs-t-ui); }
+.referencePreviewHeader > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.referencePreviewHeader > span { flex: none; color: var(--gs-fg-dim); font-size: var(--gs-t-meta); }
+.referencePreviewMeta { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; color: var(--gs-fg-dim); font-size: var(--gs-t-meta); }
+.referencePreviewMeta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.referencePreview .cmHost { flex: 1; min-height: 0; overflow: hidden; }
+.referencePreview .cmHost > :global(.cm-editor) { height: 100%; }
+.referencePreview .cmHost :global(.cm-scroller) { overflow: auto; }
+@container (max-width: 900px) {
+  .docked[data-dock-page='files'] .treeCol, .docked[data-dock-page='files'] .fbTree {
+    flex: 1 1 0; width: 100% !important; min-width: 0; max-width: none !important; height: 100%; min-height: 0;
+  }
+  .docked[data-dock-page='files'] .diffPane, .docked[data-dock-page='files'] .fbMain { display: none; }
+}
+@container (min-width: 901px) {
+  .docked[data-dock-page='files'] .treeCol + .paneDivider, .docked[data-dock-page='files'] .fbTree + .paneDivider { display: flex; }
+  .docked[data-dock-page='files'] .fbTree { width: 28%; min-width: var(--gs-min-tree); max-width: 400px; }
+}
+
+/* A wide history keeps the log visible and gives the remaining width to one
+   detail pane. File navigation never takes a third column from the diff. */
+.docked[data-history-split] .commitsPane {
+  display: flex; width: 32%; min-width: var(--gs-min-commits); max-width: 45% !important;
+  flex: 0 1 auto; height: auto; max-height: none;
+}
+.docked[data-history-split] .commitsPane + .paneDivider { display: flex; }
+.docked[data-history-split][data-dock-page] .compareBar { display: flex; }
+.docked[data-history-split][data-dock-page='files'] .treeCol {
+  flex: 1 1 0; width: 100% !important; max-width: none !important; min-width: 0;
+}
+.docked[data-history-split][data-dock-page='files'] .diffPane,
+.docked[data-history-split][data-dock-page='files'] .treeCol + .paneDivider { display: none; }

@@ -22,11 +22,9 @@ function BranchGlyph(): ReactNode {
 /**
  * The branch switcher: `git switch` from the header, for the main worktree.
  *
- * It sits beside the worktree chip and is deliberately NOT part of it. The
- * chip changes what the drawer looks at; this changes what the tree IS. The
- * two verbs in one menu would be one wrong row apart, so this control has its
- * own name, its own list, and the plain button colour — an action next to the
- * subject, not a second subject.
+ * The worktree picker changes what the drawer reads; this button changes the
+ * tree itself. It has a separate trigger and list, including when docked
+ * chrome places it in the repository details section above the worktree list.
  *
  * The panel renders it only when the viewed path is the main worktree. A
  * linked worktree's branch is the agent's to move, and the host refuses the

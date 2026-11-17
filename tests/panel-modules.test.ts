@@ -102,14 +102,23 @@ describe('GitWorkbenchPanel module boundaries', () => {
     const returned = drawer?.body?.statements.find(ts.isReturnStatement)?.expression
     expect(returned, 'Drawer must return its overlay through a portal').toBeDefined()
     if (returned === undefined) return
-    expect(ts.isCallExpression(returned)).toBe(true)
-    if (!ts.isCallExpression(returned)) return
-    expect(returned.expression.getText(ast)).toBe('createPortal')
-    expect(returned.arguments[1]?.getText(ast)).toBe('document.body')
+    expect(ts.isConditionalExpression(returned)).toBe(true)
+    if (!ts.isConditionalExpression(returned)) return
+    expect(returned.condition.getText(ast)).toBe('docked')
+    expect(returned.whenTrue.getText(ast)).toBe('content')
+    const portal = returned.whenFalse
+    expect(ts.isCallExpression(portal)).toBe(true)
+    if (!ts.isCallExpression(portal)) return
+    expect(portal.expression.getText(ast)).toBe('createPortal')
+    expect(portal.arguments[0]?.getText(ast)).toBe('content')
+    expect(portal.arguments[1]?.getText(ast)).toBe('document.body')
 
-    const overlay = returned.arguments[0]
-    expect(overlay !== undefined && ts.isJsxElement(overlay)).toBe(true)
-    if (overlay === undefined || !ts.isJsxElement(overlay)) return
+    const declaration = drawer?.body?.statements.find(node => ts.isVariableStatement(node)
+      && node.declarationList.declarations.some(d => d.name.getText(ast) === 'content')) as ts.VariableStatement
+    const value = declaration.declarationList.declarations[0]!.initializer!
+    const overlay = ts.isParenthesizedExpression(value) ? value.expression : value
+    expect(ts.isJsxElement(overlay)).toBe(true)
+    if (!ts.isJsxElement(overlay)) return
     expect(overlay.openingElement.attributes.properties.some(attribute =>
       ts.isJsxAttribute(attribute) && attribute.name.getText(ast) === 'data-gs-part'
       && attribute.initializer !== undefined && ts.isStringLiteral(attribute.initializer)

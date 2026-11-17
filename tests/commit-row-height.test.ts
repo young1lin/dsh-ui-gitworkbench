@@ -85,8 +85,10 @@ describe('the commit row height', () => {
     // From the ACTIVE layout, and from `COMMIT_ROW_H` rather than a literal:
     // published off a fixed key, the switch would change the rows' shape
     // without changing their height.
+    expect(panel).toContain('const commitLayout = useHistoryLayout(layoutRef, docked, historyLayout)')
+    expect(panel).toContain('layout={commitLayout}')
     expect(panel, 'the published height must follow the chosen layout')
-      .toContain(`'${PROPERTY}': \`\${COMMIT_ROW_H[historyLayout]}px\``)
+      .toContain(`'${PROPERTY}': \`\${COMMIT_ROW_H[commitLayout]}px\``)
   })
 
   it('reaches the lane graph as the same entry', () => {

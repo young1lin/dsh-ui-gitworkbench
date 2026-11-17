@@ -8,12 +8,8 @@
  * no find-in-file. Those are not polish — they are what "editing" means to
  * anyone who has used an editor, and the pane was asking people to edit.
  *
- * CodeMirror is here for the EDITING only. Highlighting still comes from
- * shiki, through {@link PaintFn}: the diff columns beside this editor are
- * painted by shiki, and a second grammar engine would cost another megabyte of
- * bundle to render the same file in slightly different colours. The pane hands
- * over a function rather than a file of tokens, and this view calls it for the
- * lines it is about to show - see {@link PaintLayer}.
+ * CodeMirror owns editing and inline merge rendering. Shiki supplies grammar
+ * tokens through PaintFn for visible rows, matching the other diff panes.
  *
  * The document is CONTROLLED by the pane, not owned here: `value` is the
  * pane's buffer, and every change is reported back through `onChange`. The
@@ -24,18 +20,28 @@
  * @module @young1lin/dsh-ui-gitworkbench/client/CodeEditor
  */
 
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
-import { Compartment, EditorState, Facet, StateEffect, StateField, type Extension } from '@codemirror/state'
-import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, panels, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from 'react'
+import type { EditorSelection } from './editor-quote.ts'
+import { AddExcerptButton, useExcerptMenu, type ActionFile } from './FileActions.tsx'
+import { editorExcerpt, type CodeExcerpt, type CodeSource } from './code-excerpt.ts'
+import { Compartment, EditorState, Facet, StateEffect, StateField, Text, type Extension, type Range } from '@codemirror/state'
+import { EditorView, ViewPlugin, keymap, lineNumbers, drawSelection, highlightActiveLine, highlightSpecialChars, panels, Decoration, type DecorationSet, type PluginValue, type ViewUpdate } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
-import { getSearchQuery, search, searchKeymap, searchPanelOpen, type SearchQuery } from '@codemirror/search'
+import { getSearchQuery, openSearchPanel, search, searchKeymap, searchPanelOpen, type SearchQuery } from '@codemirror/search'
 
 import css from './GitWorkbenchPanel.module.css'
 import { blameCompartment, blameField, blameGutter, setBlame } from './blame-gutter.ts'
 import { bufferDiff } from './cm-diff.ts'
+import { inlineMerge } from './inline-merge.ts'
+import { virtualDeletions } from './merge-deletions.ts'
 import { SEARCH_PANEL_THEME } from './cm-search-theme.ts'
 import { lineTokenRanges } from './cm-tokens.ts'
+import { visibleLineRanges } from './cm-visible-lines.ts'
+import { persistentSelection } from './cm-selection.ts'
+import { domEditorExcerpt } from './cm-code-selection.ts'
+import { revealEditorReference } from './cm-reference-reveal.ts'
+import { useReferenceReveal } from './use-reference-reveal.tsx'
 import type { HighlightRun } from './highlight.ts'
 import { EMPTY_INDEX, formatCount, indexMatches, ordinalAt, type MatchIndex } from './search-count.ts'
 import type { BlameLine } from './GitWorkbenchPanel.tsx'
@@ -62,6 +68,7 @@ export type PaintFn = (
 
 /** Where the view reads its painter from. Reconfigured — through
  *  {@link paintCompartment} — when the file, the language or the theme moves. */
+const repaintDeletion = StateEffect.define<void>()
 const paintFacet = Facet.define<PaintFn | null, PaintFn | null>({
   combine: values => values.length > 0 ? values[0]! : null,
 })
@@ -69,6 +76,9 @@ const paintCompartment = new Compartment()
 /** Soft wrap, in and out without rebuilding the view — the caret, the undo
  *  stack and the selection all survive the toggle. */
 const wrapCompartment = new Compartment()
+const inlineCompartment = new Compartment()
+const inlineFacet = Facet.define<boolean, boolean>({ combine: values => values[0] ?? false })
+const editableCompartment = new Compartment()
 /** Where the find panel is mounted when it is not inside the editor — see the
  *  `panelHost` prop. `null` is the library's default, the editor's own top
  *  edge. Kept in a facet so {@link SearchCount} can find the panel wherever
@@ -257,42 +267,34 @@ function specOf(query: SearchQuery): string {
 
 const searchCount = ViewPlugin.fromClass(SearchCount)
 
-/** The lines the view is about to show, 0-based and half-open. */
-function viewportLines(view: EditorView): { from: number; to: number } {
-  const doc = view.state.doc
-  return {
-    from: doc.lineAt(view.viewport.from).number - 1,
-    to: doc.lineAt(view.viewport.to).number,
-  }
-}
-
 /** Syntax colour for the viewport, from whatever painter the pane configured. */
 class PaintLayer extends IdleLayer {
+  declare private heldDoc: Text | undefined
+  declare private heldLines: readonly string[] | undefined
   protected build(view: EditorView): DecorationSet {
     const paint = view.state.facet(paintFacet)
     if (paint === null) return Decoration.none
     const doc = view.state.doc
-    const lines = doc.toString().split('\n')
-    const { from, to } = viewportLines(view)
-    const runs = paint(lines, from, to)
-    if (runs === undefined) return Decoration.none
-    const marks: Array<ReturnType<typeof Decoration.mark>> = []
-    const at: number[] = []
-    for (let line = from; line < to && line < lines.length; line += 1) {
-      // `doc.line` is 1-based, and its `from` is the absolute offset the
-      // decorations need.
-      const start = doc.line(line + 1).from
-      for (const range of lineTokenRanges(lines[line] ?? '', start, runs[line])) {
-        marks.push(Decoration.mark({ attributes: { style: styleFor(range.color, range.italic) } }))
-        at.push(range.from, range.to)
+    if (this.heldDoc !== doc || !this.heldLines) { this.heldDoc = doc; this.heldLines = doc.toString().split('\n') }
+    const lines = this.heldLines
+    const marks: Range<Decoration>[] = []
+    for (const { from, to } of visibleLineRanges(doc, view.visibleRanges)) {
+      const runs = paint(lines, from, to)
+      if (!runs) continue
+      for (let line = from; line < to; line++) {
+        const start = doc.line(line + 1).from
+        for (const range of lineTokenRanges(lines[line] ?? '', start, runs[line])) {
+          marks.push(Decoration.mark({ attributes: { style: styleFor(range.color, range.italic) } }).range(range.from, range.to))
+        }
       }
     }
-    return Decoration.set(marks.map((mark, i) => mark.range(at[i * 2]!, at[i * 2 + 1]!)), true)
+    return Decoration.set(marks, true)
   }
 
   protected reason(update: ViewUpdate): 'now' | 'later' | 'no' {
     // Scrolling must paint at once: the lines are already on screen.
-    if (update.viewportChanged) return 'now'
+    if (update.docChanged) return 'later'
+    if (update.viewportMoved) return 'now'
     // A new painter — another file, another theme, a grammar that finished
     // loading. The buffer it describes may not have arrived yet, so it waits.
     if (update.state.facet(paintFacet) !== update.startState.facet(paintFacet)) return 'later'
@@ -340,6 +342,7 @@ class TintLayer extends IdleLayer {
     // nothing from it. What it must never do is run between the two
     // transactions a file switch arrives in.
     const sideMoved = update.transactions.some(tr => tr.effects.some(effect => effect.is(setOriginal)))
+      || update.state.facet(inlineFacet) !== update.startState.facet(inlineFacet)
     return update.docChanged || sideMoved ? 'later' : 'no'
   }
 }
@@ -347,9 +350,10 @@ class TintLayer extends IdleLayer {
 const tinter = ViewPlugin.fromClass(TintLayer, { decorations: layer => layer.decorations })
 
 function diffDecorations(state: EditorState): DecorationSet {
+  if (state.facet(inlineFacet)) return Decoration.none
   const original = state.field(originalText, false) ?? ''
   const doc = state.doc.toString()
-  const { changed, deletedBefore } = bufferDiff(original, doc)
+  const { changed, deletedBefore } = bufferDiff(original, doc, state.facet(inlineFacet))
   const marks: { at: number; deco: Decoration }[] = []
   const lineCount = state.doc.lines
   for (const line of changed) {
@@ -408,8 +412,19 @@ const paneTheme = EditorView.theme({
   // the same kind of thing as a line git already knows about.
   '.cm-gwChanged': { backgroundColor: 'var(--gs-add-line)' },
   '.cm-gwDeleted': { boxShadow: 'inset 0 2px 0 0 var(--gs-del-line)' },
+  '&.cm-merge-b .cm-changedLine': { backgroundColor: 'var(--gs-add-line)' },
+  '&.cm-merge-b .cm-changedText': { background: 'var(--gs-add-word)' },
+  '.cm-deletedChunk': { backgroundColor: 'var(--gs-del-line)', borderLeft: '2px solid var(--gs-del)', padding: '0 6px' },
+  '.cm-deletedChunk .cm-deletedLine': { lineHeight: '20px' },
+  '.cm-deletedChunk .cm-deletedLine > del': { textDecoration: 'none' },
+  '.cm-deletedChunk .cm-deletedText': { background: 'var(--gs-del-word)' },
+  '.cm-deletedChunk ::selection': { background: 'var(--gs-accent-bg)' },
+  '.cm-collapsedLines': { background: 'var(--gs-raise)', color: 'var(--gs-fg-dim)', border: 'none', padding: '4px 6px' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--gs-fg-dim)' },
   '.cm-cursor': { borderLeftColor: 'var(--gs-accent)' },
+  '.cm-line.cm-gwSelectedLine': { backgroundColor: 'color-mix(in srgb, var(--gs-accent) 12%, var(--gs-surface))', boxShadow: 'inset 3px 0 var(--gs-accent)' },
+  '.cm-gwSelectedText': { backgroundColor: 'color-mix(in srgb, var(--gs-accent) 28%, transparent)' },
+  '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': { backgroundColor: 'var(--gs-accent-bg)' },
   // The blame gutter. Dim and monospaced-narrow: it sits beside code the
   // reader came to read, so it must be legible without competing.
   '.cm-gwBlameGutter': {
@@ -432,7 +447,20 @@ const paneTheme = EditorView.theme({
   ...SEARCH_PANEL_THEME,
 })
 
-export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, wrap, panelHost }: {
+export interface CodeEditorController { reveal: (line: number) => void; find: () => void }
+
+export function CodeEditor({ value, original, onChange, paint, paintDeleted, indent, ariaLabel, onSave, blame, notCommitted, readOnly, onBlameClick, wrap, panelHost, reference, inlineDiff = false, unchangedLabel, oldLinesLabel, autoFocus = true, controller, onCursorLine, onSelectionChange, lineOffset = 0, initialLine }: {
+  onSelectionChange?: (selection: EditorSelection | null) => void
+  inlineDiff?: boolean
+  unchangedLabel?: (count: number) => string
+  oldLinesLabel?: (from: number, to: number) => string
+  autoFocus?: boolean
+  controller?: MutableRefObject<CodeEditorController | null>
+  onCursorLine?: (line: number) => void
+  paintDeleted?: PaintFn | null
+  lineOffset?: number
+  initialLine?: number
+  reference?: { file: ActionFile; source: CodeSource }
   /** The pane's buffer. The view is written to only when this really differs. */
   value: string
   /** The other side's whole text — the index side, for the unstaged layer this
@@ -494,10 +522,18 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
   const editable = readOnly !== true
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
+  const [hasSelection, setHasSelection] = useState(false)
+  const excerptMenu = useExcerptMenu()
+  const removedSelection = useRef<(() => CodeExcerpt) | null>(null)
+  const removedViews = useRef(new Map<EditorView, number>())
+  const removedSources = useRef(new WeakMap<EditorView, CodeSource>())
+  const selectionOwner = useRef<'old' | 'new'>('new')
+  const merger = useRef<ReturnType<typeof inlineMerge> | null>(null)
+  const foldLabel = unchangedLabel?.(0)
   // Read inside CodeMirror's own callbacks, which close over the render that
   // created the view — several states old by the time a key is pressed.
-  const latest = useRef({ onChange, onSave, onBlameClick })
-  latest.current = { onChange, onSave, onBlameClick }
+  const latest = useRef({ onChange, onSave, onBlameClick, onCursorLine, original, paint, paintDeleted, reference, unchangedLabel, oldLinesLabel, wrap, lineOffset })
+  latest.current = { onChange, onSave, onBlameClick, onCursorLine, original, paint, paintDeleted, reference, unchangedLabel, oldLinesLabel, wrap, lineOffset }
   // Stable across renders so reconfiguring the gutter does not depend on a
   // callback identity that changes every time the pane re-renders.
   const pick = useRef((line: number) => { latest.current.onBlameClick?.(line) }).current
@@ -505,20 +541,97 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
   useEffect(() => {
     const parent = host.current
     if (parent === null) return
+    let heldBasis: string | null = null
+    let heldLines: readonly string[] = []
+    merger.current = inlineMerge({
+      original: () => latest.current.original,
+      label: count => latest.current.unchangedLabel?.(count) ?? String(count),
+    })
+    const deletions = virtualDeletions((element, text, startLine, at, basis) => {
+        const source = { ...latest.current.reference?.source, blob: undefined, unsaved: false }
+        if (heldBasis !== basis) { heldBasis = basis; heldLines = basis.split('\n') }
+        const lines = heldLines
+        const offset = startLine - 1
+        const selectBlock = (): void => {
+          const current = view.current
+          if (current) latest.current.onCursorLine?.(current.state.doc.lineAt(current.posAtDOM(element)).number)
+        }
+        const deletedPaint = ViewPlugin.fromClass(class {
+          decorations = Decoration.none
+          constructor(readonly editor: EditorView) { this.paint() }
+          update(update: ViewUpdate): void {
+            if (update.viewportChanged || update.transactions.some(tr => tr.effects.some(effect => effect.is(repaintDeletion)))) this.paint()
+          }
+          destroy(): void { removedViews.current.delete(this.editor) }
+          paint(): void {
+            const marks: Range<Decoration>[] = []
+            for (const { from, to } of visibleLineRanges(this.editor.state.doc, this.editor.visibleRanges)) {
+              const runs = latest.current.paintDeleted?.(lines, from + offset, to + offset)
+              for (let i = from; i < to; i++) {
+                const line = this.editor.state.doc.line(i + 1)
+                for (const range of lineTokenRanges(line.text, line.from, runs?.[i + offset])) {
+                  marks.push(Decoration.mark({ attributes: { style: styleFor(range.color, range.italic) } }).range(range.from, range.to))
+                }
+              }
+            }
+            this.decorations = Decoration.set(marks, true)
+          }
+        }, { decorations: plugin => plugin.decorations })
+        const oldDoc = Text.of(text.split('\n'))
+        element.title = latest.current.oldLinesLabel?.(startLine, offset + oldDoc.lines) ?? `${startLine}–${offset + oldDoc.lines}`
+        const child = new EditorView({ parent: element, state: EditorState.create({ doc: oldDoc, extensions: [
+          EditorState.readOnly.of(true), EditorView.editable.of(false), paneTheme, drawSelection(), persistentSelection,
+          EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { overflow: 'auto' }, '.cm-line': { background: 'var(--gs-del-line)' } }),
+          highlightSpecialChars({ specialChars: /\r/g }), deletedPaint,
+          wrapCompartment.of(latest.current.wrap === true ? EditorView.lineWrapping : []),
+          EditorView.contentAttributes.of({ 'aria-label': `${ariaLabel}: ${element.title}` }),
+          EditorView.domEventObservers({ mousedown: selectBlock }),
+          EditorView.updateListener.of(update => {
+            if (update.geometryChanged) {
+              const height = `${Math.min(240, update.view.contentHeight)}px`
+              if (element.style.height !== height) { element.style.height = height; view.current?.requestMeasure() }
+            }
+            if (!update.selectionSet) return
+            selectBlock()
+            selectionOwner.current = 'old'
+            const { from, to } = update.state.selection.main
+            const doc = update.state.doc
+            removedSelection.current = () => editorExcerpt(doc, from, to, { ...source, side: 'old' }, offset)
+            setHasSelection(!update.state.selection.main.empty)
+          }),
+        ] }) })
+        element.style.height = `${Math.min(12, child.state.doc.lines) * 20}px`
+        removedViews.current.set(child, offset)
+        removedSources.current.set(child, { ...source, side: 'old' })
+        return child
+      })
+    merger.current.extension = [merger.current.extension, deletions]
     const extensions: Extension[] = [
-      lineNumbers(),
+      lineNumbers({ formatNumber: number => {
+        const row = latest.current.reference?.source.diffLines?.[number - 1]
+        return String(row ? row.new || row.old : number + lineOffset)
+      }, domEventHandlers: { mousedown: (editor, line, event) => {
+        if (!(event instanceof MouseEvent) || event.button !== 0) return false
+        const text = editor.state.doc.lineAt(line.from)
+        editor.dispatch({ selection: { anchor: text.from, head: text.to } })
+        editor.focus()
+        return true
+      } } }),
       history(),
+      drawSelection(), persistentSelection,
       search({ top: true }),
       panels({ topContainer: panelHost?.current ?? undefined }),
       panelHostFacet.of(panelHost?.current ?? null),
       searchCount,
+      highlightSpecialChars({ specialChars: /\r/g }),
       highlightActiveLine(),
       paintCompartment.of(paintFacet.of(paint)),
       wrapCompartment.of(wrap === true ? EditorView.lineWrapping : []),
       painter,
       blameField,
       blameCompartment.of([]),
-      EditorState.readOnly.of(!editable),
+      editableCompartment.of(EditorState.readOnly.of(!editable)),
+      inlineCompartment.of([inlineFacet.of(inlineDiff), inlineDiff ? merger.current.extension : []]),
       originalText.init(() => original),
       tinter,
       paneTheme,
@@ -531,20 +644,47 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
       ]),
       EditorView.updateListener.of(update => {
         if (update.docChanged) latest.current.onChange(update.state.doc.toString())
+        if (update.selectionSet || update.docChanged) {
+          selectionOwner.current = 'new'
+          setHasSelection(!update.state.selection.main.empty)
+          if (update.selectionSet) latest.current.onCursorLine?.(update.state.doc.lineAt(update.state.selection.main.head).number)
+        }
       }),
       EditorState.allowMultipleSelections.of(true),
       EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
     ]
-    const created = new EditorView({ state: EditorState.create({ doc: value, extensions }), parent })
+    const created = new EditorView({ state: EditorState.create({ doc: Text.of(value.split('\n')), extensions }), parent })
     view.current = created
     // Arming dropped the caret into the buffer for the textarea too: the click
     // that armed the editor said "I want to type here".
-    created.focus()
-    return () => { created.destroy(); view.current = null }
+    if (autoFocus) created.focus()
+    if (controller) controller.current = { reveal: number => {
+      const line = created.state.doc.line(Math.max(1, Math.min(number, created.state.doc.lines)))
+      created.dispatch({ selection: { anchor: line.from }, effects: EditorView.scrollIntoView(line.from, { y: 'center' }) })
+    }, find: () => { openSearchPanel(created); created.focus() } }
+    return () => { created.destroy(); view.current = null; removedSelection.current = null; if (controller) controller.current = null }
     // Built once per armed session. `value` and `syntax` flow in through the
     // effects below; rebuilding the view on either would drop the caret, the
     // undo stack and the selection on every keystroke.
   }, [])
+
+  useEffect(() => {
+    const current = view.current
+    if (!current || !initialLine) return
+    const line = current.state.doc.line(Math.max(1, Math.min(initialLine, current.state.doc.lines)))
+    current.dispatch({ selection: { anchor: line.from }, effects: EditorView.scrollIntoView(line.from, { y: 'center' }) })
+  }, [initialLine])
+
+  useReferenceReveal(reference?.file.path, reference?.source ?? {}, target => view.current !== null
+    && revealEditorReference(view.current, target, inlineDiff, removedViews.current, lineOffset))
+
+  useEffect(() => {
+    const current = view.current
+    if (!current || !merger.current) return
+    current.dispatch({ effects: inlineCompartment.reconfigure([inlineFacet.of(inlineDiff), inlineDiff ? merger.current.extension : []]) })
+    if (inlineDiff) merger.current.collapse(current)
+  }, [inlineDiff, foldLabel])
+  useEffect(() => { view.current?.dispatch({ effects: editableCompartment.reconfigure(EditorState.readOnly.of(!editable)) }) }, [editable])
 
   // Blame arriving, changing, or being switched off. The gutter itself goes
   // in and out through the compartment; the field carries the lines.
@@ -565,6 +705,7 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
     const current = view.current
     if (current === null) return
     if (current.state.field(originalText, false) === original) return
+    removedSelection.current = null
     current.dispatch({ effects: setOriginal.of(original) })
   }, [original])
 
@@ -582,7 +723,7 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
     if (current === null) return
     const held = current.state.doc.toString()
     if (held === value) return
-    current.dispatch({ changes: { from: 0, to: held.length, insert: value } })
+    current.dispatch({ changes: { from: 0, to: held.length, insert: Text.of(value.split('\n')) } })
   }, [value])
 
   // A new painter — another file, another theme, a grammar that finished
@@ -593,6 +734,7 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
     if (current === null) return
     current.dispatch({ effects: paintCompartment.reconfigure(paintFacet.of(paint)) })
   }, [paint])
+  useEffect(() => { for (const child of removedViews.current.keys()) child.dispatch({ effects: repaintDeletion.of(undefined) }) }, [paintDeleted])
 
   // Wrap in or out. Through the compartment rather than a rebuild: the reader
   // toggles this to look at the line they are already on, and a rebuilt view
@@ -601,7 +743,42 @@ export function CodeEditor({ value, original, onChange, paint, indent, ariaLabel
     const current = view.current
     if (current === null) return
     current.dispatch({ effects: wrapCompartment.reconfigure(wrap === true ? EditorView.lineWrapping : []) })
+    for (const child of removedViews.current.keys()) child.dispatch({ effects: wrapCompartment.reconfigure(wrap === true ? EditorView.lineWrapping : []) })
   }, [wrap])
 
-  return <div ref={host} className={css.cmHost} data-editable={editable ? '' : undefined} />
+  const capture = useCallback((): CodeExcerpt | null => {
+    // Native selectionchange can trail the Add/context-menu gesture. Read the
+    // actual owning pane before consulting the last CodeMirror notification.
+    const native = window.getSelection()
+    for (const [child, offset] of removedViews.current) {
+      const excerpt = domEditorExcerpt(child, native, removedSources.current.get(child)!, offset)
+      if (excerpt !== undefined) {
+        if (excerpt) { selectionOwner.current = 'old'; removedSelection.current = () => excerpt }
+        return excerpt
+      }
+    }
+    const current = view.current
+    if (current) {
+      const excerpt = domEditorExcerpt(current, native, latest.current.reference?.source ?? {}, latest.current.lineOffset)
+      if (excerpt !== undefined) return excerpt
+    }
+    if (selectionOwner.current === 'old') return removedSelection.current?.() ?? null
+    const state = view.current?.state
+    if (!state || state.selection.main.empty) return null
+    const { from, to } = state.selection.main
+    return editorExcerpt(state.doc, from, to, latest.current.reference?.source, latest.current.lineOffset)
+  }, [])
+  const referencePath = reference?.file.path
+  useEffect(() => {
+    if (!onSelectionChange || !referencePath) return
+    onSelectionChange({ path: referencePath, available: hasSelection, capture })
+    return () => onSelectionChange(null)
+  }, [onSelectionChange, referencePath, hasSelection, capture])
+  return <div className={css.codeQuoteHost} data-wrap={wrap === true ? '' : undefined} onContextMenu={event => { if (reference) excerptMenu(reference.file, capture(), event) }}
+    onKeyDown={event => { if (reference && (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')) excerptMenu(reference.file, capture(), event) }}>
+    {reference && hasSelection && !onSelectionChange ? <div className={css.codeQuoteBar}>
+      <AddExcerptButton file={reference.file} kind="selection" capture={capture} />
+    </div> : null}
+    <div ref={host} className={css.cmHost} data-inline={inlineDiff ? '' : undefined} data-editable={editable ? '' : undefined} />
+  </div>
 }

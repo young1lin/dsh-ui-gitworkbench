@@ -2,9 +2,36 @@
 
 User-facing changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows SemVer.
 
+## [0.1.26] - Unreleased
+
+### Added
+
+- **Native file menus and annotations.** Open current changes for a native file target in its own worktree. Annotate selections or hunks and append multiple notes as one draft group, preserving existing text and references. Each note retains its original side, frozen revision and code snapshot; groups support per-note previews without automatic submission.
+
+- **Side-by-side history.** Docked panels wider than 900px keep the commit list on the left and show the selected commit's diff on the right, with its file list opened as needed. Narrow sidebars retain step-by-step navigation; resizing preserves the revision, file and editor state.
+- **Diff reading details.** Working-tree, history and comparison views keep eight context lines on each side of changes by default. File and selection context menus include grouped action icons. Toolbar hints use compact, non-interactive labels with separate navigation shortcuts and dismiss on click.
+- **Two-row editor toolbar.** Repository/worktree context, view selection, Refresh and a grouped More menu occupy the first row. File selection, staging layers, hunk navigation and context-sensitive quoting share the second row and wrap in narrow panes. Quote the selection when present or the current hunk otherwise; whole-file references and copy-path commands live in the editor menu.
+- **Resolved historical reference identity.** File and code references resolve abbreviated history hashes before serialization. Deleted files retain the selected change commit separately from their parent version, and resolution keeps the original draft transaction.
+
+- **Library-backed views and reference navigation.** Inline diffs use official CodeMirror Merge, with Radix for view and diff-action menus. CRLF no longer marks whole files changed; genuine final-newline changes are labeled and selections remain visible after focus moves. File and code chips use DSH’s public source codec and reopen the matching workbench version or saved code snapshot.
+- **References return to the retained editor first.** When source identity and actual code match, clicking restores the original selection and diff toolbar. Old code stays on the old side; hunks validate both sides. An unavailable exact location falls back to the saved snapshot while preserving the draft, unsaved edits and undo history.
+- **Layout follows the sidebar width.** Code fills the area, with files opened as needed; wide panes can show the list beside code. History drills through commits, files and diffs. The commit section starts collapsed and retains its message; repository context and branch switching live in the source panel, with sync and appearance in More. Navigation preserves edit buffers, selections and undo history.
+- **Native docking and code snapshots.** Open the workbench in DSH's right sidebar and add selected code or one hunk to the draft, retaining worktree, historical version, deletion/rename and unsaved-buffer identity. Hidden tabs retain edits, and native close uses the unsaved-edit confirmation.
+- **Editable inline diffs.** Docked Changes combines deleted and new code, with direct editing of the new version, collapsed unchanged regions, a collapsible file list and a side-by-side toggle. Stage, revert, edit and save buttons use icons with hover text.
+- **Code selection menus.** Click a new-side line number to select a line, then use a right-click or keyboard menu to add code and its path, or copy them. Quotes retain their actual side, line/column ranges and version, without saving or sending unsaved content.
+- **File references and path menus.** File toolbars offer a compact Add to conversation icon with a hover and focus hint. File rows support right-click, an ellipsis button and keyboard menus to copy the file name, repository-relative path or absolute path, with English and Chinese copy. Successful copy feedback clears automatically.
+- **Draft-preserving insertion.** Adding a reference returns focus to the composer without sending, replacing existing text or expanding existing reference chips. Draft or session changes during resolution refuse the insertion.
+- **Worktree and Git version identity.** Current files use the displayed worktree's absolute path. History, comparison and deleted files carry their commit, historical path and Git object identity. Comparisons freeze their actual merge base and head.
+
+### Upgrade
+
+- Upgrade both halves together. To verify locally, run `npm pack`, install it with `dsh plugin --profile web add <local-package.tgz>`, restart dsh web and hard-refresh the browser.
+
 ## [0.1.25] - 2026-11-09
 
 ### Fixed
+
+- **Deleted-code references.** Adding or copying a selection reads the displayed old code instead of reusing a previous current-code selection. History, comparison and side-by-side views accept whole-line selections ending at row boundaries. References preserve old-side coordinates, the draft and displayed version; captured old selections survive focus returning to the draft.
 
 - **The Git drawer appears as a narrow strip in newer Harness versions.** The entire drawer mounts on the document body through a React portal, outside the session header's clipping and fade mask. The status card stays in the session header. This uses the plugin's existing React API and keeps the same minimum Harness version.
 
