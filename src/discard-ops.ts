@@ -70,26 +70,44 @@ export interface DiscardPlan {
 }
 
 /**
- * Whether a path is safe to hand a filesystem delete.
+ * Whether a repo-relative path is free of the spellings that leave the root:
+ * the filesystem half of {@link isSafeRelativePath}, without its
+ * option-injection rejection.
  *
- * Stricter than {@link isSafePathArg}, which only has to keep git from reading
- * a path as an option: git will not step outside the repository whatever it is
- * given, so a pathspec needs no traversal check. A delete has no such backstop.
- * Rejected: absolute paths (POSIX and Windows), UNC prefixes, drive letters,
- * NUL bytes, and any `..` segment — including one buried mid-path, which is
- * how traversal is usually spelled.
- * @param path - repo-relative path from a plan step.
+ * A leading dash is inert here - nothing that consumes this check's result is
+ * an argument list. It exists for paths that came out of git's own output,
+ * where a dash-leading name is just how a file happens to be called; rejecting
+ * it made one oddly named untracked file fail the whole stats read.
+ *
+ * @param path - repo-relative path, from git output or an already-checked caller.
  */
-export function isSafeRelativePath(path: string): boolean {
-  if (!isSafePathArg(path)) return false
+export function isSafeFsRelativePath(path: string): boolean {
+  if (typeof path !== 'string' || path.length === 0) return false
   if (path.includes('\0')) return false
   // Windows accepts both separators, so normalise before splitting or
-  // `a\..\..\b` walks out through a check that only knew about `/`.
+  // a\..\..\b walks out through a check that only knew about /.
   const unified = path.replace(/\\/g, '/')
   if (unified.startsWith('/')) return false
   if (/^[A-Za-z]:/.test(unified)) return false
   if (unified.startsWith('//')) return false
   return !unified.split('/').includes('..')
+}
+
+/**
+ * Whether a path is safe to hand a filesystem delete.
+ *
+ * Stricter than {@link isSafePathArg}, which only has to keep git from reading
+ * a path as an option: git will not step outside the repository whatever it is
+ * given, so a pathspec needs no traversal check. A delete has no such backstop.
+ * Rejected: dash-leading spellings (a delete also hands the path to git),
+ * absolute paths (POSIX and Windows), UNC prefixes, drive letters, NUL bytes,
+ * and any .. segment - including one buried mid-path, which is how traversal
+ * is usually spelled.
+ * @param path - repo-relative path from a plan step.
+ */
+export function isSafeRelativePath(path: string): boolean {
+  if (!isSafePathArg(path)) return false
+  return isSafeFsRelativePath(path)
 }
 
 /** Take one file back to HEAD in both the index and the working tree. */

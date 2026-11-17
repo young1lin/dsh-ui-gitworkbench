@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSafeRelativePath, planFor, planFromStatus, type DiscardPlan, type DiscardStep } from '../src/discard-ops.ts'
+import { isSafeFsRelativePath, isSafeRelativePath, planFor, planFromStatus, type DiscardPlan, type DiscardStep } from '../src/discard-ops.ts'
 
 /** Every porcelain pair this feature can be asked about, with a plausible path. */
 const EVERY_CASE: readonly (readonly [string, string, string?])[] = [
@@ -122,6 +122,23 @@ describe('planFor — safety', () => {
     expect(() => planFor('??', '-rf')).toThrow(/unsafe path/)
     expect(() => planFor(' M', '--all')).toThrow(/unsafe path/)
     expect(() => planFor('??', '')).toThrow(/unsafe path/)
+  })
+})
+
+describe('isSafeFsRelativePath', () => {
+  it('keeps every rejection the delete path relies on', () => {
+    for (const path of ['', 'a\0b', '../x', 'a/../../x', '..', 'a\\..\\b', '/etc/passwd', 'C:/x', '//server/x']) {
+      expect(isSafeFsRelativePath(path), path).toBe(false)
+    }
+  })
+
+  it('accepts dash-leading names the filesystem half has no reason to refuse', () => {
+    // git output names such files; only argv builders need the dash rule,
+    // and isSafeRelativePath keeps it for the flows that also spawn git.
+    for (const path of ['-rf', '--output=x', '-wt-err.txt', 'sub/-leading.ts']) {
+      expect(isSafeFsRelativePath(path), path).toBe(true)
+    }
+    expect(isSafeRelativePath('-rf')).toBe(false)
   })
 })
 

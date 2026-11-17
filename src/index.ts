@@ -2288,7 +2288,14 @@ const untrackedIo: UntrackedIo = {
  * @returns the file's line count, binary flag, and whether a diff may be built.
  */
 async function measureUntracked(root: string, path: string): Promise<UntrackedMeasure> {
-  return untrackedMeasures.measure(untrackedIo, resolveInside(root, path))
+  try {
+    return await untrackedMeasures.measure(untrackedIo, resolveInside(root, path))
+  } catch {
+    // The contract one comment up says "never throws"; the lock can still
+    // refuse a spelling this loop did not anticipate, and one odd filename
+    // must not take the whole polled stats read down with it.
+    return { lineCount: 0, binary: false, diffable: false }
+  }
 }
 
 /**

@@ -24,17 +24,23 @@
 
 import { resolve, sep } from 'node:path'
 
-import { isSafeRelativePath } from './discard-ops.js'
+import { isSafeFsRelativePath } from './discard-ops.js'
 
 /**
  * Resolve a repo-relative path against the worktree root, refusing to leave it.
  *
- * Two locks, not one. {@link isSafeRelativePath} rejects the traversal
+ * Two locks, not one. {@link isSafeFsRelativePath} rejects the traversal
  * SPELLINGS — absolute paths, drive letters, UNC prefixes, NUL bytes, any `..`
  * segment including one buried mid-path. The `startsWith` below re-checks the
  * RESOLVED path, which is the form the filesystem acts on, so a path that
  * survives the first check by being spelled unusually still has to land inside
  * the root to be acted on.
+ *
+ * A dash-leading path passes: this is a lexical resolve for the filesystem
+ * only, never an argument list, and git's own output names such files — one
+ * repo with an untracked '-wt-err.txt' made every stats read throw and the
+ * header chip fall back to '(no branch)'. The RPCs that DO hand a path to git
+ * reject dashes at their own boundary and separate pathspecs with '--'.
  *
  * @param root - the worktree directory, absolute.
  * @param relative - repo-relative path from the client or from git's output.
@@ -43,7 +49,7 @@ import { isSafeRelativePath } from './discard-ops.js'
  *         or IS the root.
  */
 export function resolveInside(root: string, relative: string): string {
-  if (!isSafeRelativePath(relative)) {
+  if (!isSafeFsRelativePath(relative)) {
     throw new Error(`unsafe path argument: ${JSON.stringify(relative)}`)
   }
   const base = resolve(root)

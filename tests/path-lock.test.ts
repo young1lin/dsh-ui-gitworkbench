@@ -53,9 +53,19 @@ describe('resolveInside', () => {
     expect(() => resolveInside(root, 'a.txt\0.png')).toThrow(/unsafe path/)
   })
 
-  it('refuses an empty path and one git would read as an option', () => {
+  it('refuses an empty path', () => {
     expect(() => resolveInside(root, '')).toThrow(/unsafe path/)
-    expect(() => resolveInside(root, '--output=/tmp/x')).toThrow(/unsafe path/)
+  })
+
+  it('resolves a dash-leading filename instead of refusing it', () => {
+    // A repo may legitimately hold an untracked '-wt-err.txt', and git's own
+    // status output names it. This lock feeds readFile/stat — never an argv —
+    // so a leading dash is a filename character, not an option: refusing it
+    // here made every stats read for such a repo throw, and the header chip
+    // fell back to '(no branch)' until the file was deleted.
+    expect(resolveInside(root, '-wt-err.txt')).toBe(resolve(root, '-wt-err.txt'))
+    expect(resolveInside(root, '--output=/tmp/x')).toBe(resolve(root, '--output=/tmp/x'))
+    expect(resolveInside(root, 'sub/-leading.txt')).toBe(resolve(root, 'sub', '-leading.txt'))
   })
 
   it('refuses the worktree root itself', () => {
